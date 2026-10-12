@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "1.0",
+  "id": "selinco",
+  "name": "色林错",
+  "basinType": "cold-region-multi-inflow-lake",
+  "modelFrameworkId": "distributed-xinanjiang",
+  "source": {
+    "type": "traceable-derived-and-fixture",
+    "note": "空间与逐小时降水资料已接入；模型结果为本地试算。"
+  },
+  "capabilities": {
+    "coldRegion": true,
+    "lakeBalance": true,
+    "multiOutlet": true,
+    "continuousSimulation": true,
+    "continuousCalibration": true,
+    "eventCalibration": true,
+    "stateContinuation": true,
+    "forecast": true
+  },
+  "resolutions": {
+    "1km": {
+      "label": "1 km",
+      "status": "frontend-fixture",
+      "statusLabel": "试算资料",
+      "spatialStatus": "available",
+      "inputStatus": "partial-real",
+      "spatialManifest": "./1km/spatial.json",
+      "datasetCatalog": "./1km/datasets.json",
+      "fixtureCatalog": "./1km/fixtures.json"
+    },
+    "0p1deg": {
+      "label": "0.1°",
+      "status": "frontend-fixture",
+      "statusLabel": "试算资料",
+      "spatialStatus": "available",
+      "inputStatus": "partial-real",
+      "spatialManifest": "./0p1deg/spatial.json",
+      "datasetCatalog": "./0p1deg/datasets.json",
+      "fixtureCatalog": "./0p1deg/fixtures.json"
+    }
+  }
+}

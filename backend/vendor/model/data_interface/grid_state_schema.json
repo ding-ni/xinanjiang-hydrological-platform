@@ -1,0 +1,36 @@
+{
+  "schema_version": "grid_state.v1",
+  "endpoint": "GET /api/v1/runs/{run_id}/grid-state",
+  "time_step_hours": 1,
+  "units": {"water_flux": "mm/h", "storage": "mm"},
+  "query": {
+    "unit_id": {"type": "string", "required": false},
+    "time": {"type": "datetime", "required": false},
+    "start": {"type": "datetime", "required": false},
+    "end": {"type": "datetime", "required": false}
+  },
+  "record_fields": {
+    "time": "ISO-8601 hour",
+    "unit_id": "runoff grid id",
+    "zone_type": "GLACIER or NON_GLACIER",
+    "precipitation_mm": "grid precipitation",
+    "rainfall_mm": "liquid precipitation",
+    "snowfall_mm": "solid precipitation",
+    "infiltration_mm": "soil infiltration",
+    "et_actual_mm": "actual evapotranspiration",
+    "EU_mm": "upper-layer evapotranspiration",
+    "EL_mm": "lower-layer evapotranspiration",
+    "ED_mm": "deep-layer evapotranspiration",
+    "ULM_mm": "WU upper soil water",
+    "WLM_storage_mm": "WL lower soil water",
+    "deep_storage_mm": "WD deep soil water",
+    "SWE_mm": "snow water equivalent",
+    "RS_mm": "surface runoff",
+    "RI_mm": "interflow",
+    "RG_mm": "groundwater runoff",
+    "total_runoff_mm": "total runoff",
+    "runoff_mechanism": "active XAJ mechanism",
+    "water_balance_error_mm": "hourly balance error",
+    "quality_flag": "quality status"
+  }
+}

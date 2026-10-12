@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "module_id": "PET-FORCING-02",
+  "mode": "MONTHLY_CLIMATOLOGY",
+  "monthly_values_mm_day": [3.0, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 5.5, 4.5, 3.5, 3.0, 3.0],
+  "production_eligible": false,
+  "provenance": "Diagnostic monthly PET assumption based on an unverified legacy auxiliary sequence; not observed evaporation.",
+  "replacement_interface": {
+    "mode": "HOURLY_CSV",
+    "required_columns": ["time", "pet_mm_h"],
+    "coverage_rule": "Every requested model hour must be present exactly once."
+  }
+}

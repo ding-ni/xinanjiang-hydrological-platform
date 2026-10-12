@@ -1,0 +1,12 @@
+{
+  "datasets": [
+    {
+      "id": "selinco-hourly-precip-0p1deg-202606",
+      "type": "hourly-precipitation",
+      "name": "色林错逐小时降水 0.1°",
+      "status": "partial-real",
+      "file": "../../../selinco/forcing/selinco_precip_hourly_0p1deg.nc",
+      "preview": "../../../selinco/forcing/precip-hourly-preview.json"
+    }
+  ]
+}

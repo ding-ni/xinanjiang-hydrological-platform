@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "module_id": "EVENT-QUALIFICATION-14",
+  "method": "NSE_THRESHOLD",
+  "metric": "NSE",
+  "minimum": 0.5,
+  "output_field": "qualified",
+  "rate_field": "qualified_rate_percent",
+  "definition_zh": "合格率为单场洪水NSE不低于0.5的场次占比。",
+  "strict_combined_rate_enabled": false,
+  "note": "洪峰误差、峰现时间误差和水量误差继续独立输出，但不再组合计算严格合格率。"
+}

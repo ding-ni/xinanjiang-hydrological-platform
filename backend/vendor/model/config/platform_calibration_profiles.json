@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0",
+  "profiles": {
+    "NANAN_STAGE2_208": {
+      "name_zh": "南安溪第二轮多场洪水产流率定",
+      "description": "208场合格洪水随机固定划分，统一一组新安江产流参数，汇流参数冻结。",
+      "module_id": "MULTI-EVENT-CALIBRATION-06",
+      "calibration_scope": "RUNOFF_ONLY_ROUTING_FROZEN",
+      "data_root": "E:/产流模块/南安溪-徐畈数据资料整合",
+      "precipitation_directory": "data_interface/precipitation_qc_20260819/1km_hourly",
+      "event_catalog": "data_interface/event_catalog/nananxi_flood_event_catalog_qc_20260819.json",
+      "parameter_space": "config/parameter_space_runoff_multievent_stage2_daily_source.json",
+      "base_parameter_set": "config/parameter_set_land.json",
+      "data_review_config": "config/control_section_data_review_xufan.json",
+      "objective_config": "config/objective_config_event.json",
+      "qualification_config": "config/qualification_config_event.json",
+      "event_quality_config": "config/event_quality_config.json",
+      "state_config": "config/state_initialization_config.json",
+      "pet_config": "config/pet_forcing_assumed_monthly.json",
+      "initial_land_state": "config/initial_state_land.json",
+      "defaults": {
+        "algorithm": "DIFFERENTIAL_EVOLUTION",
+        "max_evaluations": 120,
+        "population_size": 24,
+        "generations": 4,
+        "differential_weight": 0.8,
+        "crossover_probability": 0.7,
+        "state_strategy": "CONTINUOUS",
+        "split_seed": 42,
+        "search_seed": 20260818,
+        "calibration_ratio": 0.667,
+        "validation_ratio": 0.201
+      }
+    },
+    "NANAN_ROUTING_208_DIAGNOSTIC": {
+      "name_zh": "南安溪多场洪水汇流参数联合率定",
+      "description": "冻结当前产流参数，使用连续状态和统一汇流参数评价208场洪水；资料复核完成前仅作诊断。",
+      "module_id": "MULTI-EVENT-CALIBRATION-06",
+      "calibration_scope": "ROUTING_ONLY_RUNOFF_FROZEN",
+      "data_root": "E:/产流模块/南安溪-徐畈数据资料整合",
+      "precipitation_directory": "data_interface/precipitation_qc_20260819/1km_hourly",
+      "event_catalog": "data_interface/event_catalog/nananxi_flood_event_catalog_qc_20260819.json",
+      "parameter_space": "config/parameter_space_routing_multievent_hourly.json",
+      "base_parameter_set": "validation/production_calibration_monthly_pet_20260819/formal_runs/stability_WLM_100_seed_20260819/resolved_runoff_parameter_set.json",
+      "data_review_config": "config/control_section_data_review_xufan.json",
+      "objective_config": "config/objective_config_event.json",
+      "qualification_config": "config/qualification_config_event.json",
+      "event_quality_config": "config/event_quality_config.json",
+      "state_config": "config/state_initialization_config.json",
+      "pet_config": "config/pet_forcing_assumed_monthly.json",
+      "initial_land_state": "config/initial_state_land.json",
+      "defaults": {
+        "algorithm": "DIFFERENTIAL_EVOLUTION",
+        "max_evaluations": 120,
+        "population_size": 24,
+        "generations": 4,
+        "differential_weight": 0.8,
+        "crossover_probability": 0.7,
+        "state_strategy": "CONTINUOUS",
+        "split_seed": 42,
+        "search_seed": 20260819,
+        "calibration_ratio": 0.667,
+        "validation_ratio": 0.201
+      }
+    }
+  }
+}

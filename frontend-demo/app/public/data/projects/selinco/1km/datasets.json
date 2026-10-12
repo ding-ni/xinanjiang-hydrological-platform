@@ -1,0 +1,12 @@
+{
+  "datasets": [
+    {
+      "id": "selinco-hourly-precip-1km-202606",
+      "type": "hourly-precipitation",
+      "name": "色林错逐小时降水 1 km",
+      "status": "partial-real",
+      "file": "../../../selinco/forcing/selinco_precip_hourly_1km.nc",
+      "preview": "../../../selinco/forcing/precip-hourly-preview.json"
+    }
+  ]
+}

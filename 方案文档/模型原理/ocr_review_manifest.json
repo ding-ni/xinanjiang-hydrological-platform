@@ -1,0 +1,7 @@
+{
+  "source_ocr": "ocr_results.json",
+  "status": "manual_review_complete",
+  "records": 96,
+  "correction_policy": "OCR geometry retained for provenance; mojibake OCR text was replaced with manually reviewed Chinese text from the source image.",
+  "accepted_to_pptx": "All meaningful visible source text was reconstructed as editable PowerPoint text."
+}

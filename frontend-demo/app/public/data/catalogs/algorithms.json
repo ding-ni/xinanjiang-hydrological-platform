@@ -1,0 +1,33 @@
+{
+  "version": "2026-08-02",
+  "algorithms": [
+    {
+      "id": "sce-ua",
+      "name": "SCE-UA",
+      "description": "复合形演化全局搜索，适合多参数率定。",
+      "runTypes": ["连续时段率定", "洪水事件率定"],
+      "controlFields": ["最大评价次数", "种群规模"]
+    },
+    {
+      "id": "dds",
+      "name": "DDS",
+      "description": "动态维数搜索，适合计算预算受限的率定。",
+      "runTypes": ["连续时段率定", "洪水事件率定"],
+      "controlFields": ["最大评价次数", "扰动概率"]
+    },
+    {
+      "id": "de",
+      "name": "DE",
+      "description": "差分进化搜索，适合连续参数空间。",
+      "runTypes": ["连续时段率定", "洪水事件率定"],
+      "controlFields": ["种群规模", "变异因子", "交叉概率"]
+    },
+    {
+      "id": "pso",
+      "name": "PSO",
+      "description": "粒子群搜索，用于并行候选参数探索。",
+      "runTypes": ["连续时段率定", "洪水事件率定"],
+      "controlFields": ["粒子数", "惯性权重", "学习因子"]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "task_type": "EVENT_QUALITY_AUDIT",
+  "request": {
+    "required": [
+      "event_catalog",
+      "precipitation_directory",
+      "observed_flow",
+      "grid_static",
+      "quality_config"
+    ],
+    "properties": {
+      "event_catalog": {"type": "string", "format": "json"},
+      "precipitation_directory": {"type": "string", "format": "directory"},
+      "observed_flow": {"type": "string", "format": "table"},
+      "grid_static": {"type": "string", "format": "csv"},
+      "quality_config": {"type": "string", "format": "json"},
+      "warmup_hours": {"type": "integer", "minimum": 0, "default": 168}
+    }
+  },
+  "event_result": {
+    "required": [
+      "event_id",
+      "accepted",
+      "exclusion_reasons",
+      "warning_reasons",
+      "warmup_event_rain_mm",
+      "observed_runoff_depth_mm"
+    ]
+  },
+  "summary": {
+    "required": [
+      "evaluated_count",
+      "accepted_count",
+      "excluded_count",
+      "exclusion_reason_counts",
+      "warning_reason_counts"
+    ]
+  }
+}

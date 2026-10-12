@@ -1,0 +1,94 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "nananxi-xufan",
+  "name": "南安溪-徐畈模型输入准备目录",
+  "frontEndBoundary": "前端负责资料选择、时段校验、输入引用组装和任务提交；产流、汇流及模型状态计算由后端完成。",
+  "spatialPackages": {
+    "1km": {
+      "status": "ready",
+      "basin": "./spatial/basin.geojson",
+      "demRaster": "./spatial/terrain-1km.tif",
+      "validGrid": "./spatial/terrain-grid-1km.geojson",
+      "rivers": "./spatial/rivers.geojson",
+      "stations": "./spatial/stations.json",
+      "sections": "./spatial/sections.json",
+      "validCellCount": 110
+    },
+    "0p1deg": {
+      "status": "preview-only",
+      "basin": "./spatial/basin.geojson",
+      "demRaster": "./spatial/terrain-0p1deg.tif",
+      "validGrid": "./spatial/terrain-grid-0p1deg.geojson",
+      "rivers": "./spatial/rivers.geojson",
+      "stations": "./spatial/stations.json",
+      "sections": "./spatial/sections.json",
+      "validCellCount": 4
+    }
+  },
+  "observationInputs": {
+    "hourlyRain": {
+      "status": "ready",
+      "datasetId": "XF-OBS-RAIN-HOURLY",
+      "catalog": "./observations/catalog.json",
+      "records": 2944497,
+      "registeredStations": 12,
+      "stationsWithRecords": 11,
+      "timeStart": "1959-05-02T20:00",
+      "timeEnd": "2025-08-12T23:00"
+    },
+    "hourlyRiver": {
+      "status": "ready",
+      "datasetId": "XF-OBS-RIVER-HOURLY",
+      "catalog": "./observations/catalog.json",
+      "records": 515422,
+      "deliveryFormat": "Excel",
+      "deliveryFile": "02_模型输入资料/出口水文资料/徐畈出口逐小时水位流量.xlsx",
+      "sectionId": "70115800",
+      "timeStart": "1964-04-04T00:00",
+      "timeEnd": "2024-07-06T08:00"
+    },
+    "floodEvents": {
+      "status": "ready",
+      "datasetId": "XF-FLOOD-EVENTS",
+      "count": 226,
+      "catalog": "./observations/flood-events.json",
+      "dataPackages": "./observations/event-data-packages.json"
+    },
+    "evaporation": {
+      "status": "missing",
+      "note": "xufan.mdb 的 day_evap 表为空；当前小时尺度洪水场次按 0 mm/h，不需要另接连续蒸发资料。"
+    }
+  },
+  "rainfallSpatialization": {
+    "status": "observed-fields-generated",
+    "owner": "offline-preprocessor-for-observed-data-and-model-backend-for-operational-updates",
+    "frontEndProvides": ["站点雨量资料引用", "参与站点", "目标栅格", "插值方法及参数", "计算时段"],
+    "defaultMethod": "idw",
+    "methods": [
+      { "id": "idw", "name": "反距离权重法", "parameters": { "power": 2, "minimumStations": 1 } }
+    ],
+    "observedProducts": {
+      "packageVersion": "2026.08.03.1",
+      "format": "NetCDF-4 / CF-1.10",
+      "station": { "years": 67, "filePattern": "02_模型输入资料/降雨资料/站点逐小时降雨/nananxi_station_precip_hourly_{year}.nc" },
+      "1km": { "years": 67, "validCells": 110, "effectiveAreaKm2": 71.866, "purpose": "正式计算主尺度", "method": "反距离权重法，幂指数2", "filePattern": "02_模型输入资料/降雨资料/1公里逐小时降雨场/nananxi_precip_hourly_1km_{year}.nc" },
+      "0p1deg": { "years": 67, "validCells": 4, "effectiveAreaKm2": 71.866, "purpose": "尺度试验", "method": "由1公里格点按流域内有效面积加权聚合", "filePattern": "02_模型输入资料/降雨资料/0.1度逐小时降雨场/nananxi_precip_hourly_0p1deg_{year}.nc" }
+    }
+  },
+  "deliveryPackage": {
+    "status": "ready",
+    "folder": "交付包/南安溪-徐畈数据资料整合",
+    "zip": "交付包/南安溪-徐畈数据资料整合.zip",
+    "zipBytes": 94440528,
+    "zipSha256": "D549110557C74448A148ED4465CF6BCB0FF6FB5485E709B7ADEF8B3938017B9F",
+    "fileCount": 367,
+    "netcdfFileCount": 201,
+    "note": "只保留模型输入资料和简明说明，不生成数据库、哈希清单或插值检验表。"
+  },
+  "forecastInputs": {
+    "forecastPrecipitation": { "status": "missing", "note": "尚未登记起报时刻之后的逐小时预报降雨产品。" },
+    "initialState": { "status": "missing", "note": "需由后端连续运行或状态续算生成正式状态版本。" },
+    "parameterVersion": { "status": "source-found", "note": "旧程序 fldxufan.xin 与 model.par 已找到；字段映射和版本发布仍需模型端确认。" },
+    "modelService": { "status": "not-connected", "note": "确认预报后应提交到后端产流汇流任务接口，前端不执行模型计算。" }
+  }
+}

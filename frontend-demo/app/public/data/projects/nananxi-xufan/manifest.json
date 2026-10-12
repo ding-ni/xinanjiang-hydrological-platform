@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "1.0",
+  "id": "nananxi-xufan",
+  "name": "南安溪-徐畈",
+  "basinType": "mountain-single-outlet",
+  "modelFrameworkId": "distributed-xinanjiang",
+  "dataFieldMapping": "./data-field-mapping.json",
+  "requiredStandardProducts": [
+    "XF-OBS-RAIN-HOURLY",
+    "XF-OBS-RIVER-HOURLY",
+    "XF-OBS-RAIN-GRID-1KM-NC",
+    "XF-SPATIAL-PREPARATION"
+  ],
+  "observations": {
+    "root": "./observations",
+    "catalog": "./observations/catalog.json",
+    "latestPreview": "./observations/previews/latest-72h.json",
+    "eventPackages": "./observations/event-data-packages.json",
+    "floodEvents": "./observations/flood-events.json",
+    "spatialStations": "./spatial/stations.json",
+    "rainGridPreview": "./observations/previews/historical-rain-grid-72h.json",
+    "yearPattern": "./observations/{kind}/{year}.json"
+  },
+  "source": {
+    "type": "verified-local-case",
+    "path": "实际案例/南安溪-徐畈案例",
+    "note": "原始 MDB、Excel、Arc/Info Grid 和 Shapefile 不进入浏览器目录，仅转换后的轻量文件可供前端使用。"
+  },
+  "capabilities": {
+    "coldRegion": false,
+    "lakeBalance": false,
+    "multiOutlet": false,
+    "continuousSimulation": true,
+    "continuousCalibration": true,
+    "eventCalibration": true,
+    "stateContinuation": true,
+    "forecast": true
+  },
+  "resolutions": {
+    "1km": {
+      "label": "1 km",
+      "status": "partial",
+      "statusLabel": "实测资料已接入",
+      "spatialStatus": "source-verified",
+      "inputStatus": "observed-data-ready",
+      "spatialManifest": "./1km/spatial.json",
+      "datasetCatalog": "./1km/datasets.json",
+      "fixtureCatalog": "./1km/fixtures.json",
+      "parameterLibrary": "./parameter-library.json"
+    },
+    "0p1deg": {
+      "label": "0.1°",
+      "status": "partial",
+      "statusLabel": "实测资料已接入",
+      "spatialStatus": "source-verified-preview-pending",
+      "inputStatus": "observed-data-ready",
+      "spatialManifest": "./0p1deg/spatial.json",
+      "datasetCatalog": "./0p1deg/datasets.json",
+      "fixtureCatalog": "./0p1deg/fixtures.json",
+      "parameterLibrary": "./parameter-library.json"
+    }
+  }
+}

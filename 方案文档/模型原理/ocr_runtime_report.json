@@ -1,0 +1,59 @@
+{
+  "tool": "preflight_ocr_runtime.py",
+  "python": "D:\\miniconda3\\python.exe",
+  "python_version": "3.9.17 (main, Jul  5 2023, 20:47:11) [MSC v.1916 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "deps": ".deps\\ppt-to-editable-ocr",
+  "added_paths": [],
+  "imports": {
+    "rapidocr_onnxruntime": {
+      "available": true,
+      "file": "D:\\miniconda3\\lib\\site-packages\\rapidocr_onnxruntime\\__init__.py",
+      "version": null
+    },
+    "onnxruntime": {
+      "available": true,
+      "file": "D:\\miniconda3\\lib\\site-packages\\onnxruntime\\__init__.py",
+      "version": "1.19.2"
+    },
+    "numpy": {
+      "available": true,
+      "file": "D:\\miniconda3\\lib\\site-packages\\numpy\\__init__.py",
+      "version": "1.26.4"
+    },
+    "cv2": {
+      "available": true,
+      "file": "D:\\miniconda3\\lib\\site-packages\\cv2\\__init__.py",
+      "version": "4.11.0"
+    },
+    "PIL": {
+      "available": true,
+      "file": "D:\\miniconda3\\lib\\site-packages\\PIL\\__init__.py",
+      "version": "11.3.0"
+    },
+    "shapely": {
+      "available": true,
+      "file": "D:\\miniconda3\\lib\\site-packages\\shapely\\__init__.py",
+      "version": "2.0.2"
+    },
+    "shapely.geometry": {
+      "available": true,
+      "file": "D:\\miniconda3\\lib\\site-packages\\shapely\\geometry\\__init__.py",
+      "version": null
+    },
+    "pyclipper": {
+      "available": true,
+      "file": "D:\\miniconda3\\lib\\site-packages\\pyclipper\\__init__.py",
+      "version": "1.3.0.post6"
+    },
+    "yaml": {
+      "available": true,
+      "file": "D:\\miniconda3\\lib\\site-packages\\yaml\\__init__.py",
+      "version": "6.0.2"
+    }
+  },
+  "status": {
+    "ocr_ready": true,
+    "missing_modules": []
+  }
+}

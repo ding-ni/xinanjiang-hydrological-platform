@@ -1,0 +1,10 @@
+{
+  "tool": "check_reconstruction_visual_strategy.py",
+  "status": "pass",
+  "summary": {
+    "regions": 1,
+    "warning_count": 0,
+    "warnings_by_type": {}
+  },
+  "warnings": []
+}

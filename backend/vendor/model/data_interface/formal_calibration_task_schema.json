@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "formal_calibration_task_schema.json",
+  "title": "正式多场洪水率定异步任务",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["profile_id"],
+  "properties": {
+    "module_id": {"const": "MULTI-EVENT-CALIBRATION-06"},
+    "task_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$"},
+    "profile_id": {"type": "string", "enum": ["NANAN_STAGE2_208"]},
+    "algorithm": {"type": "string", "enum": ["DIFFERENTIAL_EVOLUTION", "RANDOM_SEARCH", "GRID_SEARCH"]},
+    "max_evaluations": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "population_size": {"type": "integer", "minimum": 4, "maximum": 1000},
+    "generations": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "differential_weight": {"type": "number", "exclusiveMinimum": 0, "maximum": 2},
+    "crossover_probability": {"type": "number", "minimum": 0, "maximum": 1},
+    "state_strategy": {"type": "string", "enum": ["FIXED_WARMUP", "OBSERVED_FLOW_ANCHORED", "CONTINUOUS"]},
+    "split_seed": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+    "search_seed": {"type": "integer", "minimum": 0, "maximum": 2147483647}
+  }
+}

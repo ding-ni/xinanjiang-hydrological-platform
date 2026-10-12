@@ -1,0 +1,1071 @@
+{
+  "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+  "basin_id": "nan_an",
+  "cell_size_m": 30.0,
+  "reaches": [
+    {
+      "reach_id": "R0001",
+      "downstream_reach_id": "R0005",
+      "length_km": 2.91,
+      "start_cell": [
+        59,
+        49
+      ],
+      "end_cell": [
+        155,
+        83
+      ],
+      "cell_count": 98
+    },
+    {
+      "reach_id": "R0002",
+      "downstream_reach_id": "R0006",
+      "length_km": 3.6,
+      "start_cell": [
+        61,
+        126
+      ],
+      "end_cell": [
+        171,
+        170
+      ],
+      "cell_count": 121
+    },
+    {
+      "reach_id": "R0003",
+      "downstream_reach_id": "R0006",
+      "length_km": 1.5,
+      "start_cell": [
+        128,
+        193
+      ],
+      "end_cell": [
+        171,
+        170
+      ],
+      "cell_count": 51
+    },
+    {
+      "reach_id": "R0004",
+      "downstream_reach_id": "R0005",
+      "length_km": 1.26,
+      "start_cell": [
+        153,
+        41
+      ],
+      "end_cell": [
+        155,
+        83
+      ],
+      "cell_count": 43
+    },
+    {
+      "reach_id": "R0005",
+      "downstream_reach_id": "R0009",
+      "length_km": 3.09,
+      "start_cell": [
+        155,
+        83
+      ],
+      "end_cell": [
+        212,
+        161
+      ],
+      "cell_count": 104
+    },
+    {
+      "reach_id": "R0006",
+      "downstream_reach_id": "R0008",
+      "length_km": 0.9,
+      "start_cell": [
+        171,
+        170
+      ],
+      "end_cell": [
+        200,
+        183
+      ],
+      "cell_count": 31
+    },
+    {
+      "reach_id": "R0007",
+      "downstream_reach_id": "R0013",
+      "length_km": 1.32,
+      "start_cell": [
+        197,
+        255
+      ],
+      "end_cell": [
+        239,
+        256
+      ],
+      "cell_count": 45
+    },
+    {
+      "reach_id": "R0008",
+      "downstream_reach_id": "R0012",
+      "length_km": 1.89,
+      "start_cell": [
+        200,
+        183
+      ],
+      "end_cell": [
+        234,
+        234
+      ],
+      "cell_count": 64
+    },
+    {
+      "reach_id": "R0009",
+      "downstream_reach_id": "R0008",
+      "length_km": 0.78,
+      "start_cell": [
+        212,
+        161
+      ],
+      "end_cell": [
+        200,
+        183
+      ],
+      "cell_count": 27
+    },
+    {
+      "reach_id": "R0010",
+      "downstream_reach_id": "R0009",
+      "length_km": 0.57,
+      "start_cell": [
+        222,
+        148
+      ],
+      "end_cell": [
+        212,
+        161
+      ],
+      "cell_count": 20
+    },
+    {
+      "reach_id": "R0011",
+      "downstream_reach_id": "R0015",
+      "length_km": 0.9,
+      "start_cell": [
+        227,
+        325
+      ],
+      "end_cell": [
+        257,
+        319
+      ],
+      "cell_count": 31
+    },
+    {
+      "reach_id": "R0012",
+      "downstream_reach_id": "R0013",
+      "length_km": 0.66,
+      "start_cell": [
+        234,
+        234
+      ],
+      "end_cell": [
+        239,
+        256
+      ],
+      "cell_count": 23
+    },
+    {
+      "reach_id": "R0013",
+      "downstream_reach_id": "R0020",
+      "length_km": 1.11,
+      "start_cell": [
+        239,
+        256
+      ],
+      "end_cell": [
+        274,
+        277
+      ],
+      "cell_count": 38
+    },
+    {
+      "reach_id": "R0014",
+      "downstream_reach_id": "R0010",
+      "length_km": 1.14,
+      "start_cell": [
+        250,
+        117
+      ],
+      "end_cell": [
+        222,
+        148
+      ],
+      "cell_count": 39
+    },
+    {
+      "reach_id": "R0015",
+      "downstream_reach_id": null,
+      "length_km": 3.12,
+      "start_cell": [
+        257,
+        319
+      ],
+      "end_cell": [
+        274,
+        418
+      ],
+      "cell_count": 105
+    },
+    {
+      "reach_id": "R0016",
+      "downstream_reach_id": "R0014",
+      "length_km": 0.33,
+      "start_cell": [
+        260,
+        113
+      ],
+      "end_cell": [
+        250,
+        117
+      ],
+      "cell_count": 12
+    },
+    {
+      "reach_id": "R0017",
+      "downstream_reach_id": "R0010",
+      "length_km": 1.2,
+      "start_cell": [
+        262,
+        158
+      ],
+      "end_cell": [
+        222,
+        148
+      ],
+      "cell_count": 41
+    },
+    {
+      "reach_id": "R0018",
+      "downstream_reach_id": "R0012",
+      "length_km": 1.2,
+      "start_cell": [
+        266,
+        205
+      ],
+      "end_cell": [
+        234,
+        234
+      ],
+      "cell_count": 41
+    },
+    {
+      "reach_id": "R0019",
+      "downstream_reach_id": "R0014",
+      "length_km": 1.92,
+      "start_cell": [
+        273,
+        55
+      ],
+      "end_cell": [
+        250,
+        117
+      ],
+      "cell_count": 65
+    },
+    {
+      "reach_id": "R0020",
+      "downstream_reach_id": "R0015",
+      "length_km": 1.26,
+      "start_cell": [
+        274,
+        277
+      ],
+      "end_cell": [
+        257,
+        319
+      ],
+      "cell_count": 43
+    },
+    {
+      "reach_id": "R0021",
+      "downstream_reach_id": "R0019",
+      "length_km": 0.63,
+      "start_cell": [
+        276,
+        34
+      ],
+      "end_cell": [
+        273,
+        55
+      ],
+      "cell_count": 22
+    },
+    {
+      "reach_id": "R0022",
+      "downstream_reach_id": "R0019",
+      "length_km": 0.12,
+      "start_cell": [
+        277,
+        54
+      ],
+      "end_cell": [
+        273,
+        55
+      ],
+      "cell_count": 5
+    },
+    {
+      "reach_id": "R0023",
+      "downstream_reach_id": "R0017",
+      "length_km": 0.72,
+      "start_cell": [
+        281,
+        145
+      ],
+      "end_cell": [
+        262,
+        158
+      ],
+      "cell_count": 25
+    },
+    {
+      "reach_id": "R0024",
+      "downstream_reach_id": "R0023",
+      "length_km": 0.78,
+      "start_cell": [
+        307,
+        142
+      ],
+      "end_cell": [
+        281,
+        145
+      ],
+      "cell_count": 27
+    },
+    {
+      "reach_id": "R0025",
+      "downstream_reach_id": "R0023",
+      "length_km": 1.71,
+      "start_cell": [
+        313,
+        99
+      ],
+      "end_cell": [
+        281,
+        145
+      ],
+      "cell_count": 58
+    },
+    {
+      "reach_id": "R0026",
+      "downstream_reach_id": "R0017",
+      "length_km": 1.77,
+      "start_cell": [
+        315,
+        184
+      ],
+      "end_cell": [
+        262,
+        158
+      ],
+      "cell_count": 60
+    },
+    {
+      "reach_id": "R0027",
+      "downstream_reach_id": "R0020",
+      "length_km": 2.01,
+      "start_cell": [
+        339,
+        266
+      ],
+      "end_cell": [
+        274,
+        277
+      ],
+      "cell_count": 68
+    },
+    {
+      "reach_id": "R0028",
+      "downstream_reach_id": "R0030",
+      "length_km": 0.3,
+      "start_cell": [
+        348,
+        235
+      ],
+      "end_cell": [
+        352,
+        245
+      ],
+      "cell_count": 11
+    },
+    {
+      "reach_id": "R0029",
+      "downstream_reach_id": "R0027",
+      "length_km": 0.33,
+      "start_cell": [
+        348,
+        273
+      ],
+      "end_cell": [
+        339,
+        266
+      ],
+      "cell_count": 12
+    },
+    {
+      "reach_id": "R0030",
+      "downstream_reach_id": "R0027",
+      "length_km": 0.75,
+      "start_cell": [
+        352,
+        245
+      ],
+      "end_cell": [
+        339,
+        266
+      ],
+      "cell_count": 26
+    },
+    {
+      "reach_id": "R0031",
+      "downstream_reach_id": "R0030",
+      "length_km": 2.19,
+      "start_cell": [
+        423,
+        235
+      ],
+      "end_cell": [
+        352,
+        245
+      ],
+      "cell_count": 74
+    }
+  ],
+  "units": [
+    {
+      "unit_id": "U_R0001_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0001",
+      "reach_id": "R0001",
+      "zone_type": "non_glacier",
+      "area_km2": 6.4989,
+      "elevation_mean": 508.4931450872456,
+      "slope_mean": 24.912535239847536,
+      "aspect_mean": 193.0922547692836,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        155,
+        83
+      ],
+      "downstream_unit_id": "U_R0005_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 7221
+    },
+    {
+      "unit_id": "U_R0002_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0002",
+      "reach_id": "R0002",
+      "zone_type": "non_glacier",
+      "area_km2": 7.3845,
+      "elevation_mean": 491.49250460134067,
+      "slope_mean": 24.670245083023797,
+      "aspect_mean": 169.29849357965927,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        171,
+        170
+      ],
+      "downstream_unit_id": "U_R0006_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 8205
+    },
+    {
+      "unit_id": "U_R0003_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0003",
+      "reach_id": "R0003",
+      "zone_type": "non_glacier",
+      "area_km2": 2.3859,
+      "elevation_mean": 398.56846485175413,
+      "slope_mean": 21.048780896787445,
+      "aspect_mean": 188.4382529007398,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        171,
+        170
+      ],
+      "downstream_unit_id": "U_R0006_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 2651
+    },
+    {
+      "unit_id": "U_R0004_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0004",
+      "reach_id": "R0004",
+      "zone_type": "non_glacier",
+      "area_km2": 2.3588999999999998,
+      "elevation_mean": 496.0702022174743,
+      "slope_mean": 24.35657967286228,
+      "aspect_mean": 166.2373099415715,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        155,
+        83
+      ],
+      "downstream_unit_id": "U_R0005_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 2621
+    },
+    {
+      "unit_id": "U_R0005_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0005",
+      "reach_id": "R0005",
+      "zone_type": "non_glacier",
+      "area_km2": 4.4037,
+      "elevation_mean": 351.3787043376252,
+      "slope_mean": 26.02087530535915,
+      "aspect_mean": 171.03883774223428,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        212,
+        161
+      ],
+      "downstream_unit_id": "U_R0009_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 4893
+    },
+    {
+      "unit_id": "U_R0006_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0006",
+      "reach_id": "R0006",
+      "zone_type": "non_glacier",
+      "area_km2": 0.8001,
+      "elevation_mean": 234.883014655793,
+      "slope_mean": 23.76099960714335,
+      "aspect_mean": 179.98780308567774,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        200,
+        183
+      ],
+      "downstream_unit_id": "U_R0008_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 889
+    },
+    {
+      "unit_id": "U_R0007_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0007",
+      "reach_id": "R0007",
+      "zone_type": "non_glacier",
+      "area_km2": 3.6755999999999998,
+      "elevation_mean": 188.55729691038198,
+      "slope_mean": 22.478214535724774,
+      "aspect_mean": 182.01214107664237,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        239,
+        256
+      ],
+      "downstream_unit_id": "U_R0013_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 4084
+    },
+    {
+      "unit_id": "U_R0008_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0008",
+      "reach_id": "R0008",
+      "zone_type": "non_glacier",
+      "area_km2": 2.5074,
+      "elevation_mean": 205.4231874285714,
+      "slope_mean": 19.812317205616512,
+      "aspect_mean": 168.87420496250527,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        234,
+        234
+      ],
+      "downstream_unit_id": "U_R0012_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 2786
+    },
+    {
+      "unit_id": "U_R0009_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0009",
+      "reach_id": "R0009",
+      "zone_type": "non_glacier",
+      "area_km2": 0.49679999999999996,
+      "elevation_mean": 181.67028991485506,
+      "slope_mean": 18.519285145514505,
+      "aspect_mean": 166.72733097189783,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        200,
+        183
+      ],
+      "downstream_unit_id": "U_R0008_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 552
+    },
+    {
+      "unit_id": "U_R0010_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0010",
+      "reach_id": "R0010",
+      "zone_type": "non_glacier",
+      "area_km2": 0.3717,
+      "elevation_mean": 212.28329301452783,
+      "slope_mean": 23.52510277752473,
+      "aspect_mean": 157.8980096166482,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        212,
+        161
+      ],
+      "downstream_unit_id": "U_R0009_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 413
+    },
+    {
+      "unit_id": "U_R0011_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0011",
+      "reach_id": "R0011",
+      "zone_type": "non_glacier",
+      "area_km2": 1.4922,
+      "elevation_mean": 327.59107358383596,
+      "slope_mean": 23.963077479318276,
+      "aspect_mean": 182.342347855289,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        257,
+        319
+      ],
+      "downstream_unit_id": "U_R0015_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 1658
+    },
+    {
+      "unit_id": "U_R0012_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0012",
+      "reach_id": "R0012",
+      "zone_type": "non_glacier",
+      "area_km2": 0.5274,
+      "elevation_mean": 192.52047790784982,
+      "slope_mean": 23.667932117575926,
+      "aspect_mean": 146.3613181751982,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        239,
+        256
+      ],
+      "downstream_unit_id": "U_R0013_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 586
+    },
+    {
+      "unit_id": "U_R0013_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0013",
+      "reach_id": "R0013",
+      "zone_type": "non_glacier",
+      "area_km2": 1.2312,
+      "elevation_mean": 181.08114055847955,
+      "slope_mean": 20.580612220735578,
+      "aspect_mean": 146.38686776155512,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        274,
+        277
+      ],
+      "downstream_unit_id": "U_R0020_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 1368
+    },
+    {
+      "unit_id": "U_R0014_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0014",
+      "reach_id": "R0014",
+      "zone_type": "non_glacier",
+      "area_km2": 1.3851,
+      "elevation_mean": 234.54905832293696,
+      "slope_mean": 19.762199029662803,
+      "aspect_mean": 166.14802296204815,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        222,
+        148
+      ],
+      "downstream_unit_id": "U_R0010_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 1539
+    },
+    {
+      "unit_id": "U_R0015_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0015",
+      "reach_id": "R0015",
+      "zone_type": "non_glacier",
+      "area_km2": 5.3595,
+      "elevation_mean": 184.99647373786735,
+      "slope_mean": 22.601486633824795,
+      "aspect_mean": 173.35536670058886,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        274,
+        418
+      ],
+      "downstream_unit_id": null,
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 5955
+    },
+    {
+      "unit_id": "U_R0016_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0016",
+      "reach_id": "R0016",
+      "zone_type": "non_glacier",
+      "area_km2": 1.2123,
+      "elevation_mean": 240.65330366221232,
+      "slope_mean": 24.231118786338698,
+      "aspect_mean": 177.65490684837783,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        250,
+        117
+      ],
+      "downstream_unit_id": "U_R0014_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 1347
+    },
+    {
+      "unit_id": "U_R0017_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0017",
+      "reach_id": "R0017",
+      "zone_type": "non_glacier",
+      "area_km2": 1.413,
+      "elevation_mean": 200.10637036815285,
+      "slope_mean": 16.935864147641876,
+      "aspect_mean": 176.82016337149884,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        222,
+        148
+      ],
+      "downstream_unit_id": "U_R0010_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 1570
+    },
+    {
+      "unit_id": "U_R0018_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0018",
+      "reach_id": "R0018",
+      "zone_type": "non_glacier",
+      "area_km2": 3.0122999999999998,
+      "elevation_mean": 235.39737081147297,
+      "slope_mean": 23.70958977031631,
+      "aspect_mean": 189.77647367117657,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        234,
+        234
+      ],
+      "downstream_unit_id": "U_R0012_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 3347
+    },
+    {
+      "unit_id": "U_R0019_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0019",
+      "reach_id": "R0019",
+      "zone_type": "non_glacier",
+      "area_km2": 2.4849,
+      "elevation_mean": 261.576602724013,
+      "slope_mean": 22.570933576976827,
+      "aspect_mean": 169.19189698652102,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        250,
+        117
+      ],
+      "downstream_unit_id": "U_R0014_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 2761
+    },
+    {
+      "unit_id": "U_R0020_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0020",
+      "reach_id": "R0020",
+      "zone_type": "non_glacier",
+      "area_km2": 2.574,
+      "elevation_mean": 238.3034966055944,
+      "slope_mean": 20.78226958426562,
+      "aspect_mean": 173.77057085959407,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        257,
+        319
+      ],
+      "downstream_unit_id": "U_R0015_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 2860
+    },
+    {
+      "unit_id": "U_R0021_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0021",
+      "reach_id": "R0021",
+      "zone_type": "non_glacier",
+      "area_km2": 1.4301,
+      "elevation_mean": 311.57898052863436,
+      "slope_mean": 25.76632452888347,
+      "aspect_mean": 170.6111978699848,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        273,
+        55
+      ],
+      "downstream_unit_id": "U_R0019_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 1589
+    },
+    {
+      "unit_id": "U_R0022_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0022",
+      "reach_id": "R0022",
+      "zone_type": "non_glacier",
+      "area_km2": 1.0556999999999999,
+      "elevation_mean": 294.6078431645354,
+      "slope_mean": 25.244539794164716,
+      "aspect_mean": 180.01137219712362,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        273,
+        55
+      ],
+      "downstream_unit_id": "U_R0019_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 1173
+    },
+    {
+      "unit_id": "U_R0023_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0023",
+      "reach_id": "R0023",
+      "zone_type": "non_glacier",
+      "area_km2": 0.423,
+      "elevation_mean": 198.67021282765955,
+      "slope_mean": 17.496998176993433,
+      "aspect_mean": 227.20713902435276,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        262,
+        158
+      ],
+      "downstream_unit_id": "U_R0017_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 470
+    },
+    {
+      "unit_id": "U_R0024_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0024",
+      "reach_id": "R0024",
+      "zone_type": "non_glacier",
+      "area_km2": 1.8701999999999999,
+      "elevation_mean": 294.4937439975938,
+      "slope_mean": 24.47998889041289,
+      "aspect_mean": 212.8346195308655,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        281,
+        145
+      ],
+      "downstream_unit_id": "U_R0023_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 2078
+    },
+    {
+      "unit_id": "U_R0025_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0025",
+      "reach_id": "R0025",
+      "zone_type": "non_glacier",
+      "area_km2": 3.0869999999999997,
+      "elevation_mean": 259.8606414282799,
+      "slope_mean": 23.268827806041227,
+      "aspect_mean": 185.06762569902082,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        281,
+        145
+      ],
+      "downstream_unit_id": "U_R0023_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 3430
+    },
+    {
+      "unit_id": "U_R0026_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0026",
+      "reach_id": "R0026",
+      "zone_type": "non_glacier",
+      "area_km2": 2.3688,
+      "elevation_mean": 362.48898177963525,
+      "slope_mean": 25.267599735561337,
+      "aspect_mean": 160.0775296414995,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        262,
+        158
+      ],
+      "downstream_unit_id": "U_R0017_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 2632
+    },
+    {
+      "unit_id": "U_R0027_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0027",
+      "reach_id": "R0027",
+      "zone_type": "non_glacier",
+      "area_km2": 3.5559,
+      "elevation_mean": 242.458871274614,
+      "slope_mean": 25.070891065054415,
+      "aspect_mean": 166.0329523065612,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        274,
+        277
+      ],
+      "downstream_unit_id": "U_R0020_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 3951
+    },
+    {
+      "unit_id": "U_R0028_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0028",
+      "reach_id": "R0028",
+      "zone_type": "non_glacier",
+      "area_km2": 1.7163,
+      "elevation_mean": 333.96958574567384,
+      "slope_mean": 24.27938735063017,
+      "aspect_mean": 147.76859506125956,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        352,
+        245
+      ],
+      "downstream_unit_id": "U_R0030_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 1907
+    },
+    {
+      "unit_id": "U_R0029_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0029",
+      "reach_id": "R0029",
+      "zone_type": "non_glacier",
+      "area_km2": 1.2177,
+      "elevation_mean": 196.5048042727273,
+      "slope_mean": 25.667090911577812,
+      "aspect_mean": 171.2861501579286,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        339,
+        266
+      ],
+      "downstream_unit_id": "U_R0027_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 1353
+    },
+    {
+      "unit_id": "U_R0030_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0030",
+      "reach_id": "R0030",
+      "zone_type": "non_glacier",
+      "area_km2": 0.3438,
+      "elevation_mean": 163.15968602094242,
+      "slope_mean": 23.210309568975763,
+      "aspect_mean": 145.86861541189947,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        339,
+        266
+      ],
+      "downstream_unit_id": "U_R0027_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 382
+    },
+    {
+      "unit_id": "U_R0031_NON_GLACIER",
+      "basin_id": "nan_an",
+      "subbasin_id": "R0031",
+      "reach_id": "R0031",
+      "zone_type": "non_glacier",
+      "area_km2": 2.9061,
+      "elevation_mean": 294.5274080117684,
+      "slope_mean": 26.992474136519238,
+      "aspect_mean": 185.0932972377491,
+      "glacier_fraction": 0.0,
+      "moraine_fraction": 0.0,
+      "outlet_cell_id": [
+        352,
+        245
+      ],
+      "downstream_unit_id": "U_R0030_NON_GLACIER",
+      "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+      "cell_count": 3229
+    }
+  ],
+  "source_ascii": "data_interface/spatial/nan_an_dem_utm50_30m_clipped.asc",
+  "ascii_extent": {
+    "xmin": 734334.682226422,
+    "ymin": 3326292.9539401727,
+    "xmax": 746964.682226422,
+    "ymax": 3340512.9539401727
+  },
+  "ascii_cellsize": 30.0
+}

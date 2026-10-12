@@ -1,0 +1,9 @@
+{
+  "simulation_mode": "CONTINUOUS",
+  "forcing_sources": [],
+  "time_column": "time",
+  "required_fields": ["precipitation", "temperature"],
+  "optional_fields": ["pet", "shortwave", "longwave_net", "sensible_heat", "latent_heat", "rain_heat", "albedo"],
+  "state_policy": "CARRY_OVER",
+  "checkpoint_interval_hours": 720
+}

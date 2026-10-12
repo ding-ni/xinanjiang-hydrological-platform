@@ -1,0 +1,96 @@
+{
+  "schema_version": "2.0",
+  "catalog_function": "calibration_platform.get_calibration_catalog",
+  "synchronous_run_function": "calibration_platform.run_calibration_task",
+  "formal_async": {
+    "module_id": "MULTI-EVENT-CALIBRATION-06",
+    "manager": "calibration_platform.FormalCalibrationTaskManager",
+    "request_schema": "data_interface/formal_calibration_task_schema.json",
+    "profile_config": "config/platform_calibration_profiles.json",
+    "endpoints": {
+      "catalog": "GET /api/calibration/catalog",
+      "submit": "POST /api/calibration/tasks",
+      "list": "GET /api/calibration/tasks",
+      "status": "GET /api/calibration/tasks/{task_id}",
+      "cancel": "POST /api/calibration/tasks/{task_id}/cancel",
+      "results": "GET /api/calibration/tasks/{task_id}/results",
+      "log": "GET /api/calibration/tasks/{task_id}/log",
+      "file": "GET /api/calibration/tasks/{task_id}/files/{filename}"
+    },
+    "request_fields": [
+      "module_id",
+      "task_id",
+      "profile_id",
+      "algorithm",
+      "max_evaluations",
+      "population_size",
+      "generations",
+      "differential_weight",
+      "crossover_probability",
+      "state_strategy",
+      "split_seed",
+      "search_seed"
+    ],
+    "status_options": [
+      "QUEUED",
+      "RUNNING",
+      "CANCELLING",
+      "CANCELLED",
+      "SUCCEEDED",
+      "FAILED",
+      "INTERRUPTED"
+    ],
+    "persistent_files": [
+      "request.json",
+      "resolved_request.json",
+      "status.json",
+      "task.log",
+      "result.json",
+      "output/*"
+    ]
+  },
+  "production_async": {
+    "module_id": "PRODUCTION-CALIBRATION-10",
+    "manager": "calibration_platform.ProductionCalibrationTaskManager",
+    "request_schema": "data_interface/production_calibration_workflow_schema.json",
+    "workflow_config": "config/production_calibration_workflows.json",
+    "endpoints": {
+      "catalog": "GET /api/calibration/workflows/catalog",
+      "submit": "POST /api/calibration/workflows/tasks",
+      "list": "GET /api/calibration/workflows/tasks",
+      "status": "GET /api/calibration/workflows/tasks/{task_id}",
+      "cancel": "POST /api/calibration/workflows/tasks/{task_id}/cancel",
+      "results": "GET /api/calibration/workflows/tasks/{task_id}/results",
+      "log": "GET /api/calibration/workflows/tasks/{task_id}/log",
+      "file": "GET /api/calibration/workflows/tasks/{task_id}/files/{filename}"
+    },
+    "stages": [
+      "CAL-WLM-BOUNDARY-07",
+      "CAL-MULTI-SEED-08",
+      "CAL-CONTINUOUS-BALANCE-09",
+      "CAL-PRODUCTION-GATE-10"
+    ],
+    "request_fields": [
+      "module_id",
+      "task_id",
+      "workflow_id",
+      "algorithm",
+      "max_evaluations",
+      "population_size",
+      "generations",
+      "differential_weight",
+      "crossover_probability",
+      "state_strategy",
+      "split_seed",
+      "search_seeds",
+      "wlm_upper_bounds_mm"
+    ],
+    "outcome_options": ["PRODUCTION_APPROVED", "REVIEW_REQUIRED"],
+    "note": "SUCCEEDED means all workflow stages executed. Only PRODUCTION_APPROVED means the parameter set passed every configured production gate."
+  },
+  "synchronous_modes": {
+    "mode_options": ["ROUTING_ONLY", "RUNOFF_ONLY", "JOINT"],
+    "algorithm_options": ["GRID_SEARCH", "RANDOM_SEARCH", "DIFFERENTIAL_EVOLUTION"],
+    "note": "The synchronous service is retained for short routing and single-grid tasks. Formal 208-event calibration must use the asynchronous manager."
+  }
+}

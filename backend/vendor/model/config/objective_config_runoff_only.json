@@ -1,0 +1,9 @@
+{
+  "method": "WEIGHTED_SUM",
+  "terms": [
+    {"metric": "RUNOFF_DEPTH_ERROR", "weight": 0.6, "scale": 100.0, "target": 0.0},
+    {"metric": "WATER_BALANCE_ERROR", "weight": 0.4, "scale": 0.001, "target": 0.0}
+  ],
+  "scope": "RUNOFF_ONLY",
+  "note": "没有汇流结果时不要用出口流量NSE率定单网格产流参数"
+}

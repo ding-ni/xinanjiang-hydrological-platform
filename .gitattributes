@@ -1,0 +1,16 @@
+# Preserve exact bytes for model provenance and frozen-source hash checks.
+* -text
+
+*.nc binary
+*.npz binary
+*.tif binary
+*.tiff binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.docx binary
+*.pptx binary
+*.xlsx binary
+*.mdb binary
+*.accdb binary
+*.zip binary

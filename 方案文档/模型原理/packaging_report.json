@@ -1,0 +1,32 @@
+{
+  "status": "generated",
+  "pptx": "新安江水文模型原理\\新安江水文模型原理与技术路线图_可编辑.pptx",
+  "summary": {
+    "slides": 1,
+    "pictures": 30,
+    "fullSlidePictures": 0,
+    "nativeShapes": 50,
+    "nativeLines": 48,
+    "nativeArrowLines": 22,
+    "nativeArrowheads": 23,
+    "nativeDashedLines": 8,
+    "nativeTables": 0,
+    "editableTextBodies": 73,
+    "semanticTextBlocks": 17,
+    "mergedMultilineBlocks": 17,
+    "splitTextBoxesPrevented": 17,
+    "unwantedSplitTextBoxes": 0,
+    "manualTextBodies": 73,
+    "ocrDerivedTextBodies": 0,
+    "lineTraceTextBodies": 56,
+    "paragraphTraceTextBodies": 17,
+    "textOverflowRiskBodies": 0,
+    "croppedPictures": 0,
+    "effectClearedObjects": 98,
+    "effectXmlNodesCleared": 98
+  },
+  "limitations": [
+    "Small icons are source-derived PNG crops, not vector redraws.",
+    "The source has a subtle bitmap background texture; the editable version uses a clean white/native shape background."
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "module_id": "DQ-PRECIP-IDW-01",
+  "task_id": "PRECIP-20260818-001",
+  "project_root": ".",
+  "station_dir": "external_data/station_hourly",
+  "template_grid_dir": "external_data/original_1km_hourly",
+  "output_dir": "output/corrected_1km_hourly",
+  "grid_static": "data_interface/runoff_2017/grid_static.csv",
+  "start_year": 1959,
+  "end_year": 2025,
+  "idw_power": 2.0,
+  "minimum_stations": 1,
+  "zero_only_station_year_policy": "RECLASSIFY_AS_MISSING",
+  "overwrite": false
+}

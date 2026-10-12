@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "module_id": "XAJ-KEY-SENSITIVITY-12",
+  "state_strategy": "CONTINUOUS",
+  "warmup_hours": 168,
+  "split_seed": 42,
+  "calibration_ratio": 0.667,
+  "validation_ratio": 0.201,
+  "baseline_parameter_set": "../validation/production_calibration_monthly_pet_20260819/formal_runs/stability_WLM_100_seed_20260819/resolved_runoff_parameter_set.json",
+  "event_catalog": "../data_interface/event_catalog/nananxi_flood_event_catalog_qc_20260819.json",
+  "precipitation_directory": "../data_interface/precipitation_qc_20260819/1km_hourly",
+  "event_quality_config": "event_quality_config.json",
+  "pet_config": "pet_forcing_assumed_monthly.json",
+  "initial_land_state": "initial_state_land.json",
+  "objective_config": "objective_config_event.json",
+  "qualification_config": "qualification_config_event.json",
+  "parameters": {
+    "WLM": [50.0, 70.0, 85.0, 100.0, 105.0],
+    "B": [0.4, 0.6, 0.8, 1.0, 1.2],
+    "WM": [110.0, 125.0, 145.0, 175.0, 210.0],
+    "SM": [12.0, 20.0, 28.0, 40.0, 55.0]
+  },
+  "constraints": [
+    "WM > WUM + WLM",
+    "Only one parameter changes at a time; all others use the supplied baseline parameter set.",
+    "The first event uses the fixed warm-up; land and routing states are then carried through every observed inter-event hour.",
+    "This is a diagnostic screening experiment and not a replacement for multi-parameter calibration."
+  ]
+}

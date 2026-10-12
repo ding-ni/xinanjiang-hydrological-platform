@@ -1,0 +1,5 @@
+{
+  "datasets": [],
+  "sourceStatus": "missing-required-inputs",
+  "missingInputs": ["小时降水", "出口流量", "气温", "蒸发", "积雪/冻土/冰川驱动"]
+}

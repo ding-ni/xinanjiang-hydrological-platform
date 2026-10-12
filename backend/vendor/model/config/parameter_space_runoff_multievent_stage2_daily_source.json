@@ -1,0 +1,30 @@
+{
+  "scope": "Nan'an-Xufan stage-2 hourly XAJ runoff calibration with physically parameterized source separation",
+  "time_step_hours": 1,
+  "parameters": [
+    {"name": "runoff.WM", "minimum": 120.0, "maximum": 240.0, "calibratable": true, "unit": "mm", "module": "XAJ_RUNOFF", "basis": "first-round range retained"},
+    {"name": "runoff.WUM", "minimum": 5.0, "maximum": 30.0, "calibratable": true, "unit": "mm", "module": "XAJ_ET", "basis": "lower-bound diagnostic expanded from 10 mm to 5 mm"},
+    {"name": "runoff.WLM", "minimum": 40.0, "maximum": 100.0, "calibratable": true, "unit": "mm", "module": "XAJ_ET", "basis": "reference value 80 mm retained inside range"},
+    {"name": "runoff.B", "minimum": 0.05, "maximum": 0.80, "calibratable": true, "unit": "1", "module": "XAJ_RUNOFF", "basis": "upper-bound diagnostic expanded for sensitivity test"},
+    {"name": "runoff.SM", "minimum": 8.0, "maximum": 60.0, "calibratable": true, "unit": "mm", "module": "XAJ_SOURCE_SEPARATION", "basis": "first-round interior optimum with modest extension"},
+    {"name": "runoff.EX", "minimum": 0.5, "maximum": 2.5, "calibratable": true, "unit": "1", "module": "XAJ_SOURCE_SEPARATION", "basis": "first-round range retained"},
+    {"name": "runoff.K_total_day", "minimum": 0.30, "maximum": 0.90, "calibratable": true, "unit": "1/day", "module": "XAJ_SOURCE_SEPARATION", "basis": "daily total free-water outflow; converted to hourly while preserving 24-hour recession"},
+    {"name": "runoff.groundwater_fraction", "minimum": 0.02, "maximum": 0.80, "calibratable": true, "unit": "fraction", "module": "XAJ_SOURCE_SEPARATION", "basis": "KG share of total free-water outflow; broad diagnostic range includes report ratio"},
+    {"name": "runoff.IM", "minimum": 0.0001, "maximum": 0.08, "calibratable": true, "unit": "fraction", "module": "XAJ_RUNOFF", "basis": "first-round interior optimum with modest extension"}
+  ],
+  "frozen_parameters": {
+    "runoff.KC": {"value": 0.89, "reason": "hourly PET is assumed; calibrate KC with continuous observed PET and water balance"},
+    "runoff.C": {"value": 0.37, "reason": "deep evapotranspiration is weakly identifiable from flood events"}
+  },
+  "parameterization": {
+    "equation": "K_total_hour=1-(1-K_total_day)^(1/24); KI=K_total_hour*(1-groundwater_fraction); KG=K_total_hour*groundwater_fraction",
+    "reason": "avoid independent hourly KI/KG bounds that do not preserve a daily recession interpretation"
+  },
+  "constraints": [
+    "runoff.WM > runoff.WUM + runoff.WLM",
+    "0 <= runoff.K_total_day < 1",
+    "0 <= runoff.groundwater_fraction <= 1",
+    "routing parameters are frozen at validation/calibration_routing_2017/best_routing_parameters.json"
+  ],
+  "status": "STAGE2_BOUNDARY_AND_IDENTIFIABILITY_TEST_NOT_FINAL_PRODUCTION_BOUNDS"
+}

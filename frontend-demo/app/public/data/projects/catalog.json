@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0",
+  "updatedAt": "2026-08-02",
+  "modelFramework": {
+    "id": "distributed-xinanjiang",
+    "name": "分布式新安江模型"
+  },
+  "projects": [
+    {
+      "id": "nananxi-xufan",
+      "name": "南安溪-徐畈",
+      "manifest": "./nananxi-xufan/manifest.json"
+    },
+    {
+      "id": "llpq",
+      "name": "里龙普曲",
+      "manifest": "./llpq/manifest.json"
+    },
+    {
+      "id": "selinco",
+      "name": "色林错",
+      "manifest": "./selinco/manifest.json"
+    }
+  ]
+}

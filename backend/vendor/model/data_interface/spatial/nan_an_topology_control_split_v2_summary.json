@@ -1,0 +1,27 @@
+{
+  "status": "FORMAL_CONTROL_SPLIT",
+  "basin_id": "nan_an",
+  "base_reach_count": 31,
+  "split_reach_count": 32,
+  "unit_count": 32,
+  "control_node_count": 1,
+  "control_nodes": [
+    {
+      "node_id": "N_CONTROL_XUFAN_70115800",
+      "control_id": "xufan_70115800",
+      "name": "徐畈（二）出口控制断面",
+      "cell": [
+        268,
+        291
+      ],
+      "original_reach_id": "R0020",
+      "split_index": 14,
+      "upstream_reach_id": "R0020_UP",
+      "downstream_reach_id": "R0020_DOWN",
+      "status": "CONTROL_NODE_SPLIT",
+      "snap_distance_m": 20.133075888634334
+    }
+  ],
+  "cell_size_m": 30.0,
+  "stream_threshold_km2": 1.0
+}

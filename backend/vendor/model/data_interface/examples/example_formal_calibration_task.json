@@ -1,0 +1,14 @@
+{
+  "module_id": "MULTI-EVENT-CALIBRATION-06",
+  "task_id": "CAL-20260818-001",
+  "profile_id": "NANAN_STAGE2_208",
+  "algorithm": "DIFFERENTIAL_EVOLUTION",
+  "max_evaluations": 120,
+  "population_size": 24,
+  "generations": 4,
+  "differential_weight": 0.8,
+  "crossover_probability": 0.7,
+  "state_strategy": "OBSERVED_FLOW_ANCHORED",
+  "split_seed": 42,
+  "search_seed": 20260818
+}

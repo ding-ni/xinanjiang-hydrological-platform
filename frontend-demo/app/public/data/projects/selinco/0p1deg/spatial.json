@@ -1,0 +1,7 @@
+{
+  "basin": "../../../selinco/grid-0p1deg.geojson",
+  "rivers": "../../../selinco/rivers.geojson",
+  "grid": "../../../selinco/grid-0p1deg.geojson",
+  "cells": "../../../selinco/cells-0p1deg.json",
+  "terrain": "../../../selinco/dem-0p1deg.png"
+}

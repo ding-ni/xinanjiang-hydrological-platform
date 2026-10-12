@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "module_id": "STATE-INITIALIZATION-03",
+  "default_strategy": "FIXED_WARMUP",
+  "fixed_warmup_hours": 168,
+  "allowed_warmup_hours": [168, 720, 1440],
+  "pet_mm_h": 0.08,
+  "pet_config": "pet_forcing_assumed_monthly.json",
+  "require_source_station_count": true,
+  "routing_mapping_warning_tolerance": 0.000001,
+  "maximum_routing_mapping_relative_error": 0.05,
+  "observed_flow_anchor": {
+    "enabled_by_default": false,
+    "component": "RG",
+    "distribution": "UPSTREAM_UNIT_AREA_WEIGHTED"
+  },
+  "checkpoint": {
+    "schema_version": "1.0",
+    "write_per_grid_land_state": true,
+    "write_routing_state": true
+  },
+  "note": "All values are platform configuration, not constants embedded in XAJ formulas."
+}

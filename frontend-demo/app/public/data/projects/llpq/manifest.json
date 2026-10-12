@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "1.0",
+  "id": "llpq",
+  "name": "里龙普曲",
+  "basinType": "cold-region-single-outlet",
+  "modelFrameworkId": "distributed-xinanjiang",
+  "source": {
+    "type": "verified-local-case",
+    "path": "实际案例/里龙普曲案例",
+    "note": "当前只登记已核实的 DEM、边界、河流和出口；缺失的小时驱动与流量资料不会由前端虚构。"
+  },
+  "capabilities": {
+    "coldRegion": true,
+    "lakeBalance": false,
+    "multiOutlet": false,
+    "continuousSimulation": false,
+    "continuousCalibration": false,
+    "eventCalibration": false,
+    "stateContinuation": false,
+    "forecast": false
+  },
+  "resolutions": {
+    "1km": {
+      "label": "1 km",
+      "status": "spatial-only",
+      "statusLabel": "仅空间资料",
+      "spatialStatus": "source-verified",
+      "inputStatus": "missing",
+      "missingInputs": ["小时降水", "出口流量", "气温", "蒸发", "积雪/冻土/冰川驱动"],
+      "spatialManifest": "./1km/spatial.json",
+      "datasetCatalog": "./1km/datasets.json",
+      "fixtureCatalog": "./1km/fixtures.json"
+    },
+    "0p1deg": {
+      "label": "0.1°",
+      "status": "spatial-only",
+      "statusLabel": "仅空间资料",
+      "spatialStatus": "source-verified-preview-pending",
+      "inputStatus": "missing",
+      "missingInputs": ["小时降水", "出口流量", "气温", "蒸发", "积雪/冻土/冰川驱动"],
+      "spatialManifest": "./0p1deg/spatial.json",
+      "datasetCatalog": "./0p1deg/datasets.json",
+      "fixtureCatalog": "./0p1deg/fixtures.json"
+    }
+  }
+}

@@ -1,0 +1,914 @@
+{
+  "tool": "extract_source_crops.py",
+  "manifest": "F:\\新安江水文模型\\新安江水文模型原理\\crop_manifest.json",
+  "source_image": "F:\\新安江水文模型\\新安江水文模型原理\\source.png",
+  "source_size_px": [
+    1055,
+    1491
+  ],
+  "out_dir": "F:\\新安江水文模型\\新安江水文模型原理\\crops",
+  "outputs": [
+    {
+      "id": "s1_rain",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s1_rain.png",
+      "requested_bbox_px": [
+        49,
+        210,
+        103,
+        257
+      ],
+      "source_crop_px": [
+        49,
+        210,
+        103,
+        257
+      ],
+      "width": 54,
+      "height": 47,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2538,
+      "nontransparent_px": 2538,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s1_evap",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s1_evap.png",
+      "requested_bbox_px": [
+        251,
+        210,
+        303,
+        258
+      ],
+      "source_crop_px": [
+        251,
+        210,
+        303,
+        258
+      ],
+      "width": 52,
+      "height": 48,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2496,
+      "nontransparent_px": 2496,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s1_terrain",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s1_terrain.png",
+      "requested_bbox_px": [
+        448,
+        204,
+        500,
+        258
+      ],
+      "source_crop_px": [
+        448,
+        204,
+        500,
+        258
+      ],
+      "width": 52,
+      "height": 54,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2808,
+      "nontransparent_px": 2808,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s1_hydro",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s1_hydro.png",
+      "requested_bbox_px": [
+        655,
+        211,
+        707,
+        266
+      ],
+      "source_crop_px": [
+        655,
+        211,
+        707,
+        266
+      ],
+      "width": 52,
+      "height": 55,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2860,
+      "nontransparent_px": 2860,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s1_basin",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s1_basin.png",
+      "requested_bbox_px": [
+        850,
+        210,
+        906,
+        267
+      ],
+      "source_crop_px": [
+        850,
+        210,
+        906,
+        267
+      ],
+      "width": 56,
+      "height": 57,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 3192,
+      "nontransparent_px": 3192,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s2_db",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s2_db.png",
+      "requested_bbox_px": [
+        58,
+        419,
+        91,
+        456
+      ],
+      "source_crop_px": [
+        58,
+        419,
+        91,
+        456
+      ],
+      "width": 33,
+      "height": 37,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 1221,
+      "nontransparent_px": 1221,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s2_clock",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s2_clock.png",
+      "requested_bbox_px": [
+        322,
+        420,
+        364,
+        462
+      ],
+      "source_crop_px": [
+        322,
+        420,
+        364,
+        462
+      ],
+      "width": 42,
+      "height": 42,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 1764,
+      "nontransparent_px": 1764,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s2_basin",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s2_basin.png",
+      "requested_bbox_px": [
+        573,
+        411,
+        629,
+        463
+      ],
+      "source_crop_px": [
+        573,
+        411,
+        629,
+        463
+      ],
+      "width": 56,
+      "height": 52,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2912,
+      "nontransparent_px": 2912,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s2_gear",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s2_gear.png",
+      "requested_bbox_px": [
+        811,
+        416,
+        857,
+        462
+      ],
+      "source_crop_px": [
+        811,
+        416,
+        857,
+        462
+      ],
+      "width": 46,
+      "height": 46,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2116,
+      "nontransparent_px": 2116,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s3_rain",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s3_rain.png",
+      "requested_bbox_px": [
+        34,
+        663,
+        86,
+        712
+      ],
+      "source_crop_px": [
+        34,
+        663,
+        86,
+        712
+      ],
+      "width": 52,
+      "height": 49,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2548,
+      "nontransparent_px": 2548,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s3_evap",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s3_evap.png",
+      "requested_bbox_px": [
+        148,
+        639,
+        236,
+        697
+      ],
+      "source_crop_px": [
+        148,
+        639,
+        236,
+        697
+      ],
+      "width": 88,
+      "height": 58,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 5104,
+      "nontransparent_px": 5104,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s3_reservoir",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s3_reservoir.png",
+      "requested_bbox_px": [
+        348,
+        639,
+        411,
+        693
+      ],
+      "source_crop_px": [
+        348,
+        639,
+        411,
+        693
+      ],
+      "width": 63,
+      "height": 54,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 3402,
+      "nontransparent_px": 3402,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s3_waves",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s3_waves.png",
+      "requested_bbox_px": [
+        888,
+        809,
+        1014,
+        837
+      ],
+      "source_crop_px": [
+        888,
+        809,
+        1014,
+        837
+      ],
+      "width": 126,
+      "height": 28,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 3528,
+      "nontransparent_px": 3528,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s4_drops",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s4_drops.png",
+      "requested_bbox_px": [
+        73,
+        936,
+        117,
+        980
+      ],
+      "source_crop_px": [
+        73,
+        936,
+        117,
+        980
+      ],
+      "width": 44,
+      "height": 44,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 1936,
+      "nontransparent_px": 1936,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s4_slope",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s4_slope.png",
+      "requested_bbox_px": [
+        382,
+        935,
+        440,
+        975
+      ],
+      "source_crop_px": [
+        382,
+        935,
+        440,
+        975
+      ],
+      "width": 58,
+      "height": 40,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2320,
+      "nontransparent_px": 2320,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s4_river",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s4_river.png",
+      "requested_bbox_px": [
+        684,
+        931,
+        750,
+        981
+      ],
+      "source_crop_px": [
+        684,
+        931,
+        750,
+        981
+      ],
+      "width": 66,
+      "height": 50,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 3300,
+      "nontransparent_px": 3300,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s4_gauge",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s4_gauge.png",
+      "requested_bbox_px": [
+        929,
+        929,
+        985,
+        974
+      ],
+      "source_crop_px": [
+        929,
+        929,
+        985,
+        974
+      ],
+      "width": 56,
+      "height": 45,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2520,
+      "nontransparent_px": 2520,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s5_bars",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s5_bars.png",
+      "requested_bbox_px": [
+        72,
+        1117,
+        111,
+        1156
+      ],
+      "source_crop_px": [
+        72,
+        1117,
+        111,
+        1156
+      ],
+      "width": 39,
+      "height": 39,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 1521,
+      "nontransparent_px": 1521,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s5_magnifier",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s5_magnifier.png",
+      "requested_bbox_px": [
+        194,
+        1117,
+        248,
+        1164
+      ],
+      "source_crop_px": [
+        194,
+        1117,
+        248,
+        1164
+      ],
+      "width": 54,
+      "height": 47,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2538,
+      "nontransparent_px": 2538,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s5_sliders",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s5_sliders.png",
+      "requested_bbox_px": [
+        326,
+        1116,
+        366,
+        1150
+      ],
+      "source_crop_px": [
+        326,
+        1116,
+        366,
+        1150
+      ],
+      "width": 40,
+      "height": 34,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 1360,
+      "nontransparent_px": 1360,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s5_nse",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s5_nse.png",
+      "requested_bbox_px": [
+        530,
+        1118,
+        574,
+        1154
+      ],
+      "source_crop_px": [
+        530,
+        1118,
+        574,
+        1154
+      ],
+      "width": 44,
+      "height": 36,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 1584,
+      "nontransparent_px": 1584,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s5_curve",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s5_curve.png",
+      "requested_bbox_px": [
+        718,
+        1114,
+        775,
+        1153
+      ],
+      "source_crop_px": [
+        718,
+        1114,
+        775,
+        1153
+      ],
+      "width": 57,
+      "height": 39,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2223,
+      "nontransparent_px": 2223,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s5_clock",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s5_clock.png",
+      "requested_bbox_px": [
+        816,
+        1117,
+        862,
+        1156
+      ],
+      "source_crop_px": [
+        816,
+        1117,
+        862,
+        1156
+      ],
+      "width": 46,
+      "height": 39,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 1794,
+      "nontransparent_px": 1794,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s5_fit",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s5_fit.png",
+      "requested_bbox_px": [
+        940,
+        1117,
+        991,
+        1157
+      ],
+      "source_crop_px": [
+        940,
+        1117,
+        991,
+        1157
+      ],
+      "width": 51,
+      "height": 40,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2040,
+      "nontransparent_px": 2040,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s6_flow",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s6_flow.png",
+      "requested_bbox_px": [
+        62,
+        1317,
+        181,
+        1378
+      ],
+      "source_crop_px": [
+        62,
+        1317,
+        181,
+        1378
+      ],
+      "width": 119,
+      "height": 61,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 7259,
+      "nontransparent_px": 7259,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s6_peak",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s6_peak.png",
+      "requested_bbox_px": [
+        265,
+        1317,
+        392,
+        1377
+      ],
+      "source_crop_px": [
+        265,
+        1317,
+        392,
+        1377
+      ],
+      "width": 127,
+      "height": 60,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 7620,
+      "nontransparent_px": 7620,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s6_section",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s6_section.png",
+      "requested_bbox_px": [
+        487,
+        1322,
+        582,
+        1380
+      ],
+      "source_crop_px": [
+        487,
+        1322,
+        582,
+        1380
+      ],
+      "width": 95,
+      "height": 58,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 5510,
+      "nontransparent_px": 5510,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s6_warn",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s6_warn.png",
+      "requested_bbox_px": [
+        718,
+        1342,
+        769,
+        1383
+      ],
+      "source_crop_px": [
+        718,
+        1342,
+        769,
+        1383
+      ],
+      "width": 51,
+      "height": 41,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2091,
+      "nontransparent_px": 2091,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s6_monitor",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s6_monitor.png",
+      "requested_bbox_px": [
+        900,
+        1341,
+        963,
+        1385
+      ],
+      "source_crop_px": [
+        900,
+        1341,
+        963,
+        1385
+      ],
+      "width": 63,
+      "height": 44,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 2772,
+      "nontransparent_px": 2772,
+      "edge_nontransparent_fraction": 1.0
+    },
+    {
+      "id": "s6_people",
+      "plan_element_id": null,
+      "output_path": "F:\\新安江水文模型\\新安江水文模型原理\\crops\\s6_people.png",
+      "requested_bbox_px": [
+        259,
+        1425,
+        315,
+        1459
+      ],
+      "source_crop_px": [
+        259,
+        1425,
+        315,
+        1459
+      ],
+      "width": 56,
+      "height": 34,
+      "alpha_mode": "plain",
+      "alpha_inset_px": null,
+      "source_kind": "source_icon_crop",
+      "reason": "Tight icon crop from the source image.",
+      "warnings": [],
+      "alpha_min": 255,
+      "alpha_max": 255,
+      "transparent_px": 0,
+      "opaque_px": 1904,
+      "nontransparent_px": 1904,
+      "edge_nontransparent_fraction": 1.0
+    }
+  ],
+  "warnings": [],
+  "debug_sheet": "F:\\新安江水文模型\\新安江水文模型原理\\crop_debug_sheet.png"
+}

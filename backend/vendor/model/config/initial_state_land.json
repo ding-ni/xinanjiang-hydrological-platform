@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "state_template_id": "NANANXI_NON_GLACIER_FIXED_INITIAL_V1",
+  "representation": "CAPACITY_FRACTION",
+  "swe": 0.0,
+  "snow_liquid": 0.0,
+  "WU_fraction": 0.6,
+  "WL_fraction": 0.6875,
+  "WD_fraction": 0.6,
+  "S_fraction": 0.3333333333333333,
+  "FR": 0.5,
+  "reference_absolute_mm_at_reference_parameters": {
+    "WU": 12.0,
+    "WL": 55.0,
+    "WD": 30.0,
+    "S": 5.0
+  },
+  "note": "Fractions keep the warm-up state valid when WM and SM change during calibration. Event-start states must come from STATE-INITIALIZATION-03."
+}

@@ -1,0 +1,66 @@
+{
+  "datasets": [
+    {
+      "id": "XF-OBS-RAIN-HOURLY",
+      "name": "南安溪逐小时实测雨量",
+      "type": "observed-precipitation-hourly",
+      "role": "observation",
+      "catalog": "../observations/catalog.json",
+      "preview": "../observations/previews/latest-72h.json",
+      "recordCount": 2944497
+    },
+    {
+      "id": "XF-OBS-RIVER-HOURLY",
+      "name": "徐畈逐小时实测水位流量",
+      "type": "observed-river-hourly",
+      "role": "observation",
+      "catalog": "../observations/catalog.json",
+      "preview": "../observations/previews/latest-72h.json",
+      "recordCount": 515422
+    },
+    {
+      "id": "XF-FLOOD-EVENTS",
+      "name": "徐畈洪水场次",
+      "type": "flood-event-catalog",
+      "role": "catalog",
+      "file": "../observations/flood-events.json",
+      "dataPackages": "../observations/event-data-packages.json",
+      "eventCount": 226
+    },
+    {
+      "id": "XF-MODEL-INPUT-PREPARATION",
+      "name": "南安溪模型输入准备目录",
+      "type": "model-input-preparation-catalog",
+      "role": "input-catalog",
+      "file": "../input-preparation.json"
+    },
+    {
+      "id": "XF-OBS-RAIN-GRID-0P1DEG-NC",
+      "name": "南安溪0.1°逐小时实测降雨场",
+      "type": "observed-precipitation-grid-hourly",
+      "role": "external-model-input",
+      "format": "NetCDF-4 / CF-1.10",
+      "years": 67,
+      "validCells": 4,
+      "effectiveAreaKm2": 71.866,
+      "variable": "precipitation",
+      "units": "mm h-1",
+      "filePattern": "02_模型输入资料/降雨资料/0.1度逐小时降雨场/nananxi_precip_hourly_0p1deg_{year}.nc",
+      "preview": "../observations/previews/historical-rain-grid-72h.json",
+      "purpose": "尺度试验",
+      "catalog": "../input-preparation.json"
+    },
+    {
+      "id": "XF-OBS-OUTLET-XLSX",
+      "name": "徐畈出口逐小时实测水位流量",
+      "type": "observed-outlet-hydrology-hourly",
+      "role": "external-model-input",
+      "format": "Excel",
+      "recordCount": 515422,
+      "catalog": "../input-preparation.json"
+    }
+  ],
+  "sourceStatus": "observed-data-ready",
+  "sourceSummary": "0.1°方案引用同一套逐小时站点实测资料与降雨场；网格尺度只改变模型计算分辨率，资料按覆盖时段统一管理。",
+  "missingInputs": ["预报降雨", "模型初始状态", "产流与汇流计算服务", "正式预报产品"]
+}

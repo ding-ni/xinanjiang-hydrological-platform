@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "review_id": "XUFAN_CONTROL_DATA_REVIEW_20260819",
+  "status": "REVIEW_REQUIRED",
+  "production_clearance": false,
+  "affected_years": [2014, 2017],
+  "evidence_report": "../validation/hydrology_audit_2014_2017_20260819/control_section_hydrology_audit_report.json",
+  "confirmed_facts": [
+    "Raw st_river_r.xlsx and the platform workbook agree for all 17520 target-year hours.",
+    "The database maps CGB087012 to the gauge name Xufan; the spatial registry uses section 70115800 named Xufan (II).",
+    "Reservoir-operation tables in xufan.mdb are empty and Regulater.dat contains no station codes.",
+    "Several rainfall gauges are reservoir-named, but no release or storage series is supplied."
+  ],
+  "unresolved_items": [
+    "Confirm whether CGB087012 and registered section 70115800 are the same control-section record series.",
+    "Provide measured-versus-interpolated quality flags for the long monotonic flow segments in 2014 and 2017.",
+    "Confirm whether all-zero station months mean measured zero rain or absence of continuous observations.",
+    "Confirm whether upstream reservoir releases materially affect the Xufan hydrograph and provide operation records if so."
+  ],
+  "usage_policy": {
+    "event_program_smoke_test": true,
+    "event_calibration_after_event_qc": true,
+    "continuous_production_calibration": false,
+    "production_parameter_release": false
+  }
+}

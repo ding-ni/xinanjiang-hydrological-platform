@@ -1,0 +1,41 @@
+{
+  "param_set_id": "NANANXI_XAJ_REFERENCE_V1",
+  "model": "XAJ_THREE_SOURCE",
+  "time_step_hours": 1,
+  "parameters": {
+    "KC": 0.89,
+    "WM": 150.0,
+    "WUM": 20.0,
+    "WLM": 80.0,
+    "C": 0.37,
+    "B": 0.16,
+    "SM": 15.0,
+    "EX": 1.6,
+    "KI": 0.0202135350180443,
+    "KG": 0.0249300265222546,
+    "source_coefficient_time_step_hours": 1.0,
+    "IM": 0.0055,
+    "CI": 0.76,
+    "CG": 0.988,
+    "KE": 1.0,
+    "XE": 0.34,
+    "conversion": {
+      "enabled": false,
+      "base_infiltration_capacity_mm_h": 20.0,
+      "slope_threshold_degree": 20.0,
+      "rain_intensity_threshold_mm_h": 20.0,
+      "slope_reduction_coefficient": 1.0,
+      "transition_width_degree": 10.0,
+      "transition_width_mm_h": 10.0
+    }
+  },
+  "source_time_step_conversion": {
+    "source_time_step_hours": 24,
+    "target_time_step_hours": 1,
+    "source_KI": 0.3,
+    "source_KG": 0.37,
+    "method": "preserve 24-hour remaining free-water fraction and KI/KG split ratio",
+    "equation": "K_total_hour=1-(1-KI_day-KG_day)^(1/24)"
+  },
+  "provenance": "项目技术报告日尺度参考值已等效转换为小时系数，尚非独立验证率定结果"
+}

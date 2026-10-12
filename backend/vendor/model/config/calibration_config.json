@@ -1,0 +1,10 @@
+{
+  "algorithm": "DIFFERENTIAL_EVOLUTION",
+  "max_evaluations": 500,
+  "seed": 42,
+  "population_size": 30,
+  "generations": 30,
+  "differential_weight": 0.8,
+  "crossover_probability": 0.7,
+  "available_algorithms": ["GRID_SEARCH", "RANDOM_SEARCH", "DIFFERENTIAL_EVOLUTION"]
+}

@@ -1,0 +1,18 @@
+{
+  "parameters": [
+    {"name": "KC", "minimum": 0.4, "maximum": 1.5, "calibratable": true, "levels": 5, "time_step_dependent": false},
+    {"name": "WM", "minimum": 80.0, "maximum": 250.0, "calibratable": true, "levels": 6, "time_step_dependent": false},
+    {"name": "WUM", "minimum": 10.0, "maximum": 60.0, "calibratable": true, "levels": 5, "time_step_dependent": false},
+    {"name": "WLM", "minimum": 40.0, "maximum": 150.0, "calibratable": true, "levels": 5, "time_step_dependent": false},
+    {"name": "C", "minimum": 0.05, "maximum": 0.5, "calibratable": true, "levels": 5, "time_step_dependent": false},
+    {"name": "B", "minimum": 0.05, "maximum": 0.6, "calibratable": true, "levels": 5, "time_step_dependent": false},
+    {"name": "SM", "minimum": 5.0, "maximum": 80.0, "calibratable": true, "levels": 5, "time_step_dependent": false},
+    {"name": "EX", "minimum": 0.5, "maximum": 2.5, "calibratable": true, "levels": 5, "time_step_dependent": false},
+    {"name": "KI", "minimum": 0.003, "maximum": 0.06, "calibratable": true, "levels": 5, "unit": "1/hour", "time_step_dependent": true},
+    {"name": "KG", "minimum": 0.003, "maximum": 0.06, "calibratable": true, "levels": 5, "unit": "1/hour", "time_step_dependent": true},
+    {"name": "IM", "minimum": 0.0, "maximum": 0.05, "calibratable": true, "levels": 4, "time_step_dependent": false},
+    {"name": "conversion.base_infiltration_capacity_mm_h", "minimum": 2.0, "maximum": 50.0, "calibratable": false, "levels": 5, "time_step_dependent": true}
+  ],
+  "constraints": ["WM >= WUM + WLM", "KI + KG <= 1"],
+  "time_step_hours": 1
+}

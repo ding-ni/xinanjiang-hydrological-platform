@@ -1,0 +1,96 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "nananxi-xufan",
+  "description": "南安溪-徐畈标准资料字段对应关系。原始文件只读，标准产品由转换程序生成。",
+  "sourceFiles": [
+    {
+      "file": "floodcode.xlsx",
+      "role": "洪水场次原始目录",
+      "fields": {
+        "洪号": "sourceFloodNo",
+        "起始时间": "start",
+        "终止时间": "end"
+      },
+      "rule": "原始洪号永久保留，不因新增、拆分、合并而重新排序。"
+    },
+    {
+      "file": "st_river_r.xlsx",
+      "role": "徐畈出口水位流量",
+      "fields": {
+        "时间": "time",
+        "水位": "levelM",
+        "流量": "flowM3s"
+      },
+      "rule": "出口水文资料使用Excel作为人工核查和交付格式，内部按小时读取。"
+    },
+    {
+      "file": "xufan.mdb",
+      "role": "原始水文资料与程序数据库",
+      "fields": {
+        "原始表字段": "转换程序字段"
+      },
+      "rule": "只作为源资料备份和转换依据，不直接由浏览器写入。"
+    },
+    {
+      "file": "data/",
+      "role": "包老师程序运行配置与源参数",
+      "fields": {
+        "model.par": "sourceParameterFile",
+        "fldxufan.xin": "sourceModelConfigFile"
+      },
+      "rule": "仅登记来源，参数版本必须经过率定、独立检验和人工确认。"
+    }
+  ],
+  "standardProducts": [
+    {
+      "id": "XF-OBS-RAIN-HOURLY",
+      "role": "站点逐小时雨量",
+      "path": "02_模型输入资料/降雨资料/站点逐小时雨量",
+      "fields": ["time", "stationCode", "rainMm"],
+      "stepHours": 1,
+      "updateMode": "append-or-replace-by-time-and-station"
+    },
+    {
+      "id": "XF-OBS-RIVER-HOURLY",
+      "role": "出口逐小时水位流量",
+      "path": "02_模型输入资料/出口水文资料/徐畈出口逐小时水位流量.xlsx",
+      "fields": ["time", "levelM", "flowM3s"],
+      "stepHours": 1,
+      "updateMode": "append-or-replace-by-time"
+    },
+    {
+      "id": "XF-OBS-RAIN-GRID-1KM-NC",
+      "role": "模型原始输入：1公里实测降雨场",
+      "path": "02_模型输入资料/降雨资料/1公里逐小时降雨场",
+      "format": "NetCDF-4 CF-1.10",
+      "variables": ["precipitation"],
+      "rule": "由站点雨量转换程序生成；前端只读取和展示，不重新插值。"
+    },
+    {
+      "id": "XF-OBS-RAIN-GRID-0P1DEG-NC",
+      "role": "模型原始输入：0.1度实测降雨场",
+      "path": "02_模型输入资料/降雨资料/0.1度逐小时降雨场",
+      "format": "NetCDF-4 CF-1.10",
+      "variables": ["precipitation"],
+      "rule": "由1公里产品按有效格点聚合，不能重新做显示插值。"
+    },
+    {
+      "id": "XF-SPATIAL-PREPARATION",
+      "role": "空间与汇流预处理",
+      "path": "02_模型输入资料/空间资料",
+      "fields": ["basinBoundary", "dem", "validGrid", "riverNetwork", "stations", "outlet"],
+      "rule": "DEM、有效栅格、河网和出口保持同一坐标系与网格对齐。"
+    }
+  ],
+  "displayProducts": [
+    {
+      "id": "XF-DISPLAY-RAIN-SMOOTH-IDW",
+      "role": "流域内平滑雨量展示层",
+      "source": "XF-OBS-RAIN-HOURLY",
+      "method": "IDW",
+      "power": 2,
+      "mask": "basinBoundary",
+      "rule": "仅用于水雨情地图显示，不作为产汇流输入，不修改NC数值。"
+    }
+  ]
+}

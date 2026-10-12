@@ -1,0 +1,29 @@
+{
+  "schema_version": "2.0",
+  "time_step_hours": 1.0,
+  "runoff_grid_output": {
+    "primary_key": ["time", "unit_id"],
+    "required": ["time", "unit_id", "zone_type", "area_km2", "RS_mm", "RI_mm", "RG_mm", "quality_flag", "param_set_id"],
+    "component_unit": "mm/time_step"
+  },
+  "spatial_mapping": {
+    "file": "grid_to_unit_weight.csv",
+    "required": ["grid_id", "unit_id", "reach_id", "raw_overlap_area_km2", "adjusted_overlap_area_km2", "source_fraction", "mapping_method"],
+    "constraint": "sum(source_fraction) by grid_id equals 1",
+    "meaning": "Each 1 km runoff grid is split by area overlap among 30 m DEM-derived reach drainage units."
+  },
+  "routing_input": {
+    "primary_key": ["time", "unit_id"],
+    "required": ["time", "unit_id", "RS", "RI", "RG"],
+    "optional_default_zero": ["glacier_fast", "glacier_slow", "glacier_base"],
+    "component_unit": "mm/time_step",
+    "routing_method": "REACH_SEGMENT",
+    "mapping_method": "D8_FLOW_PATH_AREA_OVERLAP"
+  },
+  "routing_outputs": {
+    "reach_flow": ["run_id", "time", "reach_id", "local_inflow_cms", "total_inflow_cms", "outflow_cms"],
+    "control_flow": ["run_id", "time", "control_id", "control_name", "reach_id", "outflow_cms"],
+    "outlet_flow": ["run_id", "time", "outlet_id", "outflow_cms"],
+    "state": "final_routing_state.json"
+  }
+}

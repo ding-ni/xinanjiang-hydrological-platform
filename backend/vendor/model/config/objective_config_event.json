@@ -1,0 +1,11 @@
+{
+  "method": "WEIGHTED_SUM",
+  "terms": [
+    {"metric": "NSE", "weight": 0.3},
+    {"metric": "KGE", "weight": 0.2},
+    {"metric": "PBIAS", "weight": 0.2, "scale": 100.0, "target": 0.0},
+    {"metric": "PEAK_ERROR", "weight": 0.2, "scale": 100.0, "target": 0.0},
+    {"metric": "PEAK_TIME_ERROR", "weight": 0.1, "scale": 24.0, "target": 0.0}
+  ],
+  "note": "权重是示例值，由前端或任务配置修改，不写死在模型中"
+}

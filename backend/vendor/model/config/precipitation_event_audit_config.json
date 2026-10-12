@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "module_id": "PRECIP-EVENT-AUDIT-11",
+  "thresholds": {
+    "maximum_grid_station_total_relative_difference": 0.1,
+    "maximum_event_duration_hours": 720,
+    "maximum_peak_near_start_hours": 6,
+    "maximum_end_flow_to_peak_ratio": 0.2,
+    "maximum_runoff_to_precipitation_ratio": 1.2,
+    "minimum_river_completeness": 0.999,
+    "minimum_grid_rain_completeness": 0.999,
+    "minimum_reporting_station_count_for_spatial_check": 2,
+    "maximum_abs_annual_climate_balance_residual_mm": 150.0
+  },
+  "notes": [
+    "Thresholds are diagnostic platform configuration, not XAJ equations.",
+    "A single-station event can be simulated but cannot validate spatial interpolation.",
+    "Annual climate residual uses observed runoff, mapped upstream precipitation and assumed PET."
+  ]
+}

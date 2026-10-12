@@ -1,0 +1,22 @@
+{
+  "scope": "Nan'an-Xufan hourly XAJ runoff calibration with routing parameters frozen",
+  "time_step_hours": 1,
+  "parameters": [
+    {"name": "runoff.KC", "minimum": 0.5, "maximum": 1.3, "calibratable": true, "unit": "1", "module": "XAJ_ET"},
+    {"name": "runoff.WM", "minimum": 120.0, "maximum": 240.0, "calibratable": true, "unit": "mm", "module": "XAJ_RUNOFF"},
+    {"name": "runoff.WUM", "minimum": 10.0, "maximum": 30.0, "calibratable": true, "unit": "mm", "module": "XAJ_ET"},
+    {"name": "runoff.WLM", "minimum": 40.0, "maximum": 80.0, "calibratable": true, "unit": "mm", "module": "XAJ_ET"},
+    {"name": "runoff.B", "minimum": 0.05, "maximum": 0.55, "calibratable": true, "unit": "1", "module": "XAJ_RUNOFF"},
+    {"name": "runoff.C", "minimum": 0.10, "maximum": 0.50, "calibratable": true, "unit": "1", "module": "XAJ_ET"},
+    {"name": "runoff.SM", "minimum": 8.0, "maximum": 50.0, "calibratable": true, "unit": "mm", "module": "XAJ_SOURCE_SEPARATION"},
+    {"name": "runoff.EX", "minimum": 0.5, "maximum": 2.5, "calibratable": true, "unit": "1", "module": "XAJ_SOURCE_SEPARATION"},
+    {"name": "runoff.KI", "minimum": 0.003, "maximum": 0.060, "calibratable": true, "unit": "1/hour", "module": "XAJ_SOURCE_SEPARATION"},
+    {"name": "runoff.KG", "minimum": 0.003, "maximum": 0.060, "calibratable": true, "unit": "1/hour", "module": "XAJ_SOURCE_SEPARATION"},
+    {"name": "runoff.IM", "minimum": 0.0001, "maximum": 0.050, "calibratable": true, "unit": "fraction", "module": "XAJ_RUNOFF"}
+  ],
+  "constraints": [
+    "runoff.WM > runoff.WUM + runoff.WLM",
+    "runoff.KI + runoff.KG < 0.98",
+    "routing parameters are frozen at validation/calibration_routing_2017/best_routing_parameters.json"
+  ]
+}

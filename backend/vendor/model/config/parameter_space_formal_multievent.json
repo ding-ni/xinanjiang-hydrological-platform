@@ -1,0 +1,21 @@
+{
+  "scope": "Nan'an-Xufan legacy joint runoff-routing multi-event calibration",
+  "time_step_hours": 1,
+  "parameters": [
+    {"name": "runoff.WM", "minimum": 120.0, "maximum": 240.0, "calibratable": true, "levels": 3, "unit": "mm", "module": "XAJ_RUNOFF"},
+    {"name": "runoff.B", "minimum": 0.05, "maximum": 0.55, "calibratable": true, "levels": 3, "unit": "1", "module": "XAJ_RUNOFF"},
+    {"name": "runoff.C", "minimum": 0.10, "maximum": 0.50, "calibratable": true, "levels": 3, "unit": "1", "module": "XAJ_ET"},
+    {"name": "runoff.SM", "minimum": 8.0, "maximum": 50.0, "calibratable": true, "levels": 3, "unit": "mm", "module": "XAJ_SOURCE_SEPARATION"},
+    {"name": "runoff.KI", "minimum": 0.003, "maximum": 0.06, "calibratable": true, "levels": 3, "unit": "1/hour", "module": "XAJ_SOURCE_SEPARATION"},
+    {"name": "runoff.KG", "minimum": 0.003, "maximum": 0.06, "calibratable": true, "levels": 3, "unit": "1/hour", "module": "XAJ_SOURCE_SEPARATION"},
+    {"name": "routing.RS_k_hours", "minimum": 0.05, "maximum": 3.0, "calibratable": true, "levels": 3, "unit": "hour", "module": "SLOPE_ROUTING"},
+    {"name": "routing.RI_k_hours", "minimum": 0.5, "maximum": 8.0, "calibratable": true, "levels": 3, "unit": "hour", "module": "SLOPE_ROUTING"},
+    {"name": "routing.RG_k_hours", "minimum": 8.0, "maximum": 72.0, "calibratable": true, "levels": 3, "unit": "hour", "module": "SLOPE_ROUTING"},
+    {"name": "routing.muskingum_k_scale", "minimum": 0.5, "maximum": 2.0, "calibratable": true, "levels": 3, "unit": "1", "module": "CHANNEL_ROUTING"},
+    {"name": "routing.muskingum_x", "minimum": 0.05, "maximum": 0.45, "calibratable": true, "levels": 3, "unit": "1", "module": "CHANNEL_ROUTING"}
+  ],
+  "constraints": [
+    "runoff.WM > runoff.WUM + runoff.WLM",
+    "runoff.KI + runoff.KG < 0.98"
+  ]
+}

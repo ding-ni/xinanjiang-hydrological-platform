@@ -1,0 +1,271 @@
+{
+  "zone_type": "NON_GLACIER",
+  "defaults": {
+    "phase": {
+      "all_snow_temp": -1.0,
+      "all_rain_temp": 2.0
+    },
+    "snow": {
+      "melt_method": "degree_day",
+      "snow_ddf": 4.0,
+      "melt_temp": 0.0,
+      "liquid_capacity_ratio": 0.05,
+      "refreeze_factor": 1.0,
+      "sublimation_fraction_pet": 0.35,
+      "default_albedo": 0.75
+    },
+    "pet": {
+      "shortwave_coefficient": 0.00045,
+      "positive_temperature_coefficient": 0.002,
+      "maximum_hourly_pet_mm": 0.65
+    },
+    "KC": 0.89,
+    "WM": 150.0,
+    "WUM": 20.0,
+    "WLM": 80.0,
+    "C": 0.37,
+    "B": 0.16,
+    "SM": 15.0,
+    "EX": 1.6,
+    "KI": 0.0202135350180443,
+    "KG": 0.0249300265222546,
+    "source_coefficient_time_step_hours": 1.0,
+    "IM": 0.0055,
+    "CI": 0.76,
+    "CG": 0.988,
+    "KE": 1.0,
+    "XE": 0.34,
+    "conversion": {
+      "enabled": false,
+      "base_infiltration_capacity_mm_h": 20.0,
+      "slope_threshold_degree": 20.0,
+      "rain_intensity_threshold_mm_h": 20.0,
+      "slope_reduction_coefficient": 1.0,
+      "transition_width_degree": 10.0,
+      "transition_width_mm_h": 10.0
+    }
+  },
+  "parameters": [
+    {
+      "name": "KC",
+      "label": "蒸散发折算系数",
+      "unit": "1",
+      "minimum": 0.4,
+      "maximum": 1.5,
+      "calibratable": true
+    },
+    {
+      "name": "WM",
+      "label": "流域平均张力水容量",
+      "unit": "mm",
+      "minimum": 50,
+      "maximum": 300,
+      "calibratable": true
+    },
+    {
+      "name": "WUM",
+      "label": "上层张力水容量",
+      "unit": "mm",
+      "minimum": 5,
+      "maximum": 80,
+      "calibratable": true
+    },
+    {
+      "name": "WLM",
+      "label": "下层张力水容量",
+      "unit": "mm",
+      "minimum": 20,
+      "maximum": 200,
+      "calibratable": true
+    },
+    {
+      "name": "C",
+      "label": "深层蒸散发系数",
+      "unit": "1",
+      "minimum": 0.05,
+      "maximum": 0.5,
+      "calibratable": true
+    },
+    {
+      "name": "B",
+      "label": "张力水容量曲线指数",
+      "unit": "1",
+      "minimum": 0.05,
+      "maximum": 0.6,
+      "calibratable": true
+    },
+    {
+      "name": "SM",
+      "label": "自由水蓄水容量",
+      "unit": "mm",
+      "minimum": 5,
+      "maximum": 100,
+      "calibratable": true
+    },
+    {
+      "name": "EX",
+      "label": "自由水容量曲线指数",
+      "unit": "1",
+      "minimum": 0.5,
+      "maximum": 2.5,
+      "calibratable": true
+    },
+    {
+      "name": "KI",
+      "label": "壤中流出流系数",
+      "unit": "1/hour",
+      "minimum": 0.003,
+      "maximum": 0.06,
+      "calibratable": true,
+      "time_step_dependent": true
+    },
+    {
+      "name": "KG",
+      "label": "地下径流出流系数",
+      "unit": "1/hour",
+      "minimum": 0.003,
+      "maximum": 0.06,
+      "calibratable": true,
+      "time_step_dependent": true
+    },
+    {
+      "name": "IM",
+      "label": "不透水面积比例",
+      "unit": "fraction",
+      "minimum": 0,
+      "maximum": 0.1,
+      "calibratable": true
+    },
+    {
+      "name": "CI",
+      "label": "壤中流消退系数（汇流）",
+      "unit": "1",
+      "minimum": 0,
+      "maximum": 1,
+      "calibratable": false,
+      "owner": "ROUTING"
+    },
+    {
+      "name": "CG",
+      "label": "地下径流消退系数（汇流）",
+      "unit": "1",
+      "minimum": 0,
+      "maximum": 1,
+      "calibratable": false,
+      "owner": "ROUTING"
+    },
+    {
+      "name": "KE",
+      "label": "马斯京根河段数（汇流）",
+      "unit": "1",
+      "minimum": 1,
+      "maximum": 20,
+      "calibratable": false,
+      "owner": "ROUTING"
+    },
+    {
+      "name": "XE",
+      "label": "马斯京根权重（汇流）",
+      "unit": "1",
+      "minimum": 0,
+      "maximum": 0.5,
+      "calibratable": false,
+      "owner": "ROUTING"
+    }
+  ],
+  "constraints": [
+    "WM >= WUM + WLM",
+    "KI + KG <= 1"
+  ],
+  "parameter_defaults": {
+    "phase": {
+      "all_snow_temp": -1.0,
+      "all_rain_temp": 2.0
+    },
+    "snow": {
+      "melt_method": "degree_day",
+      "snow_ddf": 4.0,
+      "melt_temp": 0.0,
+      "liquid_capacity_ratio": 0.05,
+      "refreeze_factor": 1.0,
+      "sublimation_fraction_pet": 0.35,
+      "default_albedo": 0.75
+    },
+    "pet": {
+      "shortwave_coefficient": 0.00045,
+      "positive_temperature_coefficient": 0.002,
+      "maximum_hourly_pet_mm": 0.65
+    },
+    "KC": 0.89,
+    "WM": 150.0,
+    "WUM": 20.0,
+    "WLM": 80.0,
+    "C": 0.37,
+    "B": 0.16,
+    "SM": 15.0,
+    "EX": 1.6,
+    "KI": 0.0202135350180443,
+    "KG": 0.0249300265222546,
+    "source_coefficient_time_step_hours": 1.0,
+    "IM": 0.0055,
+    "CI": 0.76,
+    "CG": 0.988,
+    "KE": 1.0,
+    "XE": 0.34,
+    "conversion": {
+      "enabled": false,
+      "base_infiltration_capacity_mm_h": 20.0,
+      "slope_threshold_degree": 20.0,
+      "rain_intensity_threshold_mm_h": 20.0,
+      "slope_reduction_coefficient": 1.0,
+      "transition_width_degree": 10.0,
+      "transition_width_mm_h": 10.0
+    }
+  },
+  "runoff_model": "XAJ_SATURATION_EXCESS",
+  "melt_method_options": [
+    "degree_day",
+    "energy_balance"
+  ],
+  "simulation_mode_options": [
+    "SINGLE",
+    "CONTINUOUS",
+    "EVENT"
+  ],
+  "calibration_algorithm_options": [
+    "GRID_SEARCH",
+    "RANDOM_SEARCH",
+    "DIFFERENTIAL_EVOLUTION"
+  ],
+  "objective_metric_options": [
+    "NSE",
+    "KGE",
+    "PBIAS",
+    "RMSE",
+    "PEAK_ERROR",
+    "PEAK_TIME_ERROR",
+    "RUNOFF_DEPTH_ERROR",
+    "WATER_BALANCE_ERROR"
+  ],
+  "units": {
+    "water_flux": "mm/h",
+    "water_storage": "mm",
+    "temperature": "degC",
+    "radiation": "W/m2",
+    "slope": "degree",
+    "area": "km2"
+  },
+  "physical_constants": {
+    "hours_per_day": 24.0,
+    "seconds_per_hour": 3600.0,
+    "millimeters_per_meter": 1000.0,
+    "water_density_kg_m3": 1000.0,
+    "latent_heat_fusion_j_kg": 334000.0
+  },
+  "numerical_settings": {
+    "epsilon": 1e-10,
+    "supported_time_step_hours": 1.0,
+    "balance_tolerance_mm": 1e-06,
+    "maximum_slope_degree": 89.0
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "module_id": "DQ-EVENT-CATALOG-03",
+  "status": "SUCCEEDED",
+  "source_catalog": "E:\\产流模块\\南安溪-徐畈数据资料整合\\南安溪-徐畈数据资料整合\\02_分布式新安江模型输入资料\\洪水场次\\南安溪洪水场次资料索引.json",
+  "forcing_version": "precipitation_qc_20260819",
+  "event_count": 226,
+  "window_override_count": 11,
+  "minimum_station_count": 1,
+  "maximum_station_count": 11,
+  "incomplete_flow_event_count": 2,
+  "control_area": {
+    "config_id": "XUFAN_CONTROL_SECTION_AREA_V1",
+    "control_id": "xufan_70115800",
+    "control_reach_id": "R0020",
+    "observation_area_km2": 64.1,
+    "model_contributing_area_km2": 64.9493991519132,
+    "relative_difference": 0.013251156816118626
+  },
+  "outputs": {
+    "catalog": "E:\\产流模块\\formal_multievent_calibration_20260818\\南安溪产流汇流一体化平台_老师交付版_20260810\\data_interface\\event_catalog\\nananxi_flood_event_catalog_qc_20260819.json",
+    "audit": "E:\\产流模块\\formal_multievent_calibration_20260818\\南安溪产流汇流一体化平台_老师交付版_20260810\\data_interface\\event_catalog\\event_catalog_rebuild_audit.csv"
+  }
+}

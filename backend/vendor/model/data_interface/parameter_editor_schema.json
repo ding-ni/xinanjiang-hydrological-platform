@@ -1,0 +1,44 @@
+{
+  "schema_version": "parameter_set.v1",
+  "description": "平台人工调参接口返回结构",
+  "get": "GET /api/v1/parameters?zone_type=NON_GLACIER",
+  "update": "PUT /api/v1/parameters",
+  "request": {
+    "zone_type": "NON_GLACIER",
+    "values": {
+      "runoff": {
+        "KC": 0.89,
+        "WM": 150.0,
+        "WUM": 20.0,
+        "WLM": 80.0,
+        "C": 0.37,
+        "B": 0.16,
+        "SM": 15.0,
+        "EX": 1.6,
+        "KI": 0.0202135350180443,
+        "KG": 0.0249300265222546,
+        "IM": 0.0055,
+        "CI": 0.76,
+        "CG": 0.988,
+        "KE": 1.0,
+        "XE": 0.34
+      },
+      "routing": {
+        "default_slope_k_hours.RS": 2.0,
+        "default_slope_k_hours.RI": 8.0,
+        "default_slope_k_hours.RG": 24.0,
+        "default_slope_k_hours.GLACIER_FAST": 2.0,
+        "default_slope_k_hours.GLACIER_SLOW": 12.0,
+        "default_slope_k_hours.GLACIER_BASE": 48.0,
+        "muskingum_x": 0.2,
+        "default_channel_velocity_kmh": 3.0
+      }
+    }
+  },
+  "constraints": [
+    "WM >= WUM + WLM",
+    "KI + KG <= 1",
+    "0 <= muskingum_x <= 0.5"
+  ],
+  "effect": "保存后用于新的状态诊断或重算，不自动改写已生成历史结果"
+}

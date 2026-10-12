@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "module_id": "CAL-CONTINUOUS-BALANCE-09",
+  "control_area_config": "control_section_area_xufan.json",
+  "simulation_start_year": 2014,
+  "year_groups": {
+    "CALIBRATION": [2015, 2016, 2017, 2018],
+    "VALIDATION": [2019, 2020],
+    "INDEPENDENT_TEST": [2021]
+  },
+  "pet_config": "pet_forcing_assumed_monthly.json",
+  "minimum_observed_coverage": 0.99,
+  "note": "2014 is state warm-up only. Parameters are evaluated from 2015 onward with uninterrupted hourly land and routing state carry-over."
+}

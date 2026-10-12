@@ -1,0 +1,26 @@
+{
+  "control_id": "xufan_70115800",
+  "name": "徐畈（二）出口控制断面",
+  "basin_id": "nan_an",
+  "spatial_version": "nan_an_dem_utm50_30m_clipped_v1",
+  "input": {
+    "x": 119.5222220000453,
+    "y": 30.09916699955744,
+    "crs": "EPSG:4326"
+  },
+  "snapped": {
+    "reach_id": "R0020",
+    "cell": [268, 291],
+    "x": 743079.682226422,
+    "y": 3332457.9539401727,
+    "grid_crs": "EPSG:32650",
+    "distance_m": 20.133075888634334,
+    "accumulation_area_km2": 63.0234,
+    "elevation_m": 82.000001,
+    "lon": 119.52243074308532,
+    "lat": 30.099162690369454,
+    "lonlat_crs": "EPSG:4326"
+  },
+  "source_ascii": "data_interface/spatial/nan_an_dem_utm50_30m_clipped.asc",
+  "stream_threshold_km2": 1.0
+}

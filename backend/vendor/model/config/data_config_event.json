@@ -1,0 +1,9 @@
+{
+  "simulation_mode": "EVENT",
+  "event_id": "EVENT-001",
+  "start": "2017-06-19T11:00:00",
+  "end": "2017-06-29T11:00:00",
+  "warmup_hours": 720,
+  "state_policy": "WARMUP_OR_CHECKPOINT",
+  "evaluation_excludes_warmup": true
+}

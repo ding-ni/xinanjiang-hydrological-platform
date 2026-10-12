@@ -1,0 +1,25 @@
+{
+  "config_id": "NANANXI_EVENT_QUALITY_V1",
+  "basin_area_km2": 64.1,
+  "control_area_config": "control_section_area_xufan.json",
+  "rules": {
+    "maximum_duration_hours": 720,
+    "minimum_paired_flow_hours": 24,
+    "minimum_precipitation_valid_fraction": 0.999,
+    "require_source_station_count": true,
+    "minimum_source_stations": 1,
+    "minimum_source_station_hour_fraction": 0.999,
+    "minimum_warmup_event_rain_mm": 1.0,
+    "maximum_observed_runoff_to_precipitation_ratio": 1.2
+  },
+  "warnings": {
+    "single_station_hour_fraction": 0.5,
+    "peak_near_start_hours": 6,
+    "end_flow_to_peak_ratio": 0.2
+  },
+  "notes": [
+    "All thresholds are platform configuration and are not embedded in XAJ equations.",
+    "The runoff-to-precipitation threshold includes a 20 percent allowance for antecedent storage and baseflow.",
+    "Rejected source events are never silently edited or split."
+  ]
+}

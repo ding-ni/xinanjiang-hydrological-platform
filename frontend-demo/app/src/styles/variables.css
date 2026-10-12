@@ -1,0 +1,72 @@
+:root {
+  /* ── 中性色阶（OKLCH 等亮度步进） ── */
+  --n-0:   #ffffff;
+  --n-50:  #f5f8fa;
+  --n-100: #edf1f5;
+  --n-200: #dde5ec;
+  --n-300: #c4d1db;
+  --n-400: #9fb5c2;
+  --n-500: #6e8898;
+  --n-600: #4d6575;
+  --n-700: #344d5a;
+  --n-800: #1e3340;
+  --n-900: #111e27;
+
+  /* ── 主色（蓝绿系） ── */
+  --accent:      #0b6e8f;
+  --accent-dark: #085470;
+  --accent-soft: #e4f2f7;
+  --accent-mid:  #c2e0ec;
+
+  /* ── 辅助色（仅语义用途） ── */
+  --teal:        #0d7a71;
+  --teal-soft:   #e2f4f2;
+  --orange:      #c95f12;
+  --orange-soft: #fef3e8;
+  --green:       #1f7a47;
+  --green-soft:  #e6f4ed;
+  --red:         #be3530;
+  --red-soft:    #fdecea;
+  --yellow:      #c89a1a;
+  --yellow-soft: #fef8e3;
+
+  /* ── 资料状态语义色 ── */
+  --status-real:    #1f7a47;   /* 真实资料 */
+  --status-real-bg: #e6f4ed;
+  --status-fix:     #4a6882;   /* 前端样例 */
+  --status-fix-bg:  #e8f0f7;
+  --status-spatial: #6b7d8d;   /* 仅空间 */
+  --status-spatial-bg: #edf1f5;
+  --status-missing: #be3530;   /* 资料缺失 */
+  --status-missing-bg: #fdecea;
+  --status-pending: #c95f12;   /* 后端待接 */
+  --status-pending-bg: #fef3e8;
+
+  /* ── 角色映射 ── */
+  --bg:         var(--n-100);
+  --panel:      var(--n-0);
+  --panel-soft: var(--n-50);
+  --line:       var(--n-200);
+  --line-strong:var(--n-300);
+  --ink:        var(--n-800);
+  --muted:      var(--n-500);
+  --blue:       var(--accent);
+  --blue-dark:  var(--accent-dark);
+  --blue-soft:  var(--accent-soft);
+  --cyan:       #2488a8;
+
+  /* ── 阴影 ── */
+  --shadow:      0 8px 24px rgba(17, 30, 39, 0.12), 0 2px 6px rgba(17, 30, 39, 0.06);
+  --shadow-soft: 0 1px 3px rgba(17, 30, 39, 0.06), 0 0 0 1px rgba(17, 30, 39, 0.03);
+  --shadow-up:   0 -2px 12px rgba(17, 30, 39, 0.06);
+
+  /* ── 形状 ── */
+  --radius:   6px;
+  --radius-sm:4px;
+  --radius-lg:10px;
+
+  /* ── 布局 ── */
+  --topbar: 56px;
+  --nav:    188px;
+  --detail-w: 320px;
+}

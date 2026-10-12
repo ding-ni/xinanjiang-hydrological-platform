@@ -1,0 +1,46 @@
+﻿{
+    "source_ncols":  432,
+    "source_nrows":  490,
+    "output_ncols":  421,
+    "output_nrows":  474,
+    "source_extent":  {
+                          "xmin":  734154.682226422,
+                          "ymin":  3326082.9539401727,
+                          "xmax":  747114.682226422,
+                          "ymax":  3340782.9539401727
+                      },
+    "output_extent":  {
+                          "xmin":  734334.682226422,
+                          "ymin":  3326292.9539401727,
+                          "xmax":  746964.682226422,
+                          "ymax":  3340512.9539401727
+                      },
+    "inside_cell_count":  79630,
+    "inside_area_km2":  71.667,
+    "crop_window":  {
+                        "row_min":  9,
+                        "row_max":  482,
+                        "col_min":  6,
+                        "col_max":  426
+                    },
+    "output_nodata":  -9999.0,
+    "source_ascii":  "source_dem_prior_to_clipping_not_in_package",
+    "boundary_shp":  "source_boundary_prior_to_clipping_not_in_package",
+    "boundary_crs":  "EPSG:4490",
+    "grid_crs":  "EPSG:32650",
+    "out_ascii":  "data_interface/spatial/nan_an_dem_utm50_30m_clipped.asc",
+    "shape_count":  1,
+    "geotiff":  {
+                    "geotiff_out":  "not_in_package",
+                    "crs":  "EPSG:32650",
+                    "ncols":  421,
+                    "nrows":  474,
+                    "nodata":  -9999.0,
+                    "extent":  {
+                                   "xmin":  734334.682226422,
+                                   "ymin":  3326292.9539401727,
+                                   "xmax":  746964.682226422,
+                                   "ymax":  3340512.9539401727
+                               }
+                }
+}

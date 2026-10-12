@@ -1,0 +1,12 @@
+{
+  "version": "2026-08-02",
+  "states": [
+    { "id": "STATE-SEL-20260602-1400", "time": "2026-06-02 14:00", "domainId": "selinco", "modelScale": "1km", "domain": "色林错入湖流域群", "sourceSection": "扎加藏布入湖口", "sourceRun": "RUN-SEL-20260602-1400", "source": "14 时起报状态", "status": "可用", "means": { "wu": 12.4, "wl": 31.8, "wd": 49.2, "soil": 0.47, "free": 24.6, "runoff": 1.3, "rs": 11 } },
+    { "id": "STATE-SEL-20260602-0800", "time": "2026-06-02 08:00", "domainId": "selinco", "modelScale": "1km", "domain": "色林错入湖流域群", "sourceSection": "扎加藏布入湖口", "sourceRun": "RUN-SEL-20260602-0800", "source": "08 时起报状态", "status": "可用", "means": { "wu": 11.8, "wl": 31.1, "wd": 48.9, "soil": 0.45, "free": 23.2, "runoff": 1.1, "rs": 10 } },
+    { "id": "STATE-SEL-0P1-20260602-1400", "time": "2026-06-02 14:00", "domainId": "selinco", "modelScale": "0p1deg", "domain": "色林错入湖流域群", "sourceSection": "扎加藏布入湖口", "sourceRun": "RUN-SEL-0P1-20260602-1400", "source": "14 时起报状态", "status": "可用", "means": { "wu": 13.1, "wl": 33.4, "wd": 50.6, "soil": 0.49, "free": 25.8, "runoff": 1.2, "rs": 10 } },
+    { "id": "STATE-SEL-0P1-20260602-0800", "time": "2026-06-02 08:00", "domainId": "selinco", "modelScale": "0p1deg", "domain": "色林错入湖流域群", "sourceSection": "扎加藏布入湖口", "sourceRun": "RUN-SEL-0P1-20260602-0800", "source": "08 时起报状态", "status": "可用", "means": { "wu": 12.5, "wl": 32.8, "wd": 50.1, "soil": 0.47, "free": 24.4, "runoff": 1.0, "rs": 9 } },
+    { "id": "STATE-20260602-1400", "time": "2026-06-02 14:00", "domainId": "xinanjiang", "domain": "新安江流域", "sourceSection": "新安江大桥", "sourceRun": "RUN-20260602-1400", "source": "14 时起报状态", "status": "可用", "means": { "wu": 18.8, "wl": 42.1, "wd": 54.6, "soil": 0.61, "free": 32.8, "runoff": 2.2, "rs": 18 } },
+    { "id": "STATE-20260602-0800", "time": "2026-06-02 08:00", "domainId": "xinanjiang", "domain": "新安江流域", "sourceSection": "新安江大桥", "sourceRun": "RUN-20260602-0800", "source": "08 时起报状态", "status": "可用", "means": { "wu": 17.2, "wl": 41.6, "wd": 55.1, "soil": 0.59, "free": 30.8, "runoff": 1.8, "rs": 16 } },
+    { "id": "STATE-20260601-2000", "time": "2026-06-01 20:00", "domainId": "xinanjiang", "domain": "新安江流域", "sourceSection": "新安江大桥", "sourceRun": "RUN-20260601-2000", "source": "20 时起报状态", "status": "可用", "means": { "wu": 15.8, "wl": 40.4, "wd": 54.7, "soil": 0.56, "free": 28.2, "runoff": 1.3, "rs": 13 } }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "config_id": "XUFAN_CONTROL_SECTION_AREA_V1",
+  "control_id": "xufan_70115800",
+  "control_reach_id": "R0020",
+  "observation_area_km2": 64.1,
+  "observation_area_source": "徐畈（二）水文站注册控制断面面积",
+  "dem_accumulation_area_km2": 63.0234,
+  "expected_model_contributing_area_km2": 64.94939915191318,
+  "total_project_grid_area_km2": 71.86622268033618,
+  "maximum_model_to_observation_relative_difference": 0.03,
+  "policy": "OBSERVED_FLOW_USES_REGISTERED_AREA; GRID_FLUXES_USE_MAPPED_UPSTREAM_AREA",
+  "notes": [
+    "The project boundary includes grids downstream of the Xufan control section.",
+    "Observed discharge depth is converted with the registered 64.1 km2 area.",
+    "Precipitation, evapotranspiration and storage volumes use only mapped grids upstream of R0020."
+  ]
+}

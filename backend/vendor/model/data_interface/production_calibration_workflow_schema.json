@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "production_calibration_workflow_schema.json",
+  "title": "生产参数完整率定与验收异步任务",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workflow_id"],
+  "properties": {
+    "module_id": {"const": "PRODUCTION-CALIBRATION-10"},
+    "task_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$"},
+    "workflow_id": {"type": "string", "enum": ["NANAN_PRODUCTION_V1"]},
+    "algorithm": {"type": "string", "enum": ["DIFFERENTIAL_EVOLUTION", "RANDOM_SEARCH", "GRID_SEARCH"]},
+    "max_evaluations": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "population_size": {"type": "integer", "minimum": 4, "maximum": 1000},
+    "generations": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "differential_weight": {"type": "number", "exclusiveMinimum": 0, "maximum": 2},
+    "crossover_probability": {"type": "number", "minimum": 0, "maximum": 1},
+    "state_strategy": {"type": "string", "enum": ["FIXED_WARMUP", "OBSERVED_FLOW_ANCHORED", "CONTINUOUS"]},
+    "split_seed": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+    "search_seeds": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": {"type": "integer", "minimum": 0, "maximum": 2147483647}
+    },
+    "wlm_upper_bounds_mm": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": {"type": "number", "exclusiveMinimum": 40, "maximum": 500}
+    }
+  }
+}

@@ -1,0 +1,146 @@
+﻿{
+    "time_step_hours":  1.0,
+    "default_slope_k_hours":  {
+                                  "RS":  2.0,
+                                  "RI":  8.0,
+                                  "RG":  24.0,
+                                  "GLACIER_FAST":  2.0,
+                                  "GLACIER_SLOW":  12.0,
+                                  "GLACIER_BASE":  48.0
+                              },
+    "unit_component_slope_k_hours":  {
+
+                                     },
+    "reach_muskingum":  {
+                            "R0001":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0002":  {
+                                          "k_hours":  1.2,
+                                          "x":  0.2
+                                      },
+                            "R0003":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0004":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0005":  {
+                                          "k_hours":  1.03,
+                                          "x":  0.2
+                                      },
+                            "R0006":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0007":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0008":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0009":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0010":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0011":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0012":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0013":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0014":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0015":  {
+                                          "k_hours":  1.04,
+                                          "x":  0.2
+                                      },
+                            "R0016":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0017":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0018":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0019":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0020":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0021":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0022":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0023":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0024":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0025":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0026":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0027":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0028":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0029":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0030":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      },
+                            "R0031":  {
+                                          "k_hours":  1.0,
+                                          "x":  0.2
+                                      }
+                        },
+    "metadata":  {
+                     "source":  "first_pass_from_reach_length_and_assumed_velocity_not_calibrated",
+                     "topology":  "data_interface/spatial/nan_an_topology_clipped_v1.json",
+                     "default_channel_velocity_kmh":  3.0,
+                     "muskingum_x":  0.2
+                 }
+}

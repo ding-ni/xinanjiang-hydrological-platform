@@ -1,0 +1,20 @@
+{
+  "run_id": "nan_an_xufan_2017_integrated_v1",
+  "routing_method": "REACH_SEGMENT",
+  "routing_dem_resolution_m": 30.0,
+  "source_runoff_grid_resolution_m": 1000.0,
+  "slope_routing_method": "LINEAR_RESERVOIR",
+  "channel_routing_method": "MUSKINGUM",
+  "mapping_method": "D8_FLOW_PATH_AREA_OVERLAP",
+  "stream_threshold_km2": 1.0,
+  "dem_ascii": "data_interface/spatial/nan_an_dem_utm50_30m_clipped.asc",
+  "topology": "data_interface/spatial/nan_an_topology_clipped_v1.json",
+  "control_points": "data_interface/spatial/xufan_70115800_control_point_snapped_v1.json",
+  "routing_parameters": "config/routing_parameters_2017_first_pass.json",
+  "initial_routing_state": null,
+  "runoff_grid_geojson": "data_interface/spatial/南安溪1公里有效格点.geojson",
+  "grid_static": "data_interface/runoff_2017/grid_static.csv",
+  "runoff_wide": "data_interface/runoff_2017/runoff_components_wide.csv",
+  "observed_control_flow": "data_interface/runoff_2017/observed_outlet_flow.csv",
+  "output_dir": "validation/integrated_2017"
+}

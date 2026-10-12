@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PET-FORCING-02 potential evapotranspiration forcing",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["mode", "value_mm_h"],
+      "properties": {
+        "mode": {"const": "CONSTANT_ASSUMPTION"},
+        "value_mm_h": {"type": "number", "minimum": 0},
+        "production_eligible": {"const": false},
+        "provenance": {"type": "string"}
+      }
+    },
+    {
+      "type": "object",
+      "required": ["mode", "monthly_values_mm_day"],
+      "properties": {
+        "mode": {"const": "MONTHLY_CLIMATOLOGY"},
+        "monthly_values_mm_day": {
+          "type": "array",
+          "minItems": 12,
+          "maxItems": 12,
+          "items": {"type": "number", "minimum": 0}
+        },
+        "production_eligible": {"const": false},
+        "provenance": {"type": "string"}
+      }
+    },
+    {
+      "type": "object",
+      "required": ["mode", "path", "time_column", "value_column", "production_eligible"],
+      "properties": {
+        "mode": {"const": "HOURLY_CSV"},
+        "path": {"type": "string"},
+        "time_column": {"type": "string", "default": "time"},
+        "value_column": {"type": "string", "default": "pet_mm_h"},
+        "production_eligible": {"type": "boolean"},
+        "provenance": {"type": "string"}
+      }
+    }
+  ]
+}

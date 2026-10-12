@@ -1,0 +1,16 @@
+{
+  "module_id": "DQ-EVENT-QC-02",
+  "task_id": "EVENT-QC-20260818-001",
+  "project_root": ".",
+  "event_catalog": "external_data/event_catalog.json",
+  "precipitation_directory": "output/corrected_1km_hourly",
+  "observed_flow": "external_data/observed_flow.xlsx",
+  "observed_sheet": "逐小时水位流量",
+  "grid_static": "data_interface/runoff_2017/grid_static.csv",
+  "quality_config": "config/event_quality_config.json",
+  "output_dir": "output/event_quality",
+  "warmup_hours": 168,
+  "allowed_year_ranges": [[1964, 1999], [2001, 2024]],
+  "minimum_catalog_rain_completeness": 0.999,
+  "minimum_catalog_flow_completeness": 0.999
+}

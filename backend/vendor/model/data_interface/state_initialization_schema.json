@@ -1,0 +1,97 @@
+{
+  "schema_version": "1.0",
+  "module_id": "STATE-INITIALIZATION-03",
+  "task_type": "RUNOFF_ROUTING_STATE_INITIALIZATION",
+  "frontend": {
+    "page_title": "初始状态生成",
+    "strategy_control": "segmented_control",
+    "actions": ["运行", "查看诊断", "下载检查点"],
+    "strategy_help": {
+      "FIXED_WARMUP": "使用固定长度的前期降雨驱动产流和汇流，生成事件开始时状态。",
+      "OBSERVED_FLOW_ANCHORED": "产流状态使用固定预热，汇流与地下水状态由事件开始实测流量锚定。",
+      "CHECKPOINT": "读取已有版本化状态，适用于重跑或场次衔接。",
+      "CONTINUOUS": "继承上一连续时段检查点。"
+    }
+  },
+  "common_request": {
+    "required": ["module_id", "task_id", "project_root", "strategy", "output_dir"],
+    "properties": {
+      "module_id": {"const": "STATE-INITIALIZATION-03"},
+      "task_id": {"type": "string"},
+      "project_root": {"type": "string", "format": "directory"},
+      "strategy": {
+        "type": "string",
+        "enum": ["FIXED_WARMUP", "OBSERVED_FLOW_ANCHORED", "CHECKPOINT", "CONTINUOUS"]
+      },
+      "output_dir": {"type": "string", "format": "directory"},
+      "overwrite": {"type": "boolean", "default": false, "description": "Existing checkpoint protection; normally use a new state_id instead."}
+    }
+  },
+  "warmup_request": {
+    "applies_to": ["FIXED_WARMUP", "OBSERVED_FLOW_ANCHORED"],
+    "required": [
+      "event_id",
+      "event_start",
+      "state_config",
+      "initial_land_state",
+      "land_parameter_set",
+      "grid_static",
+      "precipitation_directory",
+      "grid_to_unit_weight",
+      "topology",
+      "routing_parameters",
+      "control_points"
+    ],
+    "properties": {
+      "event_id": {"type": "string"},
+      "event_start": {"type": "string", "format": "date-time-hour"},
+      "state_config": {"type": "string", "format": "json"},
+      "initial_land_state": {"type": "string", "format": "json"},
+      "land_parameter_set": {"type": "string", "format": "json"},
+      "grid_static": {"type": "string", "format": "csv"},
+      "precipitation_directory": {"type": "string", "format": "directory"},
+      "grid_to_unit_weight": {"type": "string", "format": "csv"},
+      "topology": {"type": "string", "format": "json"},
+      "routing_parameters": {"type": "string", "format": "json"},
+      "control_points": {"type": "string", "format": "json"},
+      "warmup_hours": {"type": "integer", "minimum": 1, "description": "Optional override; default comes from state_config."},
+      "pet_config": {"type": "string", "format": "json", "description": "Preferred PET-FORCING-02 config; supports assumed or real hourly PET."},
+      "pet_mm_h": {"type": "number", "minimum": 0, "description": "Deprecated constant diagnostic override retained for compatibility."},
+      "observed_flow_cms": {"type": "number", "minimum": 0, "required_when": "strategy=OBSERVED_FLOW_ANCHORED"}
+    }
+  },
+  "checkpoint_request": {
+    "applies_to": ["CHECKPOINT", "CONTINUOUS"],
+    "required": ["source_checkpoint"],
+    "properties": {
+      "source_checkpoint": {"type": "string", "format": "json"},
+      "state_id": {"type": "string", "description": "Optional new version identifier."}
+    }
+  },
+  "response": {
+    "required": ["module_id", "task_id", "status", "summary", "output_files"],
+    "properties": {
+      "status": {"type": "string", "enum": ["SUCCEEDED", "FAILED"]},
+      "summary": {
+        "required": ["state_id", "strategy", "effective_time", "grid_count", "quality_flags"]
+      },
+      "state_checkpoint": {"type": "string", "format": "json"}
+    }
+  },
+  "checkpoint_contract": {
+    "required": [
+      "schema_version",
+      "module_id",
+      "state_id",
+      "strategy",
+      "effective_time",
+      "land_states",
+      "routing_state",
+      "diagnostics",
+      "provenance"
+    ],
+    "land_state_fields": ["grid_id", "zone_type", "swe", "snow_liquid", "WU", "WL", "WD", "S", "FR"],
+    "routing_state_fields": ["slope_outflow_cms", "reach_inflow_cms", "reach_outflow_cms"],
+    "scope": "Current warm-up implementation accepts NON_GLACIER grids. Glacier-state warm-up remains in the glacier simulation module."
+  }
+}

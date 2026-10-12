@@ -1,0 +1,52 @@
+# Track source, portable frontend/model assets, scripts, tests and documentation.
+# Local data, environments, releases and historical copies stay on this computer.
+**/node_modules/
+**/.venv/
+**/.git/
+**/.agents/
+**/dist/
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+**/test-output/
+**/test-results/
+**/测试结果/
+*.log
+.env
+.env.*
+!.env.example
+!/frontend-demo/app/.env.unified
+
+# Local development metadata and third-party reference checkouts.
+/.claude/
+/.codex/
+/.agents/
+/.aws/
+/参考项目/
+
+# Raw/model input packages are kept separate from browser static assets.
+/实际案例/
+/后端文件/
+/交付包/
+/selinco_data_package_20260721/
+/selinco_stream_networks_20260721/
+
+# Historical copies and generated artifacts; keep the files on disk.
+/前端重构备份/
+/前端重构恢复验证/
+/外发演示包_*/
+/南安溪产流汇流一体化平台_产流汇流率定全更新_20260820/
+/frontend-demo/归档/历史备份/
+/frontend-demo/归档/
+/frontend-demo/calibration-1600.png
+/frontend-demo/forecast-1600.png
+/历史归档/
+/开发产物/
+/imagegen_outputs/
+*.zip
+# Unified platform runtime and isolated dependencies.
+/runtime/
+/backend/.venv/
+/frontend-demo/app/dist-unified/
+__pycache__/
+*.pyc

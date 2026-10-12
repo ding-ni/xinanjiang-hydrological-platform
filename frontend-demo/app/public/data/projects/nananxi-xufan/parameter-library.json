@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "1.0",
+  "projectId": "nananxi-xufan",
+  "resolutionId": "1km",
+  "modelFrameworkId": "distributed-xinanjiang",
+  "simulationRateLibrary": {
+    "name": "洪水模拟与率定参数库",
+    "purpose": "用于洪水场次筛选、参数率定、验证和独立检验",
+    "status": "待后端率定结果接入",
+    "versions": [],
+    "requiredLineage": ["dataVersion", "eventSetVersion", "stateVersion", "modelConfigId", "independentMetrics"]
+  },
+  "automaticForecastLibrary": {
+    "name": "自动预报参数库",
+    "purpose": "仅保存经独立检验和人工确认后用于业务预报的稳定参数",
+    "status": "尚未发布",
+    "productionVersion": null,
+    "versions": [],
+    "releaseRule": "独立检验通过后，经人工确认才能发布；生产版本只读，修改必须生成新版本"
+  }
+}

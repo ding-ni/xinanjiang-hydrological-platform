@@ -1,0 +1,40 @@
+{
+  "param_set_id": "NANANXI_XAJ_STAGE2_CANDIDATE_20260818",
+  "model": "XAJ_THREE_SOURCE",
+  "time_step_hours": 1,
+  "status": "CALIBRATION_CANDIDATE_NOT_FINAL_PRODUCTION",
+  "parameters": {
+    "KC": 0.89,
+    "WM": 179.18001253361464,
+    "WUM": 23.437841932834992,
+    "WLM": 100.0,
+    "C": 0.37,
+    "B": 0.726056013271075,
+    "SM": 28.467182715479737,
+    "EX": 1.29959468027623,
+    "KI": 0.04407220150334047,
+    "KG": 0.018406201322626364,
+    "source_coefficient_time_step_hours": 1.0,
+    "IM": 0.05513321384383794,
+    "conversion": {
+      "enabled": false,
+      "base_infiltration_capacity_mm_h": 20.0,
+      "slope_threshold_degree": 20.0,
+      "rain_intensity_threshold_mm_h": 20.0,
+      "slope_reduction_coefficient": 1.0,
+      "transition_width_degree": 10.0,
+      "transition_width_mm_h": 10.0
+    }
+  },
+  "search_parameterization": {
+    "K_total_day": 0.7874061255429032,
+    "groundwater_fraction": 0.29460102195468585,
+    "equation": "K_total_hour=1-(1-K_total_day)^(1/24); KI=K_total_hour*(1-groundwater_fraction); KG=K_total_hour*groundwater_fraction"
+  },
+  "frozen_during_event_calibration": {
+    "KC": 0.89,
+    "C": 0.37
+  },
+  "provenance": "208 accepted events; 139 calibration, 42 validation, 27 independent test; observed-flow anchored state; routing frozen; differential evolution 120 evaluations",
+  "remaining_warning": "WLM reached the stage-2 upper bound of 100 mm; observed PET and continuous water-balance calibration are still required"
+}

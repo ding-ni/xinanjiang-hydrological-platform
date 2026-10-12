@@ -1,0 +1,18 @@
+{
+  "module_id": "STATE-INITIALIZATION-03",
+  "task_id": "STATE-20170619-FIXED-WARMUP",
+  "project_root": ".",
+  "strategy": "FIXED_WARMUP",
+  "event_id": "NANANXI-2017-001",
+  "event_start": "2017-06-19T11:00:00",
+  "state_config": "config/state_initialization_config.json",
+  "initial_land_state": "config/initial_state_land.json",
+  "land_parameter_set": "config/parameter_set_land.json",
+  "grid_static": "data_interface/runoff_2017/grid_static.csv",
+  "precipitation_directory": "external_data/corrected_1km_hourly",
+  "grid_to_unit_weight": "validation/integrated_2017/grid_to_unit_weight.csv",
+  "topology": "data_interface/spatial/nan_an_topology_clipped_v1.json",
+  "routing_parameters": "validation/calibration_routing_2017/best_routing_parameters.json",
+  "control_points": "data_interface/spatial/xufan_70115800_control_point_snapped_v1.json",
+  "output_dir": "validation/state_initialization_2017"
+}

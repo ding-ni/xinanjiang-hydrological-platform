@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "catalog_function": "data_quality_platform.get_data_quality_catalog",
+  "run_function": "data_quality_platform.run_data_quality_task",
+  "common_request": {
+    "required": ["module_id", "task_id", "project_root"],
+    "module_options": ["DQ-PRECIP-IDW-01", "DQ-EVENT-QC-02", "STATE-INITIALIZATION-03"]
+  },
+  "common_response": {
+    "required": ["module_id", "task_id", "status", "summary", "output_files"],
+    "status_options": ["SUCCEEDED", "FAILED"]
+  },
+  "dependency_order": ["DQ-PRECIP-IDW-01", "DQ-EVENT-QC-02", "STATE-INITIALIZATION-03"]
+}

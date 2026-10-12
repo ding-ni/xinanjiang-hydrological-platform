@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "module_id": "ROUTING-MULTIEVENT-CALIBRATION-13",
+  "scope": "Nan'an-Xufan routing-only multi-event diagnostic calibration",
+  "time_step_hours": 1,
+  "parameters": [
+    {"name": "routing.RS_k_hours", "minimum": 0.05, "maximum": 3.0, "calibratable": true, "levels": 5, "unit": "hour", "module": "SLOPE_ROUTING"},
+    {"name": "routing.RI_k_hours", "minimum": 0.5, "maximum": 8.0, "calibratable": true, "levels": 5, "unit": "hour", "module": "SLOPE_ROUTING"},
+    {"name": "routing.RG_k_hours", "minimum": 8.0, "maximum": 72.0, "calibratable": true, "levels": 5, "unit": "hour", "module": "SLOPE_ROUTING"},
+    {"name": "routing.muskingum_k_scale", "minimum": 0.5, "maximum": 2.0, "calibratable": true, "levels": 5, "unit": "1", "module": "CHANNEL_ROUTING"},
+    {"name": "routing.muskingum_x", "minimum": 0.05, "maximum": 0.45, "calibratable": true, "levels": 5, "unit": "1", "module": "CHANNEL_ROUTING"}
+  ],
+  "frozen_modules": ["XAJ_ET", "XAJ_RUNOFF", "XAJ_SOURCE_SEPARATION"],
+  "constraints": [
+    "All runoff parameters are loaded from --base-parameter-set and remain frozen.",
+    "All events share one routing parameter vector.",
+    "The result is diagnostic until rainfall, flow, control-area and reservoir data datums pass review."
+  ]
+}

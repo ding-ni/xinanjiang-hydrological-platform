@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "workflows": {
+    "NANAN_PRODUCTION_V1": {
+      "name_zh": "南安溪生产参数完整验收",
+      "description": "WLM边界试验后固定搜索空间，运行多随机种子，再进行多年连续水量平衡与生产门槛检查。",
+      "module_id": "PRODUCTION-CALIBRATION-10",
+      "base_calibration_profile_id": "NANAN_STAGE2_208",
+      "continuous_balance_config": "config/continuous_water_balance_config.json",
+      "defaults": {
+        "algorithm": "DIFFERENTIAL_EVOLUTION",
+        "max_evaluations": 120,
+        "population_size": 24,
+        "generations": 4,
+        "differential_weight": 0.8,
+        "crossover_probability": 0.7,
+        "state_strategy": "OBSERVED_FLOW_ANCHORED",
+        "split_seed": 42,
+        "search_seeds": [20260818, 20260819, 20260820],
+        "wlm_upper_bounds_mm": [100.0, 130.0, 160.0]
+      },
+      "stability_criteria": {
+        "maximum_parameter_cv": 0.35,
+        "maximum_normalized_parameter_range": 0.50,
+        "maximum_external_nse_std": 0.10,
+        "maximum_objective_loss_std": 0.10
+      },
+      "production_criteria": {
+        "minimum_observed_coverage": 0.99,
+        "maximum_internal_balance_error_mm": 0.01,
+        "minimum_continuous_nse": 0.50,
+        "maximum_abs_continuous_volume_bias_percent": 15.0,
+        "minimum_event_nse": 0.50,
+        "maximum_abs_event_volume_bias_percent": 20.0,
+        "minimum_event_qualified_rate_percent": 50.0
+      }
+    }
+  }
+}

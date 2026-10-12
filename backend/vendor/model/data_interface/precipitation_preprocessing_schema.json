@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "task_type": "PRECIPITATION_IDW_REBUILD",
+  "request": {
+    "required": [
+      "station_dir",
+      "template_grid_dir",
+      "output_dir",
+      "start_year",
+      "end_year"
+    ],
+    "properties": {
+      "station_dir": {"type": "string", "format": "directory"},
+      "template_grid_dir": {"type": "string", "format": "directory"},
+      "output_dir": {"type": "string", "format": "directory"},
+      "grid_static": {"type": "string", "format": "csv"},
+      "start_year": {"type": "integer"},
+      "end_year": {"type": "integer"},
+      "idw_power": {"type": "number", "exclusiveMinimum": 0, "default": 2.0},
+      "minimum_stations": {"type": "integer", "minimum": 1, "default": 1},
+      "zero_only_station_year_policy": {
+        "type": "string",
+        "enum": ["RECLASSIFY_AS_MISSING", "KEEP"],
+        "default": "RECLASSIFY_AS_MISSING"
+      },
+      "overwrite": {"type": "boolean", "default": false}
+    }
+  },
+  "response": {
+    "required": ["status", "year_count", "qc_summary", "qc_report"],
+    "properties": {
+      "status": {"type": "string", "enum": ["SUCCEEDED", "FAILED"]},
+      "year_count": {"type": "integer"},
+      "qc_summary": {"type": "string", "format": "csv"},
+      "qc_report": {"type": "string", "format": "json"},
+      "precipitation_directory": {"type": "string", "format": "directory"}
+    }
+  }
+}

@@ -125,6 +125,63 @@ class ForecastContractTests(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get('XAJ_TEST_REAL_MODEL') == '1', 'Real forecast regression')
 class ForecastNumericalTests(unittest.TestCase):
+    def test_source_continuous_conditions_carry_through_initialization_continuation_and_forecast(self):
+        from common import MODEL
+        from science_context import ScienceVersions
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / 'workspace'
+            registry = ScienceVersions(root)
+            pet = read_json(MODEL / 'config/pet_forcing_assumed_monthly.json')
+            pet['monthly_values_mm_day'] = [3.0] * 12
+            science = registry.register(name='连续方案衔接验收',
+                state_config=MODEL / 'config/state_initialization_config.json',
+                initial_land_state=MODEL / 'config/initial_state_land.json', pet_config=pet,
+                state_policy={'strategy': 'continuous-origin', 'warmupHours': 168,
+                              'continuousOrigin': 'FIRST_DATABASE_EVENT_YEAR_JAN1_MINUS_FIXED_WARMUP'})
+            manager = TaskManager(root / 'tasks')
+            try:
+                def complete(task):
+                    deadline = time.monotonic() + 120
+                    while time.monotonic() < deadline:
+                        current = manager.get(task['taskId'])
+                        if current['status'] not in {'queued', 'running'}:
+                            self.assertEqual(current['status'], 'completed', current)
+                            return manager.result(task['taskId'])
+                        time.sleep(.1)
+                    self.fail('Continuous-condition handoff timed out')
+
+                initial = {'runType': 'stateInitialization', 'requestId': 'CONTINUOUS-SOURCE-STATE',
+                    'context': dict(CONTEXT), 'parameters': {},
+                    'initialization': {'strategy': 'CONTINUOUS'},
+                    'science': {'versionId': science['scienceVersionId']},
+                    'inputs': {'evaporation': {'mode': 'science-version'}},
+                    'period': {'startTime': ISSUE, 'endTime': ISSUE, 'warmupDays': 1,
+                               'continuousOrigin': '2017-06-18T11:00:00'}}
+                state = complete(manager.submit(initial))
+                self.assertEqual(state['statePolicy'], 'continuous-origin')
+                self.assertEqual(state['continuousOrigin'], '2017-06-18T11:00:00')
+                parent = state['stateVersionId']
+                checkpoint = read_json(root / 'states' / (parent + '.json'))
+                continued_request = {'runType': 'stateContinuation', 'requestId': 'CONTINUOUS-CATCHUP',
+                    'context': dict(CONTEXT), 'parameters': state['parameters'],
+                    'inputs': {'evaporation': {'mode': 'monthly-climatology-assumption'}},
+                    'period': {'startTime': '2017-06-19T12:00:00', 'endTime': '2017-06-19T14:00:00',
+                               'warmupDays': 1, 'initialStateVersionId': parent}}
+                submitted = manager.submit(continued_request)
+                self.assertEqual(submitted['runConfig']['science']['versionId'], science['scienceVersionId'])
+                self.assertEqual(submitted['runConfig']['inputs']['evaporation']['mode'], 'science-version')
+                continued = complete(submitted)
+                self.assertEqual(continued['science'], state['science'])
+                rain = manager.forecast_products.register(rain_body())
+                wet = complete(manager.submit(forecast_request(parent, rain)))
+                self.assertEqual(wet['lineage']['scienceConfigurationSHA256'], checkpoint['scienceConfigurationSHA256'])
+                self.assertEqual(wet['lineage']['petConfigurationSHA256'], checkpoint['petConfigurationSHA256'])
+                self.assertEqual(read_json(root / 'states' / (parent + '.json')), checkpoint)
+                self.assertEqual(len(wet['hydrograph']['forecast']), 6)
+                self.assertFalse(wet['productionEligible'])
+            finally:
+                manager.close()
+
     def test_real_scenarios_restart_backup_and_state_separation(self):
         import numpy as np
         with tempfile.TemporaryDirectory() as temp:

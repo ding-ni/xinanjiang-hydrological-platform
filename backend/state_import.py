@@ -13,6 +13,7 @@ from common import MODEL, now, read_json, write_json
 from catalog import PARAMETERS, case_catalog
 from contracts import freeze_input_selection, freeze_routing_selection, timestamp
 from state_integrity import assert_state_input_compatibility
+from science_context import IDENTITY_KEYS, ScienceVersions, freeze_science_selection
 
 
 def fingerprint(value):
@@ -36,7 +37,9 @@ def validate_checkpoint(manager, checkpoint):
     if not re.fullmatch(r'JOB-[A-Za-z0-9_-]+', str(checkpoint.get('sourceTaskId', ''))) or checkpoint.get('stateVersionId') != 'STATE-' + checkpoint['sourceTaskId']:
         raise ValueError('来源任务与状态编号不一致')
     required = ('inputBundleVersionId', 'inputBundleManifestSHA256', 'routingVersionId', 'routingManifestSHA256',
-                'forcingVersion', 'observationVersion', 'inputManifestSHA256', 'petMode')
+                'forcingVersion', 'observationVersion', 'inputManifestSHA256', 'petMode', 'scienceVersionId', *IDENTITY_KEYS)
+    if any(not isinstance(checkpoint.get(k), str) or not checkpoint[k] for k in ('scienceVersionId', *IDENTITY_KEYS)):
+        raise ValueError('历史状态缺少模型实现或科学配置身份，请重新初始化后导出状态')
     if any(not isinstance(checkpoint.get(k), str) or not checkpoint[k] for k in required):
         raise ValueError('状态文件缺少输入、汇流或参数版本信息')
     if checkpoint.get('resultSource') != 'model-backend':
@@ -49,6 +52,12 @@ def validate_checkpoint(manager, checkpoint):
         'inputs': {'bundleVersionId': checkpoint['inputBundleVersionId']},
         'routing': {'versionId': checkpoint['routingVersionId']}}, manager.products)
     request = freeze_routing_selection(request, bundle, manager.routing_versions)
+    if checkpoint.get('scienceSnapshot') is not None:
+        descriptor = ScienceVersions(manager.runtime_root).import_snapshot(checkpoint['scienceSnapshot'])
+        if descriptor['scienceVersionId'] != checkpoint['scienceVersionId']:
+            raise ValueError('状态携带的科学快照与科学版本不一致')
+    request['science'] = {'versionId': checkpoint['scienceVersionId']}
+    request, science = freeze_science_selection(request, manager.runtime_root)
     assert_state_input_compatibility(checkpoint, request)
     params = checkpoint.get('parameters')
     if not isinstance(params, dict) or set(params) != {f'runoff.{k}' for k in PARAMETERS}:

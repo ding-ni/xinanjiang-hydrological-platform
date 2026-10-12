@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import read_json, write_json
 from server import TaskManager
 from state_integrity import validated_parent_state
+from science_context import freeze_science_selection, IDENTITY_KEYS
 
 
 CONTEXT = {"projectId": "nananxi-xufan", "resolutionId": "1km", "modelConfigId": "nananxi-xufan-1km",
@@ -36,6 +37,10 @@ class StateIntegrityTests(unittest.TestCase):
                        "resultSource": "model-backend", "stateTime": self.checkpoint["time"],
                        "lineage": {"inputManifestSHA256": self.checkpoint["inputManifestSHA256"]}}
         self.request = {"requestId": "TEST-PARENT", "context": copy.deepcopy(CONTEXT)}
+        frozen, science = freeze_science_selection({'runType': 'simulation'}, self.runtime)
+        self.checkpoint.update({key: frozen['lineage'][key] for key in IDENTITY_KEYS})
+        self.checkpoint['scienceVersionId'] = science['scienceVersionId']
+        self.result['lineage'].update(frozen['lineage'])
         self.persist()
 
     def tearDown(self):
@@ -174,11 +179,23 @@ class StateIntegrityTests(unittest.TestCase):
         }}}
 
     def continuation_request(self):
-        return {"requestId": "TEST-PARENT-CONTINUATION", "runType": "stateContinuation", "context": copy.deepcopy(CONTEXT),
+        request = {"requestId": "TEST-PARENT-CONTINUATION", "runType": "stateContinuation", "context": copy.deepcopy(CONTEXT),
                 "period": {"startTime": "2017-06-20T12:00", "endTime": "2017-06-21T12:00", "warmupDays": 7,
                            "initialStateVersionId": STATE_ID},
                 "parameters": copy.deepcopy(PARAMETERS), "inputs": {"evaporation": {"mode": "monthly-climatology-assumption"}},
                 "lineage": {}}
+        return freeze_science_selection(request, self.runtime)[0]
+
+    def test_legacy_state_remains_readable_but_cannot_be_continued(self):
+        from state_integrity import assert_state_input_compatibility
+        for key in IDENTITY_KEYS:
+            self.checkpoint.pop(key, None)
+            self.result['lineage'].pop(key, None)
+        self.checkpoint.pop('scienceVersionId', None)
+        self.persist()
+        self.assertEqual(self.validate(), self.checkpoint)
+        with self.assertRaisesRegex(ValueError, '历史状态.*重新初始化'):
+            assert_state_input_compatibility(self.checkpoint, self.continuation_request())
 
     def test_task_manager_rejects_failed_parent_before_queueing(self):
         with patch("server.RUNTIME", self.runtime), patch("server.case_catalog", self.catalog_stub), patch("server.ThreadPoolExecutor"):

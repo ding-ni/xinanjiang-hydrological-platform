@@ -13,6 +13,7 @@ from contracts import finite_number, freeze_input_selection, freeze_routing_sele
 from grid_routing import build_grid_routing
 from routing_versions import RoutingVersions
 from catalog import case_catalog
+from science_context import IDENTITY_KEYS, ScienceVersions, freeze_science_selection
 
 sys.path.insert(0, str(MODEL / "code"))
 
@@ -47,6 +48,10 @@ def point_source(manager, task_id):
     if not (folder / "routing-evidence.json").is_file():
         raise ValueError("该旧任务未保存完整产流过程，请新建连续模拟后再查询点位")
     metadata = read_json(folder / "routing-evidence.json")
+    if request.get('science'):
+        # A point query reroutes saved runoff through today's implementation.
+        # Require the same registered implementation and scientific source.
+        freeze_science_selection(request, manager.root.parent)
     evidence = result.get("routingEvidence", {})
     if (metadata.get("taskId") != task_id or metadata.get("lineage") != request.get("lineage")
             or evidence.get("arraySHA256") != sha(folder / "routing-runoff.npz")
@@ -62,7 +67,7 @@ def normalize_diagnostic(request, manager):
         raise ValueError("诊断请求必须为对象")
     request = copy.deepcopy(request)
     if request.get('runType') == 'productionWorkflow':
-        if set(request) - {'runType', 'requestId', 'baseRequest', 'wlmUpperBounds', 'seeds', 'yearGroups', 'warmupYear', 'context', 'inputs', 'lineage', 'routing', 'workflowConfigSHA256', 'workflowEvidence'}:
+        if set(request) - {'runType', 'requestId', 'baseRequest', 'wlmUpperBounds', 'seeds', 'yearGroups', 'warmupYear', 'context', 'inputs', 'lineage', 'routing', 'workflowConfigSHA256', 'workflowEvidence', 'annualScience', 'annualScienceLineage'}:
             raise ValueError('工作流请求包含未登记字段')
         boundary = normalize_diagnostic({'runType': 'diagnosticExperiment', 'baseRequest': request.get('baseRequest'), 'mode': 'wlmBoundary', 'values': request.get('wlmUpperBounds')}, manager)
         stability = normalize_diagnostic({'runType': 'diagnosticExperiment', 'baseRequest': request.get('baseRequest'), 'mode': 'multiSeed', 'values': request.get('seeds')}, manager)
@@ -90,7 +95,23 @@ def normalize_diagnostic(request, manager):
         lineage = copy.deepcopy(frozen['lineage'])
         if request.get('lineage', {}).get('sourceTaskId'):
             lineage['sourceTaskId'] = request['lineage']['sourceTaskId']
+        scientific = ScienceVersions(manager.runtime_root).resolve(frozen['science']['versionId'])
+        annual = ScienceVersions(manager.runtime_root).register(
+            name='工作流年度连续计算的逐月给定 PET', state_config=scientific['paths']['state_config'],
+            initial_land_state=scientific['paths']['initial_land_state'],
+            pet_config=MODEL / 'config/pet_forcing_assumed_monthly.json',
+            state_policy={'strategy': 'independent-warmup', 'warmupHours': 0})
+        annual_request = copy.deepcopy(frozen)
+        annual_request['science'] = {'versionId': annual['scienceVersionId']}
+        annual_request['inputs']['evaporation'] = {'mode': 'science-version'}
+        annual_request.pop('calibration', None)
+        for key in (*IDENTITY_KEYS, 'scienceVersionId', 'petMode'):
+            annual_request['lineage'].pop(key, None)
+        annual_request, _descriptor = freeze_science_selection(annual_request, manager.runtime_root)
+        if request.get('annualScience', annual_request['science']) != annual_request['science'] or request.get('annualScienceLineage', annual_request['lineage']) != annual_request['lineage']:
+            raise ValueError('年度连续计算科学条件发生改变，请重新登记工作流')
         return {'runType': 'productionWorkflow', 'requestId': request.get('requestId'), 'baseRequest': frozen,
+                'annualScience': annual_request['science'], 'annualScienceLineage': annual_request['lineage'],
                 'wlmUpperBounds': boundary['values'], 'seeds': stability['values'], 'yearGroups': groups,
                 'warmupYear': warmup, 'workflowConfigSHA256': config_sha, 'workflowEvidence': evidence,
                 **{key: frozen[key] for key in ('context', 'inputs', 'routing')}, 'lineage': lineage}
@@ -104,6 +125,8 @@ def normalize_diagnostic(request, manager):
             if not low <= point[key] <= high:
                 raise ValueError("点查询数值范围无效")
         frozen = {key: copy.deepcopy(source[key]) for key in ("inputs", "lineage", "routing", "context")}
+        if source.get('science'):
+            frozen['science'] = copy.deepcopy(source['science'])
         if request.get('lineage', {}).get('sourceTaskId'):
             frozen['lineage']['sourceTaskId'] = request['lineage']['sourceTaskId']
         frozen, bundle = freeze_input_selection(frozen, manager.products)
@@ -120,17 +143,22 @@ def normalize_diagnostic(request, manager):
         raise ValueError("参数检验必须选择已登记的率定任务")
     if base.get('calibration', {}).get('evaluationMode') == 'manual':
         raise ValueError('多种子与边界搜索请选用自动率定方案；人工试调在率定页对照')
+    if base.get('sourcePlan') is not None or base.get('calibration', {}).get('optimizer', {}).get('initializationPolicy') == 'SOURCE_INITIAL_CANDIDATES':
+        raise ValueError('原率定方案冻结随机种子与范围；参数检验请先采用候选，再登记普通自动率定方案')
     if base.get('calibration', {}).get('target') == 'routing':
         raise ValueError('本项产流稳定性检验请选择产流率定方案')
     base, bundle = freeze_input_selection(base, manager.products)
     base = freeze_routing_selection(base, bundle, manager.routing_versions)
     base = normalize_request(base, case_catalog(bundle))
+    base, _science = freeze_science_selection(base, manager.runtime_root)
     periods = base["period"].get("windows", []) if base["period"].get("mode") == "continuous" else base["period"]["events"]
     if not any(row.get("purpose") == "独立检验" and row.get("status") != "inactive" for row in periods):
         raise ValueError("诊断实验必须保留独立检验组；不能用验证组冒充")
     if base["calibration"]["optimizer"]["maxEvaluations"] > 500:
         raise ValueError("单次实验预算最多 500 次，避免无界计算")
     mode, values = request.get("mode"), request.get("values")
+    if base['calibration'].get('target') == 'joint' and mode == 'wlmBoundary':
+        raise ValueError('联合方案的边界检验请显式修改搜索范围后重新登记，不沿用旧产流 WLM 工作流')
     if mode == 'wlmBoundary' and base['calibration'].get('searchParameters') is not None:
         raise ValueError('WLM边界检验请选用预设参数范围的率定方案')
     if not isinstance(values, list) or len(values) > 5:
@@ -267,6 +295,15 @@ def formal_report(result, request):
             "objective": {"loss": result["optimizer"]["best_loss"]}, "algorithm_config": request["calibration"]["optimizer"]}
 
 
+def diagnostic_pet_note(result):
+    return {
+        'CONSTANT_ZERO_EXPLICIT_REQUEST': '蒸散发显式设为零。',
+        'MONTHLY_CLIMATOLOGY_ASSUMPTION': '蒸散发采用逐月给定值。',
+        'CONSTANT_ASSUMPTION': '蒸散发采用给定常数。',
+        'HOURLY_CSV': '蒸散发采用已登记的逐小时资料。',
+    }.get(result.get('petMode'), '蒸散发采用所选方案冻结的条件。')
+
+
 def run_experiment(folder, request, publish_candidate=True):
     from worker import ModelJob
     from calibration_platform.production_validation import evaluate_multi_seed_stability, evaluate_wlm_boundary_experiment
@@ -299,13 +336,24 @@ def run_experiment(folder, request, publish_candidate=True):
                "resultSource": "model-backend", "productionEligible": False, "diagnosticEvaluation": evaluation,
                "calibrationMetrics": read_json(folder / outputs[chosen]["taskId"] / "result.json")["calibrationMetrics"],
                "validationMetrics": outputs[chosen]["validationMetrics"], "independentTest": outputs[chosen]["independentTest"]}
+    chosen_result = read_json(folder / outputs[chosen]['taskId'] / 'result.json')
+    candidate_record.update(science=chosen_result['science'], scienceSnapshot=chosen_result.get('scienceSnapshot'))
+    candidate_record.update({key: chosen_result.get(key) for key in ('statePolicy', 'petMode', 'continuousOrigin', 'actualWarmupHours')})
+    if chosen_result.get('bestRoutingParameters'):
+        candidate_record['bestRoutingParameters'] = chosen_result['bestRoutingParameters']
+        candidate_record['calibrationTarget'] = chosen_result['calibrationTarget']
+        if publish_candidate:
+            candidate_record['routingCandidate'] = RoutingVersions(RUNTIME).create({
+                'name': f'诊断代表联合方案 · {task_id[-8:]}',
+                'parentVersionId': request['routing']['versionId'], 'parameters': chosen_result['bestRoutingParameters']})
     if publish_candidate:
         write_json(RUNTIME / "parameters" / f"{version}.json", candidate_record)
     write_json(folder / "formal-diagnostic-reports.json", reports)
     return {"experiment": {"mode": request["mode"], "evaluation": evaluation, "runs": list(outputs.values())},
             "bestParameters": candidate, "parameterVersionId": version,
+            **{key: candidate_record[key] for key in ('science', 'scienceSnapshot', 'routingCandidate', 'bestRoutingParameters', 'calibrationTarget', 'statePolicy', 'petMode', 'continuousOrigin', 'actualWarmupHours') if key in candidate_record},
             **{key: candidate_record[key] for key in ('calibrationMetrics', 'validationMetrics', 'independentTest')},
-            "warnings": ["已执行参数稳定性与边界检验。", "连续率定采用逐月给定蒸散发。" if request['baseRequest']['period'].get('mode') == 'continuous' else "洪水场次采用零蒸散发。"]}
+            "warnings": ["已执行参数稳定性与边界检验。", diagnostic_pet_note(chosen_result)]}
 
 
 def run_diagnostic(folder):

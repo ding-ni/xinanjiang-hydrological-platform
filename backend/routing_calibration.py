@@ -18,6 +18,8 @@ def coordinates(payload):
 
 
 def validate(calibration, payload=None):
+    if calibration.get('target') == 'joint':
+        return
     if calibration.get('target', 'runoff') != 'routing':
         if calibration.get('routingSearchParameters') is not None:
             raise ValueError('坡面汇流搜索范围仅用于坡面汇流率定')

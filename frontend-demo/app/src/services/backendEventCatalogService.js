@@ -19,6 +19,15 @@ export function registeredBackendEventSelection(events = [], selectedId = null) 
   return { eventId: selected?.id || null, eventStart: selected?.start || null, eventEnd: selected?.end || null }
 }
 
+/** Retained local/other-input records are evidence, not current process options. */
+export function currentInputFloodEvents(events = [], { registeredOnly = false, selectedBundleVersionId = null,
+  registeredBundleVersionId = null } = {}) {
+  if (registeredOnly && selectedBundleVersionId && registeredBundleVersionId
+    && selectedBundleVersionId !== registeredBundleVersionId) return []
+  return (Array.isArray(events) ? events : []).filter(event => event.status !== 'inactive'
+    && (!registeredOnly || event.runtimeRegistered === true))
+}
+
 /**
  * Runtime event windows, statistics and sources belong to the registered QC
  * catalog. User assignments and edits are retained separately, never spread

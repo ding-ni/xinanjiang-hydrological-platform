@@ -13,6 +13,38 @@ def run_search(specs, config, initial, evaluate, candidate_params, resolved, sea
     not a warm-start population for the unchanged vendor optimizer.
     """
     total = config["maxEvaluations"]
+    original_population = config.get('initializationPolicy') == 'SOURCE_INITIAL_CANDIDATES'
+    if original_population:
+        if config.get('strategy', 'joint') != 'joint' or not isinstance(config.get('effectiveInitialCandidates'), list):
+            raise ValueError('原方案种群方式须使用已冻结的原起始参数及额外候选')
+        completed = 0
+        def original_objective(values):
+            nonlocal completed
+            try:
+                return {'loss': float(evaluate(candidate_params(copy.deepcopy(initial), values)))}
+            finally:
+                completed += 1
+                progress(10 + 70 * completed / total, f'原方案搜索 · 参数评价 {completed}/{total}')
+        size = min(max(config['populationSize'], 4), total)
+        generations = max(config.get('generations', 0), math.ceil(max(0, total - size) / size))
+        consumed = {'algorithm': config['algorithm'], 'max_evaluations': total,
+                    'population_size': size, 'generations': generations,
+                    'seed': config.get('seed', 42), 'differential_weight': config.get('differentialWeight', .8),
+                    'crossover_probability': config.get('crossoverProbability', .7),
+                    'initial_candidates': copy.deepcopy(config['effectiveInitialCandidates'])}
+        outcome = search(specs, original_objective, consumed)
+        if not outcome['best_parameters'] or not math.isfinite(outcome['best_loss']):
+            raise ValueError('原方案本次预算未找到符合产流容量与河道汇流约束的候选，请增加试运行预算')
+        best = candidate_params(copy.deepcopy(initial), outcome['best_parameters'])
+        valid = sum(row.get('loss') is not None and math.isfinite(row['loss']) for row in outcome['history'])
+        return best, {**outcome, 'strategy': 'joint', 'evaluations': completed,
+                      'validEvaluations': valid, 'invalidEvaluations': completed - valid,
+                      'baselineReevaluated': False, 'initializationPolicy': 'SOURCE_INITIAL_CANDIDATES',
+                      'consumedConfiguration': consumed,
+                      'stages': [{'id': 'joint', 'label': '原方案联合搜索', 'budget': total, 'evaluations': completed,
+                                  'seed': consumed['seed'], 'parameterNames': [row['name'] for row in specs],
+                                  'initialParameters': resolved(initial), 'bestParameters': resolved(best),
+                                  'bestLoss': outcome['best_loss'], 'retainedInitial': False}]}
     if config['algorithm'] == 'FIXED_PARAMETERS':
         best = copy.deepcopy(initial)
         loss = float(evaluate(best))
@@ -46,18 +78,21 @@ def run_search(specs, config, initial, evaluate, candidate_params, resolved, sea
                 completed += 1
                 progress(10 + 70 * completed / total, f"{label} · 参数评价 {completed}/{total}")
 
-        baseline_loss = None
-        if staged:
-            baseline_loss = objective({})["loss"]
-            history.append({"evaluation": completed, "stage": stage_id, "kind": "initial",
-                            "loss": baseline_loss, "parameters": initial_parameters})
-        offset = completed
+        baseline_loss = objective({})["loss"]
+        if not math.isfinite(baseline_loss):
+            raise ValueError(f'{label}当前冻结参数无有效目标值')
+        offset = completed - 1
         seed = (config.get("seed", 42) + index) % 4294967296
         outcome = search(active_specs, objective, {"algorithm": config["algorithm"],
-                         "max_evaluations": budget - int(staged), "population_size": config["populationSize"],
-                         "generations": total, "seed": seed})
+                         "max_evaluations": budget, "population_size": config["populationSize"],
+                         "generations": config.get('generations', total), "seed": seed,
+                         'differential_weight': config.get('differentialWeight', .8),
+                         'crossover_probability': config.get('crossoverProbability', .7),
+                         "initial_evaluation": {"loss": baseline_loss,
+                            "parameters": {s['name']: initial_parameters.get(s['name']) for s in active_specs},
+                            "coordinates": initial_parameters}})
         selected_loss = outcome["best_loss"]
-        retained = staged and math.isfinite(baseline_loss) and baseline_loss <= selected_loss
+        retained = baseline_loss <= selected_loss
         if retained:
             selected_loss = baseline_loss
         elif outcome["best_parameters"] and math.isfinite(selected_loss):
@@ -67,10 +102,13 @@ def run_search(specs, config, initial, evaluate, candidate_params, resolved, sea
         history.extend({**row, "evaluation": offset + row["evaluation"], "stage": stage_id}
                        for row in outcome["history"])
         stages.append({"id": stage_id, "label": label, "budget": budget,
-                       "evaluations": outcome["evaluations"] + int(staged), "seed": seed,
+                       "evaluations": outcome["evaluations"], "seed": seed,
                        "parameterNames": [s["name"] for s in active_specs],
                        "initialParameters": initial_parameters, "bestParameters": resolved(best),
                        "initialLoss": baseline_loss, "bestLoss": selected_loss, "retainedInitial": retained})
+    valid = sum(row.get('loss') is not None and math.isfinite(row['loss']) for row in history)
     return best, {"algorithm": config["algorithm"], "strategy": "staged" if staged else "joint",
                   "best_parameters": resolved(best), "best_loss": selected_loss,
-                  "evaluations": completed, "history": history, "stages": stages}
+                  "evaluations": completed, "validEvaluations": valid, "invalidEvaluations": completed - valid,
+                  "terminationReason": 'BUDGET_EXHAUSTED' if completed >= total else 'SEARCH_SPACE_EXHAUSTED',
+                  "baselineReevaluated": True, "history": history, "stages": stages}

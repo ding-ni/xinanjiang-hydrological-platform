@@ -1,17 +1,18 @@
 <template>
   <details class="search-editor" :open="modelValue !== null">
-    <summary>自动率定参数 <span>{{ activeCount }} 项参与搜索</span></summary>
+    <summary>{{ title || '自动率定参数' }} <span>{{ activeCount }} 项参与搜索</span></summary>
     <fieldset :disabled="disabled">
       <div class="scope-actions"><button type="button" class="btn" @click="emit('update:modelValue', null)">预设范围</button><template v-if="!routing"><button type="button" class="btn" @click="choose('storage')">仅蓄水产流</button><button type="button" class="btn" @click="choose('sources')">仅水源划分</button></template><button type="button" class="btn" @click="emit('update:modelValue', {})">全部固定</button></div>
       <div class="search-rows">
         <div v-for="row in definitions" :key="row.key" class="search-row" :class="{ fixed: !enabled(row.key) }">
-          <label class="select-parameter"><input type="checkbox" :checked="enabled(row.key)" :aria-label="`${row.key} 参与率定`" @change="toggle(row, $event.target.checked)" /><span><b>{{ row.symbol }}</b> {{ row.label }}</span></label>
+          <label class="select-parameter"><input type="checkbox" :checked="enabled(row.key)" :disabled="Boolean(row.unavailable)" :aria-label="`${row.key} 参与率定`" @change="toggle(row, $event.target.checked)" /><span><b>{{ row.symbol }}</b> {{ row.label }}</span></label>
           <div class="search-bounds"><span :title="String(current[row.key])">当前 {{ number(current[row.key]) }}</span><template v-if="enabled(row.key)"><input type="number" class="input" step="any" :min="row.limitMin" :max="row.limitMax" :value="value(row).minimum" :aria-label="`${row.key} 搜索下限`" @change="bound(row, 'minimum', $event.target.value)" /><span>—</span><input type="number" class="input" step="any" :min="row.limitMin" :max="row.limitMax" :value="value(row).maximum" :aria-label="`${row.key} 搜索上限`" @change="bound(row, 'maximum', $event.target.value)" /></template><b v-else class="fixed-label">固定</b><small>{{ row.unit === '1' ? '' : row.unit }}</small></div>
         </div>
       </div>
+      <p v-for="row in definitions.filter(item => item.unavailable)" :key="row.key" class="space-note">{{ row.unavailable }}</p>
       <p class="space-error" v-if="error" role="status">{{ error }}</p>
-      <p v-if="routing" class="space-note">调整全局坡面汇流时间；产流、河道及单元单列参数保持不变。</p>
-      <p v-else class="space-note">未勾选项采用当前参数；KC、C及汇流参数固定。KΣ,d 与 fG 由当前 KI、KG 换算，搜索后再转换为小时系数。</p>
+      <p v-if="routing" class="space-note">{{ joint ? '坡面时间与河道参数按所选范围联合搜索；K 倍数以当前所选汇流方案为基准。' : '调整全局坡面汇流时间；产流、河道及单元单列参数保持不变。' }}</p>
+      <p v-else class="space-note">未勾选项采用当前参数；{{ joint ? 'KC/C 是否搜索以联合预设与勾选项为准。' : 'KC、C及汇流参数固定。' }}KΣ,d 与 fG 由当前 KI、KG 换算，搜索后再转换为小时系数。</p>
     </fieldset>
   </details>
 </template>
@@ -19,12 +20,12 @@
 <script setup>
 import { computed } from 'vue'
 import { searchCoordinates, selectedSearchParameters } from '@/services/calibrationSpaceService'
-const props = defineProps({ modelValue: { type: Object, default: null }, definitions: { type: Array, required: true }, params: { type: Object, required: true }, routing: Boolean, disabled: Boolean, error: String })
+const props = defineProps({ modelValue: { type: Object, default: null }, definitions: { type: Array, required: true }, params: { type: Object, required: true }, routing: Boolean, joint: Boolean, title: String, disabled: Boolean, error: String })
 const emit = defineEmits(['update:modelValue'])
 const current = computed(() => props.routing ? props.params : searchCoordinates(props.params))
-const enabled = key => props.modelValue === null || Object.hasOwn(props.modelValue, key)
+const enabled = key => !props.definitions.find(row => row.key === key)?.unavailable && (props.modelValue === null || Object.hasOwn(props.modelValue, key))
 const value = row => props.modelValue?.[row.key] || row
-const activeCount = computed(() => props.modelValue === null ? props.definitions.length : Object.keys(props.modelValue).length)
+const activeCount = computed(() => props.definitions.filter(row => enabled(row.key)).length)
 const number = value => Number.isFinite(value) ? Number(value.toPrecision(6)) : '—'
 function choose(group) { emit('update:modelValue', selectedSearchParameters(props.definitions, props.definitions.filter(row => row.group === group).map(row => row.key))) }
 function toggle(row, active) {

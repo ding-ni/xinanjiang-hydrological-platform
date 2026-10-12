@@ -64,17 +64,56 @@ function tailCounts(size) {
 }
 
 export function stratifiedRandomEventSplit(events, seed) {
-  const sorted = [...events].sort((a, b) => Number(a.observedPeak || 0) - Number(b.observedPeak || 0))
+  const sorted = physicalFloodGroups(events, { includeUnused: true }).groups
+    .sort((a, b) => a.observedPeak - b.observedPeak || a.id.localeCompare(b.id))
   const assignments = []
   for (let start = 0; start < sorted.length; start += 10) {
     const group = shuffleWithSeed(sorted.slice(start, start + 10), `${seed}:${start / 10}`)
     const [calibrationCount, validationCount] = group.length === 10 ? [7, 2] : tailCounts(group.length)
-    group.forEach((event, index) => {
+    group.forEach((flood, index) => {
       const purpose = index < calibrationCount ? '率定' : index < calibrationCount + validationCount ? '验证' : '独立检验'
-      assignments.push({ id: event.id, purpose })
+      for (const event of flood.members) assignments.push({ id: event.id, purpose })
     })
   }
   return assignments
+}
+
+function localHydrologyTime(value) {
+  const text = String(value || '').replace(' ', 'T')
+  return Date.parse(/(?:Z|[+-]\d{2}:\d{2})$/.test(text) ? text : `${text}Z`)
+}
+
+/** Closed intervals, including the shared hour; transitive overlaps run once. */
+export function physicalFloodGroups(events = [], { includeUnused = false } = {}) {
+  const rows = events.filter(row => row.status !== 'inactive' && (includeUnused || row.purpose !== '未使用'))
+    .map(row => ({ ...row, _start: localHydrologyTime(row.start), _end: localHydrologyTime(row.end) }))
+    .sort((a, b) => (a._start - b._start) || (a._end - b._end) || String(a.eventId || a.id).localeCompare(String(b.eventId || b.id)))
+  const groups = [], errors = []
+  for (const row of rows) {
+    const valid = Number.isFinite(row._start) && Number.isFinite(row._end) && row._end >= row._start
+    if (!valid && !includeUnused) errors.push(`${row.eventId || row.id} 洪水窗口不完整`)
+    const previous = groups.at(-1)
+    if (valid && previous && row._start <= previous.endMs && row._end >= previous.startMs) {
+      previous.members.push(row)
+      previous.endMs = Math.max(previous.endMs, row._end)
+    } else {
+      groups.push({ id: `FLOOD-GROUP-${String(groups.length + 1).padStart(3, '0')}`,
+        startMs: valid ? row._start : NaN, endMs: valid ? row._end : NaN, members: [row] })
+    }
+  }
+  const conflicts = [], counts = { calibration: 0, validation: 0, independentTest: 0 }
+  for (const group of groups) {
+    group.memberEventIds = group.members.map(row => row.eventId || row.id)
+    group.uniqueHours = Number.isFinite(group.startMs + group.endMs) ? Math.round((group.endMs - group.startMs) / 3600000) + 1 : 0
+    group.observedPeak = Math.max(...group.members.map(row => Number(row.observedPeak) || 0))
+    group.purposes = [...new Set(group.members.map(row => row.purpose))]
+    group.purpose = group.purposes.length === 1 ? group.purposes[0] : null
+    if (!includeUnused && group.purposes.length > 1) conflicts.push(group)
+    const key = { 率定: 'calibration', 验证: 'validation', 独立检验: 'independentTest' }[group.purpose]
+    if (key) counts[key]++
+  }
+  return { groups, counts, conflicts, errors, groupCount: groups.length,
+    windowCount: rows.length, uniqueHours: groups.reduce((total, group) => total + group.uniqueHours, 0) }
 }
 
 /**
@@ -126,6 +165,9 @@ export function selectCalibrationCandidates(events = [], options = {}) {
 
 export function buildCalibrationRequest({ app, calibration, operationMode, events = [], eventAssignment = null, eventSelection = null }) {
   const runType = operationMode === 'simulation' ? 'simulation' : 'calibration'
+  if (calibration.requiredInputBundleVersionId && selectedInputBundleVersionId(app) !== calibration.requiredInputBundleVersionId) {
+    throw new Error(`当前候选要求资料 ${calibration.requiredInputBundleVersionId}，请先选择已登记的对应输入版本`)
+  }
   const projectRoot = projectResourceRoot(app, app.basinId) || './data/projects/'
   const precipitationDatasetId = selectObservedPrecipitationDataset(app.projectData, app.modelScale)?.id || null
   const outletHydrologyDatasetId = selectObservedHydrologyDataset(app.projectData)?.id || null
@@ -144,12 +186,20 @@ export function buildCalibrationRequest({ app, calibration, operationMode, event
     status: event.status || 'active',
     revision: Number(event.revision) || 1
   }))
-  return {
+  const physical = physicalFloodGroups(eventRows)
+  if (runType === 'calibration' && calibration.calibrationMode === 'event' && physical.conflicts.length) {
+    throw new Error(`重叠洪水不能跨用途：${physical.conflicts.map(group => group.memberEventIds.join('、')).join('；')}，请在台账设为同一用途`)
+  }
+  const science = calibration.scienceVersionId ? calibration.scienceDescriptor || {} : null
+  const evaporationMode = calibration.evaporationMode || 'constant-zero'
+  const request = {
     schemaVersion: '2.0',
     requestId: createRequestId(calibration.contextKey, runType),
     runType,
     createdAt: new Date().toISOString(),
     routing: { versionId: app.selectedRoutingVersionId || 'control-split-v2' },
+    ...(science ? { science: { versionId: calibration.scienceVersionId } } : {}),
+    ...(calibration.sourcePlan && runType === 'calibration' ? { sourcePlan: JSON.parse(JSON.stringify(calibration.sourcePlan)) } : {}),
     context: {
       contextKey: calibration.contextKey,
       projectId: app.basinId,
@@ -166,8 +216,11 @@ export function buildCalibrationRequest({ app, calibration, operationMode, event
       eventDataPackages: `${projectRoot}observations/event-data-packages.json`,
       spatialPreparationCatalog: `${projectRoot}input-preparation.json`,
       evaporationDatasetId: null,
-      evaporation: runType === 'calibration' && calibration.calibrationMode === 'event'
-        ? { mode: 'constant-zero', valueMmPerHour: 0, scope: 'event-simulation' }
+      evaporation: science ? { mode: 'science-version', scope: 'registered-scientific-configuration' }
+        : runType === 'calibration' && calibration.calibrationMode === 'event'
+        ? evaporationMode === 'monthly-climatology-assumption'
+          ? { mode: evaporationMode, scope: 'event-simulation', versionId: 'pet_forcing_assumed_monthly' }
+          : { mode: 'constant-zero', valueMmPerHour: 0, scope: 'event-simulation' }
         : app.projectData?.backend
           ? { mode: 'monthly-climatology-assumption', scope: 'continuous-simulation', versionId: 'pet_forcing_assumed_monthly' }
           : { mode: 'dataset-required', scope: 'continuous-simulation' }
@@ -177,7 +230,8 @@ export function buildCalibrationRequest({ app, calibration, operationMode, event
           startTime: calibration.simulationStart,
           endTime: calibration.simulationEnd,
           warmupDays: Number(calibration.warmupDays),
-          initialStateVersionId: calibration.initialStateVersionId || null
+          initialStateVersionId: calibration.initialStateVersionId || null,
+          ...(calibration.statePolicy === 'continuous-origin' && calibration.continuousOrigin ? { continuousOrigin: calibration.continuousOrigin } : {})
         }
       : {
           mode: calibration.calibrationMode,
@@ -190,13 +244,15 @@ export function buildCalibrationRequest({ app, calibration, operationMode, event
           warmupDays: Number(calibration.warmupDays),
           ...(calibration.calibrationMode === 'event' ? {
           events: eventRows,
-          eventAssignment,
+          eventAssignment: eventAssignment || calibration.eventAssignment || null,
           eventSet: {
             version: calibration.eventSetVersion || null,
             schemaVersion: calibration.eventCatalogSchemaVersion || null,
             selection: eventSelection,
             selectedEventIds: eventRows.filter((event) => event.purpose !== '未使用' && event.status !== 'inactive').map((event) => event.id),
-            snapshot: eventRows
+            snapshot: eventRows,
+            physicalGroupPreview: { groupCount: physical.groupCount, uniqueHours: physical.uniqueHours,
+              counts: physical.counts, groups: physical.groups.map(({ id, memberEventIds, purpose, uniqueHours }) => ({ id, memberEventIds, purpose, uniqueHours })) }
           }
           } : {})
         },
@@ -207,16 +263,23 @@ export function buildCalibrationRequest({ app, calibration, operationMode, event
       parameterRelease: 'candidate-only',
       initialParameterVersionId: calibration.paramVersion,
       initialParameters: { ...calibration.params },
+      statePolicy: calibration.statePolicy || 'independent-warmup',
+      ...(calibration.searchParameterOrder ? { searchParameterOrder: [...calibration.searchParameterOrder] } : {}),
+      ...(calibration.statePolicy === 'continuous-origin' && calibration.continuousOrigin ? { continuousOrigin: calibration.continuousOrigin } : {}),
+      ...(calibration.calibrationTarget === 'joint' ? { target: 'joint', jointProfile: calibration.jointProfile || 'reference-16',
+        ...(calibration.searchParameters != null ? { searchParameters: JSON.parse(JSON.stringify(calibration.searchParameters)) } : {}),
+        ...(calibration.routingSearchParameters != null ? { routingSearchParameters: JSON.parse(JSON.stringify(calibration.routingSearchParameters)) } : {}) } : {}),
       ...(calibration.calibrationTarget === 'routing' ? { target: 'routing',
         ...(calibration.routingSearchParameters != null ? { routingSearchParameters: JSON.parse(JSON.stringify(calibration.routingSearchParameters)) } : {}) }
-        : calibration.searchParameters != null ? { searchParameters: JSON.parse(JSON.stringify(calibration.searchParameters)) } : {}),
+        : calibration.calibrationTarget !== 'joint' && calibration.searchParameters != null ? { searchParameters: JSON.parse(JSON.stringify(calibration.searchParameters)) } : {}),
       objectives: { ...calibration.criteria },
       optimizer: {
         algorithm: calibration.algorithm,
-        strategy: calibration.calibrationTarget === 'routing' ? 'joint' : calibration.searchStrategy || 'joint',
+        strategy: ['routing', 'joint'].includes(calibration.calibrationTarget) ? 'joint' : calibration.searchStrategy || 'joint',
         seed: Number(calibration.searchSeed ?? 42),
         maxEvaluations: Number(calibration.maxEvaluations),
-        populationSize: Number(calibration.populationSize)
+        populationSize: Number(calibration.populationSize),
+        ...JSON.parse(JSON.stringify(calibration.optimizerSettings || {}))
       }
     } : null,
     execution: {
@@ -227,6 +290,9 @@ export function buildCalibrationRequest({ app, calibration, operationMode, event
         : ['simulated-hydrograph', 'end-state-version']
     },
     lineage: {
+      ...(science ? Object.fromEntries(['modelImplementationSHA256', 'scienceConfigurationSHA256', 'petConfigurationSHA256']
+        .filter(key => science[key]).map(key => [key, science[key]])) : {}),
+      ...(science ? { scienceVersionId: calibration.scienceVersionId } : {}),
       ...(app.basinId === 'nananxi-xufan' && (app.usesModelBackend || modelBackendEnabled()) ? { inputBundleVersionId: selectedInputBundleVersionId(app) } : {}),
       dataVersionId: precipitationDatasetId,
       observationDataVersionId: outletHydrologyDatasetId,
@@ -238,6 +304,15 @@ export function buildCalibrationRequest({ app, calibration, operationMode, event
       sourceTaskId: null
     }
   }
+  const original = calibration.sourcePlan ? calibration.sourcePlanRequestTemplate : null
+  if (original && runType === 'calibration') {
+    request.context = JSON.parse(JSON.stringify(original.context))
+    request.inputs.evaporation = JSON.parse(JSON.stringify(original.inputs.evaporation))
+    request.calibration.evaluationMode = original.calibration.evaluationMode || 'automatic'
+    request.calibration.objectives = Object.fromEntries(Object.keys(original.calibration.objectives)
+      .map(key => [key, JSON.parse(JSON.stringify(calibration.criteria[key]))]))
+  }
+  return request
 }
 
 /**

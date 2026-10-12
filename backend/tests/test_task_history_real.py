@@ -131,7 +131,8 @@ class GridHistoryNumericalTests(unittest.TestCase):
         self.assertEqual(final_frame["time"], checkpoint["time"])
         np.testing.assert_allclose([cell["WU"] for cell in final_frame["cells"]], checkpoint["land"]["WU"], rtol=0, atol=0)
         for file in read_json(job.folder / "input-manifest.json")["files"]:
-            self.assertEqual(hashlib.sha256((MODEL / file["path"]).read_bytes()).hexdigest(), file["sha256"])
+            path = self.worker.RUNTIME / file['path'].removeprefix('runtime/') if file['path'].startswith('runtime/') else MODEL / file['path']
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), file["sha256"])
         print("GRID_HISTORY_BATCH_EQUIVALENCE " + json.dumps(errors, sort_keys=True), flush=True)
 
     def test_saved_checkpoint_continuation_matches_whole_history(self):

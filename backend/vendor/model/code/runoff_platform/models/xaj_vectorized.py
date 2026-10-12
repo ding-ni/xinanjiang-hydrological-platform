@@ -6,7 +6,8 @@ from typing import Mapping
 
 import numpy as np
 
-from ..core.types import LandParams
+from ..core.types import LandParams, NUMERICAL
+from ..core.numeric_compilation import optional_njit
 
 
 LAND_STATE_FIELDS = ("swe", "snow_liquid", "WU", "WL", "WD", "S", "FR")
@@ -38,15 +39,21 @@ def _copy_and_validate_state(
         "S": (0.0, params.SM),
         "FR": (0.0, 1.0),
     }
+    # [XAJ-STATE-HANDOFF-20261011] Normalize roundoff only, never real overflow.
+    # The absolute tolerance is in mm (dimensionless for FR), shared with
+    # numerical settings; no capacity-dependent allowance hides invalid states.
+    tolerance = NUMERICAL.epsilon
     invalid = [
         name
         for name, values in result.items()
         if not np.isfinite(values).all()
-        or np.any(values < limits[name][0])
-        or np.any(values > limits[name][1])
+        or np.any(values < limits[name][0] - tolerance)
+        or np.any(values > limits[name][1] + tolerance)
     ]
     if invalid:
         raise ValueError(f"initial land state is outside parameter bounds: {invalid}")
+    for name, values in result.items():
+        result[name] = np.clip(values, *limits[name])
     return result
 
 
@@ -95,26 +102,33 @@ def simulate_xaj_liquid_grids(
     if not np.isfinite(pet).all() or np.any(pet < 0.0):
         raise ValueError("pet_mm_h must contain finite non-negative values")
     state = _copy_and_validate_state(initial_state, params, n_grids)
-    swe = state["swe"]
-    snow_liquid = state["snow_liquid"]
-    wu = state["WU"]
-    wl = state["WL"]
-    wd = state["WD"]
-    free_s = state["S"]
-    fr = state["FR"]
+    # [XAJ-CORE-02] Identical numeric kernel for calibration and replay.
+    values = (params.KC, params.WUM, params.WLM, params.WDM, params.WM,
+              params.C, params.B, params.SM, params.EX, params.KI, params.KG, params.IM)
+    result = _array_kernel(precip, pet, tuple(state[name] for name in LAND_STATE_FIELDS), values, return_diagnostics)
+    # A Numba typed.Dict is not pickle/deepcopy/JSON compatible with the
+    # platform's checkpoint contract. Keep ordinary Python mappings at the API.
+    output = (result[0], result[1], result[2], dict(result[3]))
+    return output + (dict(result[4]),) if return_diagnostics else output
 
-    rs_out: list[np.ndarray] = []
-    ri_out: list[np.ndarray] = []
-    rg_out: list[np.ndarray] = []
-    et_out: list[np.ndarray] = []
-    balance_out: list[np.ndarray] = []
+
+def _array_kernel(precip, pet, state, values, return_diagnostics):
+    kc, wum, wlm, wdm, wm, c, b, sm, ex, ki, kg, im = values
+    n_grids = precip.shape[1]
+    swe, snow_liquid, wu, wl, wd, free_s, fr = state
+    rs_values = np.empty(precip.shape, dtype=np.float32)
+    ri_values = np.empty(precip.shape, dtype=np.float32)
+    rg_values = np.empty(precip.shape, dtype=np.float32)
+    shape = precip.shape if return_diagnostics else (0, n_grids)
+    trace = {name: np.empty(shape, dtype=np.float64) for name in (
+        "et_actual", "water_balance_error", "EU", "EL", "ED", "WU", "WL", "WD", "S", "FR", "infiltration", "net_rainfall", "pervious_runoff")}
 
     for time_index, rain in enumerate(precip):
         # [XAJ-WARMUP-CORE-01A] Three-layer evapotranspiration.
         old_state_s = free_s.copy()
         old_free = old_state_s * fr
         old_storage = swe + snow_liquid + wu + wl + wd + old_free
-        demand = pet[time_index] * float(params.KC)
+        demand = pet[time_index] * kc
         available_upper = rain + wu
         eu = np.minimum(available_upper, demand)
         rain_left = rain - np.minimum(rain, eu)
@@ -123,71 +137,71 @@ def simulate_xaj_liquid_grids(
         el = np.zeros(n_grids, dtype=float)
         ed = np.zeros(n_grids, dtype=float)
         mask_l1 = remaining > 1.0e-10
-        mask_l2 = mask_l1 & (wl >= params.C * params.WLM)
+        mask_l2 = mask_l1 & (wl >= c * wlm)
         el[mask_l2] = np.minimum(
             wl[mask_l2],
-            remaining[mask_l2] * wl[mask_l2] / max(params.WLM, 1.0e-10),
+            remaining[mask_l2] * wl[mask_l2] / max(wlm, 1.0e-10),
         )
-        mask_l3 = mask_l1 & ~mask_l2 & (wl >= params.C * remaining)
-        el[mask_l3] = np.minimum(wl[mask_l3], params.C * remaining[mask_l3])
+        mask_l3 = mask_l1 & ~mask_l2 & (wl >= c * remaining)
+        el[mask_l3] = np.minimum(wl[mask_l3], c * remaining[mask_l3])
         mask_deep = mask_l1 & ~mask_l2 & ~mask_l3
         el[mask_deep] = wl[mask_deep]
         ed[mask_deep] = np.minimum(
             wd[mask_deep],
-            np.maximum(params.C * remaining[mask_deep] - el[mask_deep], 0.0),
+            np.maximum(c * remaining[mask_deep] - el[mask_deep], 0.0),
         )
         wl -= el
         wd -= ed
         net = np.maximum(rain_left, 0.0)
 
         # [XAJ-WARMUP-CORE-01B] Tension-water capacity curve.
-        pervious_input = net * (1.0 - params.IM)
+        pervious_input = net * (1.0 - im)
         w_before = wu + wl + wd
-        w = np.clip(w_before, 0.0, params.WM)
+        w = np.clip(w_before, 0.0, wm)
         pe = np.maximum(pervious_input, 0.0)
-        wmm = params.WM * (1.0 + params.B)
+        wmm = wm * (1.0 + b)
         a = wmm * (
             1.0
             - np.power(
-                np.maximum(1.0 - w / params.WM, 0.0),
-                1.0 / (1.0 + params.B),
+                np.maximum(1.0 - w / wm, 0.0),
+                1.0 / (1.0 + b),
             )
         )
         runoff = np.where(
             pe + a < wmm,
             pe
-            - (params.WM - w)
-            + params.WM
+            - (wm - w)
+            + wm
             * np.power(
                 np.maximum(1.0 - (pe + a) / wmm, 0.0),
-                1.0 + params.B,
+                1.0 + b,
             ),
-            pe - (params.WM - w),
+            pe - (wm - w),
         )
         runoff = np.clip(runoff, 0.0, pe)
-        w_after = np.minimum(params.WM, w + pe - runoff)
+        w_after = np.minimum(wm, w + pe - runoff)
         addition = np.maximum(w_after - w_before, 0.0)
-        take = np.minimum(np.maximum(params.WUM - wu, 0.0), addition)
+        take = np.minimum(np.maximum(wum - wu, 0.0), addition)
         wu += take
         addition -= take
-        take = np.minimum(np.maximum(params.WLM - wl, 0.0), addition)
+        take = np.minimum(np.maximum(wlm - wl, 0.0), addition)
         wl += take
         addition -= take
-        wd += np.minimum(np.maximum(params.WDM - wd, 0.0), addition)
+        wd += np.minimum(np.maximum(wdm - wd, 0.0), addition)
 
         # [XAJ-WARMUP-CORE-01C] Free-water storage and RS/RI/RG separation.
         old_volume = np.maximum(free_s, 0.0) * np.clip(fr, 0.0, 1.0)
         no_runoff = runoff <= 1.0e-10
         fr_new = np.clip(runoff / np.maximum(pervious_input, 1.0e-10), 1.0e-10, 1.0)
-        overflow = np.maximum(old_volume - params.SM * fr_new, 0.0)
-        s = np.minimum(old_volume / fr_new, params.SM)
-        smm = params.SM * (1.0 + params.EX)
-        relative = np.clip(s / params.SM, 0.0, 1.0)
+        overflow = np.maximum(old_volume - sm * fr_new, 0.0)
+        s = np.minimum(old_volume / fr_new, sm)
+        smm = sm * (1.0 + ex)
+        relative = np.clip(s / sm, 0.0, 1.0)
         au = smm * (
             1.0
             - np.power(
                 np.maximum(1.0 - relative, 0.0),
-                1.0 / (1.0 + params.EX),
+                1.0 / (1.0 + ex),
             )
         )
         rs_curve = np.where(
@@ -195,49 +209,55 @@ def simulate_xaj_liquid_grids(
             fr_new
             * (
                 pervious_input
-                - params.SM
+                - sm
                 + s
-                + params.SM
+                + sm
                 * np.power(
                     np.maximum(1.0 - (pervious_input + au) / smm, 0.0),
-                    1.0 + params.EX,
+                    1.0 + ex,
                 )
             ),
-            fr_new * (pervious_input + s - params.SM),
+            fr_new * (pervious_input + s - sm),
         )
         rs_curve = np.clip(rs_curve, 0.0, runoff)
         rs = overflow + rs_curve
         s = np.minimum(
-            params.SM,
+            sm,
             np.maximum(0.0, s + (runoff - rs_curve) / fr_new),
         )
-        ri = s * params.KI * fr_new
-        rg = s * params.KG * fr_new
-        free_s = np.maximum(s * (1.0 - params.KI - params.KG), 0.0)
+        ri = s * ki * fr_new
+        rg = s * kg * fr_new
+        free_s = np.maximum(s * (1.0 - ki - kg), 0.0)
         rs = np.where(no_runoff, 0.0, rs)
-        ri = np.where(no_runoff, params.KI * np.maximum(old_free, 0.0), ri)
-        rg = np.where(no_runoff, params.KG * np.maximum(old_free, 0.0), rg)
+        ri = np.where(no_runoff, ki * np.maximum(old_free, 0.0), ri)
+        rg = np.where(no_runoff, kg * np.maximum(old_free, 0.0), rg)
         free_s = np.where(
             no_runoff,
-            np.maximum(old_state_s * (1.0 - params.KI - params.KG), 0.0),
+            np.maximum(old_state_s * (1.0 - ki - kg), 0.0),
             free_s,
         )
         fr = np.where(no_runoff, np.clip(fr, 0.0, 1.0), fr_new)
-        rs += net * params.IM
+        rs += net * im
         et_actual = eu + el + ed
         new_storage = swe + snow_liquid + wu + wl + wd + free_s * fr
         balance_error = rain - rs - ri - rg - et_actual - (new_storage - old_storage)
-        rs_out.append(rs.astype(np.float32))
-        ri_out.append(ri.astype(np.float32))
-        rg_out.append(rg.astype(np.float32))
+        rs_values[time_index] = rs
+        ri_values[time_index] = ri
+        rg_values[time_index] = rg
         if return_diagnostics:
-            et_out.append(et_actual.astype(np.float32))
-            balance_out.append(balance_error.astype(np.float32))
-
-    shape = (0, n_grids)
-    rs_values = np.stack(rs_out) if rs_out else np.empty(shape, dtype=np.float32)
-    ri_values = np.stack(ri_out) if ri_out else np.empty(shape, dtype=np.float32)
-    rg_values = np.stack(rg_out) if rg_out else np.empty(shape, dtype=np.float32)
+            trace["et_actual"][time_index] = et_actual
+            trace["water_balance_error"][time_index] = balance_error
+            trace["EU"][time_index] = eu
+            trace["EL"][time_index] = el
+            trace["ED"][time_index] = ed
+            trace["WU"][time_index] = wu
+            trace["WL"][time_index] = wl
+            trace["WD"][time_index] = wd
+            trace["S"][time_index] = free_s
+            trace["FR"][time_index] = fr
+            trace["infiltration"][time_index] = pervious_input - runoff
+            trace["net_rainfall"][time_index] = net
+            trace["pervious_runoff"][time_index] = runoff
     final_state = {
         "swe": swe,
         "snow_liquid": snow_liquid,
@@ -247,12 +267,10 @@ def simulate_xaj_liquid_grids(
         "S": free_s,
         "FR": fr,
     }
-    if not return_diagnostics:
-        return rs_values, ri_values, rg_values, final_state
-    diagnostics = {
-        "et_actual": np.stack(et_out) if et_out else np.empty(shape, dtype=np.float32),
-        "water_balance_error": (
-            np.stack(balance_out) if balance_out else np.empty(shape, dtype=np.float32)
-        ),
-    }
-    return rs_values, ri_values, rg_values, final_state, diagnostics
+    return rs_values, ri_values, rg_values, final_state, trace
+
+
+# [XAJ-CORE-03] Compile the unchanged equations only when Numba is available.
+# Unified cache/fallback policy keeps generated files outside model sources.
+_python_array_kernel = _array_kernel
+_array_kernel = optional_njit(_array_kernel)

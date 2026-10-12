@@ -8,7 +8,7 @@
       <ContextStatusMetric />
     </div>
 
-    <StateLibrary v-if="isModelWorkspace" :states="state.domainInitialStates" :active-id="state.activeInitialState.id" :disabled="state.taskRunning" @select="loadNode" @continue="prepareContinuation" @refresh="refreshStates" @imported="selectImportedState" />
+    <StateLibrary v-if="isModelWorkspace" :states="state.domainInitialStates" :active-id="state.activeInitialState.id" :model-hash="app.backendCase?.modelImplementationSHA256" :disabled="state.taskRunning" @select="loadNode" @continue="prepareContinuation" @refresh="refreshStates" @imported="selectImportedState" />
     <div v-else class="node-workbench panel">
       <div class="node-heading">
         <strong>可用起算状态</strong>
@@ -49,8 +49,9 @@
           </div>
         </div>
         <template v-if="isModelWorkspace && stateTaskMode === 'initialization'">
-          <div class="field compact-field"><label for="initialization-strategy">初始化方式</label><select id="initialization-strategy" v-model="initializationStrategy" class="input"><option v-for="strategy in app.backendCase?.initializationStrategies || []" :key="strategy.id" :value="strategy.id">{{ strategy.label }}</option></select></div>
-          <div class="field compact-field"><label for="state-warmup-days">预热天数</label><input id="state-warmup-days" v-model.number="stateWarmupDays" class="input" type="number" min="1" max="365" step="1" /></div>
+          <div class="field compact-field"><label for="initialization-strategy">初始化方式</label><select id="initialization-strategy" v-model="initializationStrategy" class="input"><option v-for="strategy in initializationStrategies" :key="strategy.id" :value="strategy.id">{{ strategy.label }}</option></select></div>
+          <div v-if="initializationStrategy !== 'CONTINUOUS'" class="field compact-field"><label for="state-warmup-days">预热天数</label><input id="state-warmup-days" v-model.number="stateWarmupDays" class="input" type="number" min="1" max="365" step="1" /></div>
+          <p v-else class="state-source-note">从 {{ calibration.continuousOrigin?.replace('T', ' ') }} 连续补算至指定时刻。</p>
         </template>
         <div class="field compact-field"><label for="state-target-time">计算至</label><input id="state-target-time" ref="targetTimeInput" v-model="stateTargetTime" class="input" type="datetime-local" :min="stateTaskMode === 'continuation' ? continuationStartTime : undefined" /></div>
         <button v-if="state.taskRunning" class="btn" type="button" @click="state.cancelStateTask()">停止任务</button>
@@ -60,8 +61,9 @@
         <div><span>参数方案</span><b>{{ stateParameterVersion }}</b></div>
         <div><span>当前输入版本</span><b :class="app.hasModelInput ? 'ok' : 'warn'">{{ app.hasModelInput ? app.selectedInputBundleVersionId : '当前尺度真实输入未就绪' }}</b></div>
         <div><span>{{ stateTaskMode === 'continuation' ? '续算终点' : '预热终点' }}</span><b>{{ stateTargetTime.replace('T', ' ') }}</b></div>
-        <div><span>蒸散发</span><b :class="app.backendCase ? 'ok' : 'warn'">{{ isModelWorkspace ? '逐月给定蒸散发' : '演示配置' }}</b></div>
+        <div><span>计算条件</span><b :class="app.backendCase ? 'ok' : 'warn'">{{ stateScientificLabel }}</b></div>
       </div></details>
+      <p v-if="stateTaskMode === 'initialization' && hasContinuousCandidate && initializationStrategy !== 'CONTINUOUS'" class="state-source-note">此方式改用独立初始化条件；原连续方案请选“从原连续起点补算”。</p>
       <TaskStatusPanel v-if="activeTask" :task="activeTask" />
       <p v-if="!stateCanRun" class="state-block-note">{{ stateBlockReason }}</p>
     </section>
@@ -216,6 +218,7 @@ import { loadGridHistoryCatalog, loadGridStateFrame, loadGridStateSeries } from 
 import { frozenInputBundleVersionId } from '@/services/inputProductService'
 import StateLibrary from '@/components/model/StateLibrary.vue'
 import { modelApi } from '@/services/modelBackendService'
+import { scientificConditionLabel, stateScienceBlockReason } from '@/services/scientificSelectionService'
 
 const forecast = useForecastStore()
 const state = useStateStore()
@@ -241,6 +244,20 @@ const activeGroup = ref(app.isColdRegion ? 'snow' : 'water')
 const selincoGridCells = ref([])
 const stateTaskMode = ref('continuation')
 const initializationStrategy = ref('FIXED_WARMUP')
+const hasContinuousCandidate = computed(() => calibration.contextKey === state.contextKey && Boolean(calibration.scienceVersionId)
+  && calibration.statePolicy === 'continuous-origin' && Boolean(calibration.continuousOrigin))
+const initializationStrategies = computed(() => [
+  ...(hasContinuousCandidate.value ? [{ id: 'CONTINUOUS', label: '从原连续起点补算' }] : []),
+  ...(app.backendCase?.initializationStrategies || []).filter(row => row.id !== 'CONTINUOUS')
+])
+watch(() => [hasContinuousCandidate.value, calibration.scienceVersionId], ([continuous]) => {
+  if (continuous) initializationStrategy.value = 'CONTINUOUS'
+  else if (initializationStrategy.value === 'CONTINUOUS') initializationStrategy.value = 'FIXED_WARMUP'
+}, { immediate: true })
+const stateScientificLabel = computed(() => stateTaskMode.value === 'continuation'
+  ? scientificConditionLabel(state.activeInitialState)
+  : initializationStrategy.value === 'CONTINUOUS' || (calibration.scienceVersionId && calibration.statePolicy !== 'continuous-origin')
+    ? '沿用所选方案的蒸散发与初态配置' : isModelWorkspace.value ? '逐月给定蒸散发与独立初始化' : '演示配置')
 const stateWarmupDays = ref(7)
 const stateTargetTime = ref(String(app.workContext.issueTime || app.dataTime).replace(' ', 'T'))
 const targetTimeInput = ref(null)
@@ -261,11 +278,12 @@ const stateAvailability = computed(() => caseExecutionAvailability(app.activeCon
 const stateBlockReason = computed(() => {
   if (!stateAvailability.value.ready) return stateAvailability.value.reason
   if (isModelWorkspace.value && (app.inputCatalogError || app.inputCatalogLoading)) return app.inputCatalogError || '正在校验选定输入版本。'
-  if (isModelWorkspace.value && stateTaskMode.value === 'initialization' && (!Number.isInteger(stateWarmupDays.value) || stateWarmupDays.value < 1 || stateWarmupDays.value > 365)) return '预热期为 1–365 天。'
+  if (isModelWorkspace.value && stateTaskMode.value === 'initialization' && initializationStrategy.value !== 'CONTINUOUS' && (!Number.isInteger(stateWarmupDays.value) || stateWarmupDays.value < 1 || stateWarmupDays.value > 365)) return '预热期为 1–365 天。'
   if (stateTaskMode.value !== 'initialization' && !state.domainInitialStates.length) return '当前案例没有可续算的状态版本。'
   if (isModelState.value && stateTaskMode.value !== 'initialization' && frozenInputBundleVersionId(state.activeInitialState.checkpoint || state.activeInitialState) !== app.selectedInputBundleVersionId) return '父状态使用另一输入版本，请选择相同版本。'
   if (isModelState.value && stateTaskMode.value === 'continuation') {
     const checkpoint = state.activeInitialState.checkpoint
+    if (stateScienceBlockReason(state.activeInitialState, app.backendCase?.modelImplementationSHA256)) return stateScienceBlockReason(state.activeInitialState, app.backendCase?.modelImplementationSHA256)
     if ((checkpoint?.routingVersionId || checkpoint?.lineage?.routingVersionId || 'control-split-v2') !== app.selectedRoutingVersionId) return '父状态使用另一汇流版本，请选择相同版本。'
     if (!dayjs(stateTargetTime.value).isValid() || dayjs(stateTargetTime.value).isBefore(dayjs(continuationStartTime.value))) return '续算终点应晚于当前状态时刻。'
   }

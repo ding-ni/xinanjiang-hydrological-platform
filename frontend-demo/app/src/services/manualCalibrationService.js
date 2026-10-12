@@ -6,7 +6,7 @@ function canonical(value) {
   return value
 }
 
-export function trialConditions(request = {}) {
+export function trialConditions(request = {}, result = {}) {
   const p = request.period || {}
   const period = p.mode === 'continuous'
     ? Object.fromEntries(['mode', 'warmupDays', 'calibrationStart', 'calibrationEnd', 'validationStart', 'validationEnd', 'independentStart', 'independentEnd'].map(key => [key, p[key] || null]))
@@ -14,8 +14,18 @@ export function trialConditions(request = {}) {
         events: (p.events || []).filter(row => row.purpose !== '未使用' && row.status !== 'inactive')
           .map(({ id, start, end, purpose, revision }) => ({ id, start, end, purpose, revision }))
           .sort((a, b) => a.id.localeCompare(b.id)) }
+  const lineage = { ...request.lineage, ...result.lineage }
+  const science = result.scienceSnapshot?.manifest || {}
   return JSON.stringify(canonical({ context: request.context?.contextKey, period,
-    input: request.inputs?.bundleVersionId, routing: request.routing?.versionId,
+    input: request.inputs?.bundleVersionId,
+    routing: result.routingCandidate?.routingVersionId || lineage.routingVersionId || request.routing?.versionId,
+    routingParameters: result.bestRoutingParameters || null,
+    scienceVersionId: result.science?.versionId || request.science?.versionId || lineage.scienceVersionId || null,
+    continuousOrigin: result.continuousOrigin || request.calibration?.continuousOrigin || p.continuousOrigin || null,
+    scienceIdentity: Object.fromEntries(['modelImplementationSHA256', 'scienceConfigurationSHA256', 'petConfigurationSHA256']
+      .map(key => [key, lineage[key] || science[key] || null])),
+    statePolicy: result.statePolicy || request.calibration?.statePolicy || 'independent-warmup',
+    petMode: result.petMode || lineage.petMode || null,
     evaporation: request.inputs?.evaporation, objectives: request.calibration?.objectives }))
 }
 

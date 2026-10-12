@@ -65,6 +65,7 @@ def workspace_info(root):
     directories = [('workspace', '工作区', root), ('database', '水文资料库', root / 'database'),
                    ('inputs', '整编计算资料', root / 'inputs'), ('tasks', '模型计算成果', root / 'tasks'),
                    ('states', '起算状态', root / 'states'), ('forecast-rain', '预报降雨情景', root / 'forecast-rain'),
+                   ('science-versions', '冻结科学条件', root / 'science-versions'),
                    ('backups', '工作区备份', root / 'backups'),
                    ('exports', '导出文件', root / 'exports'), ('logs', '运行日志', root / 'logs'),
                    ('model', '模型内核与基础资料', SETTINGS['model']),

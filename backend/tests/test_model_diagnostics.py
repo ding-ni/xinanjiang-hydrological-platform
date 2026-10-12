@@ -16,7 +16,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import read_json, write_json
 from contracts import freeze_input_selection, freeze_routing_selection
-from diagnostic_jobs import normalize_diagnostic, spatial_payload
+from diagnostic_jobs import diagnostic_pet_note, normalize_diagnostic, spatial_payload
 from input_products import InputProducts
 from routing_versions import RoutingVersions
 from server import TaskManager, ThreadingHTTPServer, handler
@@ -118,6 +118,25 @@ class DiagnosticContracts(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '独立检验'):
             normalize_diagnostic({'runType': 'diagnosticExperiment', 'mode': 'multiSeed', 'values': [42, 101, 2026], 'baseRequest': bad}, self.manager)
 
+    def test_source_search_cannot_change_frozen_seed_in_diagnostic_children(self):
+        base = calibration()
+        for field in ('sourcePlan', 'initializationPolicy'):
+            changed = copy.deepcopy(base)
+            if field == 'sourcePlan':
+                changed['sourcePlan'] = {'operation': 'search'}
+            else:
+                changed['calibration']['optimizer']['initializationPolicy'] = 'SOURCE_INITIAL_CANDIDATES'
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, '冻结随机种子'):
+                self.manager.submit({'runType': 'diagnosticExperiment', 'mode': 'multiSeed',
+                                     'values': [42, 101, 2026], 'baseRequest': changed})
+        self.assertFalse(list(self.manager.root.glob('*/request.json')))
+
+    def test_diagnostic_evaporation_note_matches_frozen_scientific_condition(self):
+        self.assertIn('逐月给定', diagnostic_pet_note({'petMode': 'MONTHLY_CLIMATOLOGY_ASSUMPTION'}))
+        self.assertNotIn('零', diagnostic_pet_note({'petMode': 'MONTHLY_CLIMATOLOGY_ASSUMPTION'}))
+        self.assertIn('设为零', diagnostic_pet_note({'petMode': 'CONSTANT_ZERO_EXPLICIT_REQUEST'}))
+        self.assertIn('逐小时', diagnostic_pet_note({'petMode': 'HOURLY_CSV'}))
+
     def test_reject_bad_experiment_values_and_absent_point_evidence(self):
         for mode, values in [('multiSeed', [1, 1, 2]), ('multiSeed', [True, 2, 3]), ('multiSeed', [1, 2]), ('wlmBoundary', [80, 80.0]), ('wlmBoundary', [80, float('nan')]), ('wlmBoundary', [59, 120])]:
             with self.subTest(mode=mode, values=values), self.assertRaises(ValueError):
@@ -213,6 +232,9 @@ class DiagnosticContracts(unittest.TestCase):
         boundary = {'experiment': {'evaluation': {'selected_upper_bound': 120, 'boundary_resolved': True}}, 'bestParameters': params}
         stability = {'experiment': {'evaluation': {'stable': True, 'status': 'PASSED'}}, 'bestParameters': params,
                      'calibrationMetrics': metrics, 'validationMetrics': metrics, 'independentTest': metrics}
+        stability.update(science=request['baseRequest']['science'], scienceSnapshot={'frozen': 'source'},
+                         statePolicy='independent-warmup', petMode='CONSTANT_ZERO_EXPLICIT_REQUEST',
+                         continuousOrigin=None, actualWarmupHours=168)
         continuous = {'pet': {'mode': 'assumed', 'production_eligible': False}, 'minimum_observed_coverage': 1,
                       'maximum_abs_internal_balance_error_mm': 0,
                       'groups': {name: {'mean_NSE': 0.8, 'mean_volume_error_percent': 5} for name in request['yearGroups']}}
@@ -228,6 +250,10 @@ class DiagnosticContracts(unittest.TestCase):
         self.assertEqual(result['workflow']['gate']['failed_check_ids'], ['PET_PROVENANCE'])
         candidate = read_json(self.root / 'parameters/PARAM-JOB-workflow-unit.json')
         self.assertFalse(candidate['productionEligible'])
+        for key in ('science', 'scienceSnapshot', 'statePolicy', 'petMode', 'continuousOrigin', 'actualWarmupHours'):
+            self.assertEqual(candidate[key], stability[key])
+            self.assertEqual(result[key], stability[key])
+        self.assertNotEqual(result['science'], request['annualScience'])
 
     def test_http_routing_spatial_and_report_allowlist(self):
         server = ThreadingHTTPServer(('127.0.0.1', 0), handler(self.manager, self.root))

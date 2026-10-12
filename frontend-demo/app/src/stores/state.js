@@ -7,6 +7,7 @@ import { modelApi, uniqueRequestId } from '@/services/modelBackendService'
 import { useCalibrationStore } from '@/stores/calibration'
 import { frozenInputBundleVersionId, selectedInputBundleVersionId } from '@/services/inputProductService'
 import { caseExecutionAvailability } from '@/services/caseAvailabilityService'
+import { scientificRequestSelection, stateScienceBlockReason } from '@/services/scientificSelectionService'
 import stateVersionCatalog from '@/fixtures/catalogs/state-versions.json'
 
 const SNOW_STATE_DEFAULTS = { swe: 38.6, snowDepth: 24.1, snowLiquid: 2.8, frost: 68, glacierMelt: 0.18 }
@@ -152,8 +153,9 @@ export const useStateStore = defineStore('state', {
         id: row.stateVersionId, time: row.time.replace('T', ' '),
         domainId: row.context.projectId, modelScale: row.context.resolutionId,
         modelConfigId: row.context.modelConfigId, sourceSection: '徐畈（二）',
-        source: row.importProvenance ? '导入状态' : row.initialization?.strategy === 'OBSERVED_FLOW_ANCHORED' ? '按实测流量初始化' : row.initialization ? '降雨预热' : '模型末状态', sourceTaskId: row.sourceTaskId, resultSource: 'model-backend',
-        productionEligible: row.productionEligible, status: '可用', analysisStatus: '可续算',
+        source: row.importProvenance ? '导入状态' : row.initialization?.strategy === 'CONTINUOUS' ? '从连续起点补算' : row.initialization?.strategy === 'OBSERVED_FLOW_ANCHORED' ? '按实测流量初始化' : row.initialization ? '降雨预热' : '模型末状态', sourceTaskId: row.sourceTaskId, resultSource: 'model-backend',
+        productionEligible: row.productionEligible, status: stateScienceBlockReason(row, useAppStore().backendCase?.modelImplementationSHA256) ? '需重新初始化' : '可用',
+        analysisStatus: stateScienceBlockReason(row, useAppStore().backendCase?.modelImplementationSHA256) ? '仅供查看' : '可续算',
         parameters: Object.fromEntries(Object.entries(row.parameters).map(([key, value]) => [key.replace('runoff.', ''), value])),
         parameterVersionId: row.parameterVersionId,
         parentStateVersionId: row.parentStateVersionId,
@@ -192,6 +194,7 @@ export const useStateStore = defineStore('state', {
       const target = new Date(targetTime)
       if (!Number.isFinite(target.getTime()) || target.getMinutes()) return { ok: false, error: '请选择有效的历史整点。' }
       if (mode !== 'initialization' && !source.id.startsWith('STATE-JOB-')) return { ok: false, error: '续算必须选择真实模型状态。' }
+      if (mode !== 'initialization' && stateScienceBlockReason(source, app.backendCase?.modelImplementationSHA256)) return { ok: false, error: stateScienceBlockReason(source, app.backendCase?.modelImplementationSHA256) }
       if (mode !== 'initialization' && frozenInputBundleVersionId(source.checkpoint || source) !== bundleVersionId) return { ok: false, error: '父状态属于另一输入版本。跨资料版本必须重新初始化，不能无提示续算。' }
       if (mode !== 'initialization' && (source.checkpoint?.routingVersionId || source.checkpoint?.lineage?.routingVersionId || 'control-split-v2') !== app.selectedRoutingVersionId) return { ok: false, error: '父状态属于另一汇流版本。请重新初始化。' }
       if (app.inputCatalogError || app.inputCatalogLoading) return { ok: false, error: app.inputCatalogError || '选定输入版本仍在校验中。' }
@@ -201,15 +204,22 @@ export const useStateStore = defineStore('state', {
       const calibration = useCalibrationStore()
       const useCalibrationParameters = calibration.contextKey === key && calibration.backendContractVersion
       const parameters = mode === 'initialization' ? (useCalibrationParameters ? { ...calibration.params } : app.backendCase.parameters) : source.parameters
+      const strategy = options.strategy || 'FIXED_WARMUP'
+      const scientific = scientificRequestSelection({ parentState: mode === 'initialization' ? null : source,
+        selected: useCalibrationParameters ? calibration : null, initializationStrategy: strategy })
+      const continuousOrigin = mode === 'initialization' && strategy === 'CONTINUOUS' ? calibration.continuousOrigin : null
+      if (mode === 'initialization' && strategy === 'CONTINUOUS' && (!continuousOrigin || !scientific.science)) return { ok: false, error: '请先采用含连续起点的参数方案。' }
       const request = {
         schemaVersion: '2.0', requestId: uniqueRequestId('STATE-REQ'), runType,
         context: { contextKey: key, projectId: this.activeDomainId, resolutionId: this.activeScale, modelConfigId: this.activeModelConfigId },
         parameters,
-        inputs: { bundleVersionId, evaporation: { mode: 'monthly-climatology-assumption' } },
+        ...(scientific.science ? { science: scientific.science } : {}),
+        inputs: { bundleVersionId, evaporation: scientific.evaporation },
         routing: { versionId: app.selectedRoutingVersionId },
-        ...(mode === 'initialization' ? { initialization: { strategy: options.strategy || 'FIXED_WARMUP' } } : {}),
+        ...(mode === 'initialization' ? { initialization: { strategy } } : {}),
         period: { startTime: mode === 'initialization' ? targetTime : localIso(new Date(source.time.replace(' ', 'T')).getTime() + 3600000), endTime: targetTime,
-          warmupDays: mode === 'initialization' ? (options.warmupDays ?? 7) : 7, initialStateVersionId: mode === 'initialization' ? null : source.id },
+          warmupDays: strategy === 'CONTINUOUS' ? calibration.warmupDays : mode === 'initialization' ? (options.warmupDays ?? 7) : 7,
+          initialStateVersionId: mode === 'initialization' ? null : source.id, ...(continuousOrigin ? { continuousOrigin } : {}) },
         lineage: { inputBundleVersionId: bundleVersionId, stateVersionId: mode === 'initialization' ? null : source.id, sourceTaskId: source.sourceTaskId,
           parameterVersionId: mode === 'initialization' ? (useCalibrationParameters ? calibration.paramVersion : app.backendCase.parameterVersionId) : source.parameterVersionId }
       }

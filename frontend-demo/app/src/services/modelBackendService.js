@@ -45,6 +45,7 @@ export function normalizeBackendTask(task) {
       issueTime: request.issue?.issueTime, leadHours: request.issue?.leadHours,
       params: request.parameters || request.calibration?.initialParameters,
       warmupDays: period.warmupDays, stateVersionId: period.initialStateVersionId,
+      actualWarmupHours: Number.isFinite(period.warmupDays) ? period.warmupDays * 24 : null,
       targetTime: ['stateInitialization', 'stateContinuation'].includes(request.runType) ? period.endTime : undefined,
       parameterVersionId: request.lineage?.parameterVersionId,
       eventSetVersionId: period.eventSet?.version,
@@ -54,9 +55,27 @@ export function normalizeBackendTask(task) {
       searchParameters: request.calibration?.searchParameters ?? null,
       calibrationTarget: request.calibration?.target || 'runoff',
       routingSearchParameters: request.calibration?.routingSearchParameters ?? null,
+      jointProfile: request.calibration?.jointProfile || 'reference-16',
+      statePolicy: request.calibration?.statePolicy || (period.continuousOrigin ? 'continuous-origin' : 'independent-warmup'),
+      continuousOrigin: request.calibration?.continuousOrigin || period.continuousOrigin || null,
+      requiredInputBundleVersionId: request.inputs?.bundleVersionId || null,
+      scienceVersionId: request.science?.versionId || null,
+      scienceDescriptor: request.science ? { ...request.lineage, ...request.science, scienceVersionId: request.science.versionId,
+        resolvedContinuousOrigin: request.calibration?.continuousOrigin || period.continuousOrigin || null } : null,
+      evaporationMode: request.inputs?.evaporation?.mode || 'constant-zero',
       searchSeed: request.calibration?.optimizer?.seed ?? 42,
+      optimizerSettings: Object.fromEntries(['differentialWeight', 'crossoverProbability', 'generations', 'initializationPolicy', 'initialCandidates', 'effectiveInitialCandidates']
+        .filter(key => request.calibration?.optimizer?.[key] !== undefined).map(key => [key, request.calibration.optimizer[key]])),
+      sourcePlan: request.sourcePlan || null,
+      searchParameterOrder: request.calibration?.searchParameterOrder || null,
+      eventAssignment: period.eventAssignment || null,
       maxEvaluations: request.calibration?.optimizer?.maxEvaluations,
       populationSize: request.calibration?.optimizer?.populationSize
     }
   }
+}
+
+export async function loadScienceVersions() {
+  const payload = await modelApi('science-versions')
+  return Array.isArray(payload.versions) ? payload.versions : []
 }

@@ -56,12 +56,33 @@ def package(destination):
                         continue
                 sources.append((source, Path(target) / source.relative_to(base)))
     for source in (ROOT / 'backend').iterdir():
-        if source.is_file() and source.suffix in {'.py', '.sql', '.txt', '.md'}:
+        if source.is_file() and source.suffix in {'.py', '.sql', '.txt', '.md', '.vbs'}:
             sources.append((source, Path('backend') / source.name))
-    for name in ('start_unified.ps1', 'install_platform.ps1', 'workspace.ps1', 'configure_workspace.py', 'package_platform.py'):
+    for name in ('start_unified.ps1', 'install_platform.ps1', 'workspace.ps1', 'configure_workspace.py', 'package_platform.py',
+                 'import_mdb_bundle.py', 'import_20261012_candidates.py', 'promote_input_bundle.py'):
         sources.append((ROOT / 'scripts' / name, Path('scripts') / name))
-    for name in ('启动统一平台.cmd', '安装平台.cmd', '统一系统说明.md', '部署与维护手册.md', '平台实操流程.md'):
+    for name in ('启动统一平台.cmd', '启动20261012升级版.cmd', '安装平台.cmd', '统一系统说明.md', '统一系统验收记录.md',
+                 '部署与维护手册.md', '平台实操流程.md', '平台后续开发清单.md', '原后端功能融合清单.md',
+                 '20261012后端升级说明.md', '同事方案接入与平台操作说明.md'):
         sources.append((ROOT / name, Path(name)))
+    sources.append((ROOT / 'config/scientific_validation_20261012.json', Path('config/scientific_validation_20261012.json')))
+    acceptance = ROOT / '开发产物/后端升级验收_20261012'
+    # A clean program release carries concise evidence; runtime data is backed up separately.
+    for name in ('后端升级实施与验收记录.md', 'backend-tests.json', 'frontend-acceptance.json', 'MDB候选重放.json', '原件与内核来源核验.json'):
+        if (acceptance / name).is_file():
+            sources.append((acceptance / name, Path('验收证据') / name))
+    for name in ('浏览器验收', '迁入候选浏览器复验'):
+        if (acceptance / name / 'acceptance.json').is_file():
+            sources.append((acceptance / name / 'acceptance.json', Path('验收证据') / name / 'acceptance.json'))
+    current_acceptance = ROOT / '开发产物/同事方案完整接入验收_20261012'
+    for name in ('backend-tests.json', 'frontend-acceptance.json', '验收汇总.json',
+                 '原件与内核来源核验.json', 'frontend-final-label-note.json'):
+        if (current_acceptance / name).is_file():
+            sources.append((current_acceptance / name, Path('验收证据/1.11.0') / name))
+    for section, filename in (('17场原方案重放', 'acceptance.json'), ('平台业务浏览器', '最终验收.json'),
+                              ('原方案页面闭环验收', 'acceptance.json')):
+        if (current_acceptance / section / filename).is_file():
+            sources.append((current_acceptance / section / filename, Path('验收证据/1.11.0') / section / 'acceptance.json'))
     records = []
     destination.mkdir(parents=True)
     for source, relative in sources:

@@ -21,6 +21,7 @@ from contracts import freeze_input_selection, freeze_routing_selection
 from input_products import InputProducts, file_sha256, manifest_digest
 from server import TaskManager
 from state_integrity import assert_state_input_compatibility
+from science_context import freeze_science_selection, IDENTITY_KEYS
 from test_input_service import InputFixture
 
 
@@ -398,11 +399,12 @@ class InputVersionContractTests(unittest.TestCase):
         product = self.fixture.finished_product(register=True)
         request, descriptor = freeze_input_selection(model_request(bundle_version=product["versionId"]), self.products)
         request = freeze_routing_selection(request, descriptor)
+        request, _ = freeze_science_selection(request, self.fixture.runtime)
         checkpoint = {"inputBundleVersionId": product["versionId"], "inputBundleManifestSHA256": descriptor["manifestSHA256"],
                       "forcingVersion": descriptor["forcingVersion"], "observationVersion": descriptor["observationVersion"],
                       "petMode": "MONTHLY_CLIMATOLOGY_ASSUMPTION", "routingVersionId": ROUTING_VERSION,
                       "routingManifestSHA256": request["lineage"]["routingManifestSHA256"],
-                      "inputManifestSHA256": "c" * 64}
+                      "inputManifestSHA256": "c" * 64, **{key: request['lineage'][key] for key in IDENTITY_KEYS}}
         # Different task-level hashes are allowed: child and parent use distinct windows.
         request["lineage"]["inputManifestSHA256"] = "d" * 64
         assert_state_input_compatibility(checkpoint, request)
@@ -413,13 +415,16 @@ class InputVersionContractTests(unittest.TestCase):
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 assert_state_input_compatibility({**checkpoint, key: value}, request)
         legacy_request, _ = freeze_input_selection(model_request(), self.products)
-        assert_state_input_compatibility({}, legacy_request)
+        with self.assertRaisesRegex(ValueError, '历史状态.*重新初始化'):
+            assert_state_input_compatibility({}, legacy_request)
 
     def test_missing_routing_digest_is_legacy_only_without_any_new_bundle_identity(self):
         request, descriptor = freeze_input_selection(model_request(), self.products)
         request = freeze_routing_selection(request, descriptor)
+        request, _ = freeze_science_selection(request, self.fixture.runtime)
         legacy = {"forcingVersion": descriptor["forcingVersion"], "observationVersion": descriptor["observationVersion"],
-                  "petMode": "MONTHLY_CLIMATOLOGY_ASSUMPTION", "routingVersionId": ROUTING_VERSION}
+                  "petMode": "MONTHLY_CLIMATOLOGY_ASSUMPTION", "routingVersionId": ROUTING_VERSION,
+                  **{key: request['lineage'][key] for key in IDENTITY_KEYS}}
         assert_state_input_compatibility(legacy, request)
         identities = [{"inputBundleVersionId": DEFAULT_INPUT_BUNDLE},
                       {"inputBundleManifestSHA256": descriptor["manifestSHA256"]},
@@ -434,6 +439,7 @@ class InputVersionContractTests(unittest.TestCase):
         product = self.fixture.finished_product(register=True)
         selected, descriptor = freeze_input_selection(model_request(bundle_version=product["versionId"]), self.products)
         selected = freeze_routing_selection(selected, descriptor)
+        selected, _ = freeze_science_selection(selected, self.fixture.runtime)
         checkpoint = {**legacy, "inputBundleVersionId": product["versionId"],
                       "inputBundleManifestSHA256": descriptor["manifestSHA256"],
                       "forcingVersion": descriptor["forcingVersion"], "observationVersion": descriptor["observationVersion"]}

@@ -15,6 +15,19 @@ from test_continuous_calibration import continuous_request
 
 
 class ManualCalibrationTests(unittest.TestCase):
+    def test_single_event_manual_trial_does_not_require_validation_group(self):
+        from test_unified_backend import calibration
+        request = calibration()
+        selected = next(row for row in request['period']['events'] if row['purpose'] == '率定')
+        request['period']['events'] = [selected]
+        request['period']['eventSet']['selectedEventIds'] = [selected['id']]
+        request['calibration']['evaluationMode'] = 'manual'
+        normalized = normalize_request(request, case_catalog())
+        self.assertEqual(normalized['period']['events'], [selected])
+        request['calibration']['evaluationMode'] = 'automatic'
+        with self.assertRaisesRegex(ValueError, '验证洪水'):
+            normalize_request(request, case_catalog())
+
     def test_manual_freezes_exact_parameters_and_no_search_budget(self):
         request = continuous_request()
         request['calibration']['evaluationMode'] = 'manual'
@@ -69,6 +82,9 @@ class ManualCalibrationTests(unittest.TestCase):
             from test_unified_backend import calibration
             event_request = calibration()
             event_request['calibration']['evaluationMode'] = 'manual'
+            selected = next(row for row in event_request['period']['events'] if row['purpose'] == '率定')
+            event_request['period']['events'] = [selected]
+            event_request['period']['eventSet']['selectedEventIds'] = [selected['id']]
             folder = Path(temp) / 'tasks/JOB-manual-event'
             write_json(folder / 'request.json', normalize_request(event_request, case_catalog()))
             write_json(folder / 'status.json', {'taskId': folder.name})
@@ -77,6 +93,8 @@ class ManualCalibrationTests(unittest.TestCase):
             self.assertEqual(event_result['bestParameters'], event_request['calibration']['initialParameters'])
             self.assertEqual(event_result['petMode'], 'CONSTANT_ZERO_EXPLICIT_REQUEST')
             self.assertEqual(event_result['optimizer']['evaluations'], 1)
+            self.assertEqual(list(event_result['hydrographs']), [selected['id']])
+            self.assertEqual(event_result['validationMetrics']['event_count'], 0)
 
 
 if __name__ == '__main__':

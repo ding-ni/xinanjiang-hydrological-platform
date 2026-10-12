@@ -48,6 +48,7 @@ from xaj_routing.io import (  # noqa: E402
 from xaj_routing.control_area import contributing_grid_areas  # noqa: E402
 from xaj_routing.models import RoutingState, RunoffRecord  # noqa: E402
 from calibration_platform.algorithms import search as search_algorithm  # noqa: E402
+from calibration_platform.routing_kernel import route_arrays  # noqa: E402
 from calibration_platform.qualification import (  # noqa: E402
     load_qualification_config,
     qualification_definition,
@@ -350,6 +351,10 @@ class FastRoutingRunner:
         if len(controls) != 1:
             raise ValueError("formal calibration requires exactly one control point")
         self.control_point = controls[0]
+        node = topology.control_node(self.control_point.control_id)
+        if node and node.get("upstream_reach_id"):
+            from dataclasses import replace
+            self.control_point = replace(self.control_point, reach_id=str(node["upstream_reach_id"]))
         self.control_reach = self.reach_index[self.control_point.reach_id]
 
     # [STATE-INITIALIZATION-03H] Standard checkpoint to fast routing arrays.
@@ -387,34 +392,39 @@ class FastRoutingRunner:
         return ((-k_seconds * x + 0.5 * dt) / denominator, (k_seconds * x + 0.5 * dt) / denominator, (k_seconds - k_seconds * x - 0.5 * dt) / denominator)
 
     def run(self, times: pd.DatetimeIndex, unit_rs: np.ndarray, unit_ri: np.ndarray, unit_rg: np.ndarray, routing, state=None):
+        if float(routing.time_step_hours) != 1.0:
+            raise ValueError("FastRoutingRunner supports only a 1-hour routing step")
+        times = pd.DatetimeIndex(times)
+        if times.hasnans or (len(times) > 1 and np.any(times[1:] - times[:-1] != pd.Timedelta(hours=1))):
+            raise ValueError("routing timestamps must be consecutive 1-hour steps")
         n_units = len(self.unit_ids); n_reaches = len(self.reach_ids)
+        arrays = tuple(np.asarray(value, dtype=float) for value in (unit_rs, unit_ri, unit_rg))
+        expected = (len(times), n_units)
+        if any(value.shape != expected for value in arrays):
+            raise ValueError(f"unit runoff arrays must all have shape {expected}")
+        if any(not np.isfinite(value).all() or np.any(value < 0.0) for value in arrays):
+            raise ValueError("unit runoff arrays must be finite and non-negative")
         if state is None:
             slope_state = np.zeros((n_units, 3), dtype=float); prev_in = np.zeros(n_reaches, dtype=float); prev_out = np.zeros(n_reaches, dtype=float)
         else:
             slope_state = state["slope_state"].copy(); prev_in = state["prev_in"].copy(); prev_out = state["prev_out"].copy()
-        slope_decay = np.asarray([np.exp(-3600.0 / (routing.default_slope_k_hours[name] * 3600.0)) for name in ("RS", "RI", "RG")], dtype=float)
+            for value, shape in ((slope_state, (n_units, 3)), (prev_in, (n_reaches,)), (prev_out, (n_reaches,))):
+                if value.shape != shape or not np.isfinite(value).all():
+                    raise ValueError("routing checkpoint arrays have invalid shape or non-finite values")
+        overrides = routing.unit_component_slope_k_hours
+        if set(overrides) - set(self.unit_ids):
+            raise ValueError("unit-specific slope parameters reference unknown routing units")
+        slope_k = np.asarray([[routing.slope_k_seconds(unit, component) / 3600.0
+                               for component in ("RS", "RI", "RG")]
+                              for unit in self.unit_ids], dtype=float)
+        if not np.isfinite(slope_k).all() or np.any(slope_k <= 0.0):
+            raise ValueError("all slope-reservoir K values must be finite and positive")
+        slope_decay = np.exp(-1.0 / slope_k)
         coefficients = np.asarray([self._coefficients(routing.reach_muskingum[reach_id].k_hours, routing.reach_muskingum[reach_id].x) for reach_id in self.reach_ids], dtype=float)
-        flow = np.zeros(len(times), dtype=float)
-        unit_depths = (unit_rs, unit_ri, unit_rg)
-        for t in range(len(times)):
-            local = np.zeros(n_reaches, dtype=float)
-            for component_index, depths in enumerate(unit_depths):
-                inflow = depths[t] * self.unit_area * 1000.0 / 3600.0
-                current = slope_state[:, component_index] * slope_decay[component_index] + inflow * (1.0 - slope_decay[component_index])
-                slope_state[:, component_index] = current
-                valid = self.unit_reach >= 0
-                local += np.bincount(self.unit_reach[valid], weights=current[valid], minlength=n_reaches)
-            upstream = np.zeros(n_reaches, dtype=float)
-            for reach_index in range(n_reaches):
-                total = local[reach_index] + upstream[reach_index]
-                c0, c1, c2 = coefficients[reach_index]
-                outflow = c0 * total + c1 * prev_in[reach_index] + c2 * prev_out[reach_index]
-                prev_in[reach_index] = total; prev_out[reach_index] = outflow
-                downstream = self.downstream[reach_index]
-                if downstream >= 0:
-                    upstream[downstream] += outflow
-                if reach_index == self.control_reach:
-                    flow[t] = outflow
+        flow, slope_state, prev_in, prev_out = route_arrays(
+            np.stack(arrays, axis=2), self.unit_area, self.unit_reach,
+            self.downstream, slope_decay, coefficients, self.control_reach,
+            slope_state, prev_in, prev_out)
         final_state = {"slope_state": slope_state, "prev_in": prev_in, "prev_out": prev_out}
         return pd.Series(flow, index=times), final_state
 

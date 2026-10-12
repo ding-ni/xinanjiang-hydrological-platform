@@ -3,6 +3,7 @@ import { projectResourceRoot } from './projectResourceService.js'
 import { selectedInputBundleVersionId } from './inputProductService.js'
 import { modelApi, uniqueRequestId } from './modelBackendService.js'
 import dayjs from 'dayjs'
+import { scientificRequestSelection } from './scientificSelectionService.js'
 
 const STORAGE_KEY = 'hydro_prepared_forecast_requests_v1'
 
@@ -22,10 +23,11 @@ function persistPreparedRequest(request) {
   }
 }
 
-export function buildForecastRequest({ app, forecast, rainProduct, interpolation = {} }) {
+export function buildForecastRequest({ app, forecast, rainProduct, parentState, interpolation = {} }) {
   if (app.usesModelBackend && app.basinId === 'nananxi-xufan') {
     const issue = dayjs(forecast.startTime)
     const end = issue.add(Number(forecast.leadHours), 'hour').format('YYYY-MM-DDTHH:mm:ss')
+    const scientific = scientificRequestSelection({ parentState, modelImplementationSHA256: app.backendCase?.modelImplementationSHA256 })
     return {
       schemaVersion: '2.0', requestId: uniqueRequestId('FCST-REQ'), runType: 'forecast',
       context: { contextKey: forecast.contextKey, projectId: app.basinId,
@@ -36,10 +38,11 @@ export function buildForecastRequest({ app, forecast, rainProduct, interpolation
       period: { startTime: issue.add(1, 'hour').format('YYYY-MM-DDTHH:mm:ss'), endTime: end,
         warmupDays: 1, initialStateVersionId: forecast.stateVersion },
       parameters: { ...forecast.effectiveParams },
+      ...(scientific.science ? { science: scientific.science } : {}),
       routing: { versionId: app.selectedRoutingVersionId },
       inputs: { bundleVersionId: selectedInputBundleVersionId(app),
         forecastPrecipitation: { versionId: rainProduct?.versionId, manifestSHA256: rainProduct?.manifestSHA256 },
-        evaporation: { mode: 'monthly-climatology-assumption' }, parameterVersionId: forecast.paramVersion || null },
+        evaporation: scientific.evaporation, parameterVersionId: forecast.paramVersion || null },
       lineage: { inputBundleVersionId: selectedInputBundleVersionId(app), stateVersionId: forecast.stateVersion }
     }
   }
@@ -171,6 +174,7 @@ export function forecastCommit(result, request, taskId) {
       || result.lineage?.forecastRainManifestSHA256 !== request.inputs?.forecastPrecipitation?.manifestSHA256
       || result.lineage?.inputBundleVersionId !== request.inputs?.bundleVersionId
       || result.lineage?.routingVersionId !== request.routing?.versionId
+      || (request.science?.versionId && (result.science?.versionId || result.lineage?.scienceVersionId) !== request.science.versionId)
       || result.lineage?.parameterVersionId !== request.inputs?.parameterVersionId
       || result.parentStateVersionId !== request.period?.initialStateVersionId) throw new Error('预报成果与作业条件不一致')
   const hydrograph = result.hydrograph

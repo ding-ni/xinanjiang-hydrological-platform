@@ -63,6 +63,8 @@ with sync_playwright() as p:
         (output / 'initial-ui.txt').write_text(page.locator('.view-cal').inner_text(), encoding='utf-8')
         page.get_by_role('button', name='参数率定', exact=False).click()
         page.get_by_role('button', name='连续时段', exact=True).click()
+        page.locator('#science-version').select_option('')
+        expect(page.get_by_label('预热期天数', exact=True)).to_be_enabled()
         for selector, value in [('#cal-start', '2017-06-19T00:00'), ('#cal-end', '2017-06-19T23:00'),
                                 ('#val-start', '2017-06-20T00:00'), ('#val-end', '2017-06-20T23:00'),
                                 ('#ind-start', '2017-06-21T00:00'), ('#ind-end', '2017-06-21T23:00')]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from common import DEFAULT_INPUT_BUNDLE, ROUTING_VERSION, read_json, safe_task
+from science_context import IDENTITY_KEYS, assert_science_compatibility
 
 
 def assert_state_input_compatibility(checkpoint, request):
@@ -24,7 +25,7 @@ def assert_state_input_compatibility(checkpoint, request):
     for key, default in defaults.items():
         if checkpoint.get(key, default) != lineage.get(key, default):
             raise ValueError("父状态与当前驱动或观测来源不一致；请重新初始化")
-    if checkpoint.get("petMode", "MONTHLY_CLIMATOLOGY_ASSUMPTION") != "MONTHLY_CLIMATOLOGY_ASSUMPTION":
+    if checkpoint.get("petMode", "MONTHLY_CLIMATOLOGY_ASSUMPTION") != lineage.get("petMode", "MONTHLY_CLIMATOLOGY_ASSUMPTION"):
         raise ValueError("父状态 PET 方案不兼容，不能自动转换")
     if checkpoint.get("routingVersionId", ROUTING_VERSION) != lineage.get("routingVersionId", ROUTING_VERSION):
         raise ValueError("父状态汇流版本不兼容，不能自动转换")
@@ -37,6 +38,7 @@ def assert_state_input_compatibility(checkpoint, request):
         raise ValueError("父状态缺少汇流文件摘要；新格式输入版本必须重新初始化")
     if parent_routing_digest is not None and parent_routing_digest != lineage.get("routingManifestSHA256"):
         raise ValueError("父状态的冻结汇流文件摘要不一致，必须重新初始化")
+    assert_science_compatibility(checkpoint, request)
 
 
 def validated_parent_state(state_path, tasks_root, state_version_id):
@@ -84,4 +86,10 @@ def validated_parent_state(state_path, tasks_root, state_version_id):
         for key in ("inputBundleVersionId", "inputBundleManifestSHA256", "forcingVersion", "observationVersion", "routingVersionId", "routingManifestSHA256"):
             if result.get("lineage", {}).get(key) != checkpoint.get(key):
                 raise ValueError("父状态的输入产品或汇流版本与成功结果血缘不一致")
+    # Reading historical results remains valid. New-format identities must match
+    # their own successful result; continuation additionally requires current
+    # implementation/science compatibility in assert_state_input_compatibility.
+    if any(key in checkpoint for key in IDENTITY_KEYS):
+        if any(checkpoint.get(key) != result.get("lineage", {}).get(key) for key in IDENTITY_KEYS):
+            raise ValueError("父状态的模型实现或科学配置与成功结果血缘不一致")
     return checkpoint

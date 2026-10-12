@@ -6,17 +6,17 @@ from routing_calibration import definitions as routing_search_definitions
 from common import DEFAULT_INPUT_BUNDLE, MODEL, read_json
 
 PARAMETERS = {
-    "KC": ("蒸散发折算系数", 0.4, 1.5, "1"),
-    "WM": ("总张力水容量", 50, 300, "mm"),
-    "WUM": ("上层张力水容量", 5, 80, "mm"),
-    "WLM": ("下层张力水容量", 20, 200, "mm"),
-    "B": ("蓄水容量曲线指数", 0.01, 0.8, "1"),
-    "C": ("深层蒸散发系数", 0.01, 0.5, "1"),
-    "SM": ("自由水蓄水容量", 5, 100, "mm"),
-    "EX": ("自由水容量曲线指数", 0.5, 2.5, "1"),
-    "KI": ("小时壤中流出流系数", 0.0001, 0.1, "1/hour"),
-    "KG": ("小时地下水出流系数", 0.0001, 0.1, "1/hour"),
-    "IM": ("不透水面积比例", 0, 0.1, "1"),
+    "KC": ("蒸散发折算系数", 0, 3, "1"),
+    "WM": ("总张力水容量", 10, 1000, "mm"),
+    "WUM": ("上层张力水容量", 1, 150, "mm"),
+    "WLM": ("下层张力水容量", 1, 600, "mm"),
+    "B": ("蓄水容量曲线指数", 0, 3, "1"),
+    "C": ("深层蒸散发系数", 0, 1, "1"),
+    "SM": ("自由水蓄水容量", 0.1, 200, "mm"),
+    "EX": ("自由水容量曲线指数", 0, 5, "1"),
+    "KI": ("小时壤中流出流系数", 0, 0.999, "1/hour"),
+    "KG": ("小时地下水出流系数", 0, 0.999, "1/hour"),
+    "IM": ("不透水面积比例", 0, 0.999, "1"),
 }
 ALGORITHMS = [
     {"id": "DIFFERENTIAL_EVOLUTION", "label": "差分进化法", "note": "合作者模型中的真实差分进化搜索"},
@@ -41,6 +41,9 @@ PARAMETER_NOTES = {
 
 def case_catalog(bundle=None):
     from calibration_space import definitions
+    from joint_calibration import definitions as joint_definitions
+    from joint_calibration import profiles as joint_profiles
+    from science_context import model_implementation_identity
     missing = [name for name in ("numpy", "pandas", "scipy", "xarray", "h5netcdf", "h5py", "pyproj", "shapely", "matplotlib", "openpyxl") if importlib.util.find_spec(name) is None]
     required = ["code", "config/parameter_set_land.json", "config/routing_parameters_control_split_v2.json", "config/initial_state_land.json", "config/pet_forcing_assumed_monthly.json", "config/event_quality_config.json", "data_interface/runoff_2017/grid_static.csv", "data_interface/event_catalog/nananxi_flood_event_catalog_qc_20260819.json", "data_interface/spatial/nan_an_topology_control_split_v2.json", "data_interface/precipitation_qc_20260819/1km_hourly", "data_interface/observations/xufan_outlet_hourly_qc.csv", "data_interface/spatial/grid_to_unit_weight_control_split_v2.csv"]
     missing += [p for p in required if not (MODEL / p).exists()]
@@ -68,6 +71,12 @@ def case_catalog(bundle=None):
         "manualCalibration": ready,
         "searchParameterDefinitions": definitions(),
         "routingSearchParameterDefinitions": routing_search_definitions(),
+        "jointSearchParameterDefinitions": joint_definitions(),
+        "jointSearchProfiles": joint_profiles(),
+        "calibrationTargets": ['runoff', 'routing', 'joint'],
+        "calibrationEvaluationPolicy": 'EQUAL_PHYSICAL_GROUP_UNIQUE_HOURS',
+        "scienceVersionsService": '/api/model/science-versions',
+        "modelImplementationSHA256": model_implementation_identity()['modelImplementationSHA256'],
         "checkpointImport": ready,
         "unsupported": {},
         "forecastRainService": "/api/model/forecast-rain",
@@ -101,7 +110,9 @@ def case_catalog(bundle=None):
             {"id": "POINT-FLOW", "label": "任意点流量与临时控制断面", "status": "integrated", "reason": "复用模拟产流，河道点按拓扑切分汇流，坡面点计算估算流量。"},
             {"id": "ROUTING-PARAMETERS", "label": "坡面与河网汇流参数", "status": "integrated", "reason": "全局坡面、单元坡面及河段参数可编辑、登记、选用和导出。"},
             {"id": "SPATIAL-TOPOLOGY", "label": "拓扑与网格空间产品", "status": "integrated", "reason": "32 河段、110 网格、汇流单元和控制区面积权重。"},
-            {"id": "MDB-MAPPING", "label": "新数据字段映射", "status": "not-integrated", "reason": "后续数据接入功能。"},
+            {"id": "MDB-MAPPING", "label": "MDB 独立资料登记", "status": "integrated", "reason": "只读副本查询、同站同小时冲突检查、严格缺测和单独输入版本；旧资料不自动切换。"},
+            {"id": "JOINT-CALIBRATION", "label": "产流、坡面与河道联合率定", "status": "integrated", "reason": "14/16变量方案、当前基线实际评价、物理洪水组去重小时目标。"},
+            {"id": "SCIENCE-CONTEXT", "label": "科学条件冻结", "status": "integrated", "reason": "PET、初态、状态策略和实现摘要；参数、汇流与科学条件联合选用。"},
             {"id": "PRODUCTION-CALIBRATION-10", "label": "参数稳定性与多年水量平衡", "status": "integrated", "reason": "边界比较、多随机种子搜索、连续多年水量平衡和评价判据。"},
         ],
     }

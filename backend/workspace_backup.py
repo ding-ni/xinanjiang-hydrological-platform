@@ -11,7 +11,7 @@ from common import RUNTIME, now, read_json, write_json
 from workspace_service import WorkspaceLock, workspace_identity
 from platform_config import APP_VERSION
 
-PARTS = ('tasks', 'states', 'parameters', 'inputs', 'input-tasks', 'routing-versions', 'projects', 'exports', 'forecast-rain')
+PARTS = ('tasks', 'states', 'parameters', 'inputs', 'input-tasks', 'routing-versions', 'science-versions', 'projects', 'exports', 'forecast-rain')
 
 
 def digest(path):

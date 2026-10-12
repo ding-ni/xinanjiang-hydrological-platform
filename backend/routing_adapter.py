@@ -3,33 +3,18 @@ from __future__ import annotations
 
 import copy
 import sys
-from types import SimpleNamespace
 
 from common import MODEL
 
 sys.path[:0] = [str(MODEL / "code"), str(MODEL / "scripts")]
 
-import numpy as np
 from run_formal_multievent_calibration import FastRoutingRunner
 from xaj_routing.point_query import PointFlowQuery
 from xaj_routing.spatial import assign_cells_to_reaches
 
 
 class RegisteredRoutingRunner(FastRoutingRunner):
-    def run(self, times, unit_rs, unit_ri, unit_rg, routing, state=None):
-        overrides = routing.unit_component_slope_k_hours
-        if not overrides:
-            return super().run(times, unit_rs, unit_ri, unit_rg, routing, state)
-        if set(overrides) - set(self.unit_ids):
-            raise ValueError("逐单元坡面参数与计算拓扑不一致")
-        # Only change the scalar/vector parameter binding, never the equations.
-        bound = SimpleNamespace(
-            default_slope_k_hours={
-                component: np.asarray([routing.slope_k_seconds(unit, component) / 3600.0
-                                       for unit in self.unit_ids], dtype=float)
-                for component in ("RS", "RI", "RG")},
-            reach_muskingum=routing.reach_muskingum)
-        return super().run(times, unit_rs, unit_ri, unit_rg, bound, state)
+    """Stable public adapter; the shared fast runner now resolves unit K itself."""
 
 
 def inherited_parameters(payload, source_units, target_units, source_assignments, target_assignments):

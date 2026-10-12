@@ -1,7 +1,7 @@
 <template>
   <section class="view-cal">
     <div class="metric-strip" aria-label="率定与模拟概况">
-      <div class="metric"><span>当前参数方案</span><b :title="cal.paramVersion">{{ parameterVersionLabel(cal.paramVersion) }}</b></div>
+      <div class="metric"><span>{{ cal.sourcePlan ? '原方案起始参数' : '当前参数方案' }}</span><b :title="cal.paramVersion">{{ parameterVersionLabel(cal.paramVersion) }}</b></div>
       <div class="metric"><span>{{ workMode === 'simulation' ? '模拟对象' : '率定断面' }}</span><b>{{ cal.section }}</b></div>
       <div class="metric"><span>计算尺度</span><b>{{ spatialMetricLabel }}</b></div>
       <div class="metric emphasis"><span>{{ isNananxiHistory ? '实测洪峰' : '纳什效率系数（NSE）' }}</span><b class="hot">{{ isNananxiHistory ? `${activeFlood?.observedPeak ?? '—'} m³/s` : nseLabel }}</b></div>
@@ -31,8 +31,8 @@
         <div class="data-list" aria-label="率定资料">
           <div><span>水文资料</span><b>{{ activeDataset.hydrology }}</b></div>
           <div><span>降水资料</span><b>{{ activeDataset.precipitation }}</b></div>
-          <div><span>预热期</span><span class="data-inline-control"><input class="data-inline-input" type="number" min="1" :value="cal.warmupDays" aria-label="预热期天数" @change="cal.setSimulationField('warmupDays', $event.target.value)" /> 天</span></div>
-          <div v-if="app.basinId === 'nananxi-xufan'"><span>蒸散发</span><b>{{ calMode === 'event' ? '0 mm/h' : '逐月给定值' }}</b></div>
+          <div><span>预热期</span><span class="data-inline-control"><input class="data-inline-input" type="number" min="1" :value="cal.warmupDays" :disabled="Boolean(cal.scienceVersionId)" aria-label="预热期天数" @change="cal.setSimulationField('warmupDays', $event.target.value)" /> 天{{ cal.candidateWarmupHours != null ? ' · 原任务实际值' : cal.scienceVersionId ? ' · 科学预设' : '' }}</span></div>
+          <div v-if="app.basinId === 'nananxi-xufan'"><span>蒸散发</span><b>{{ petLabel }}</b></div>
         </div>
 
         <div class="field">
@@ -53,10 +53,19 @@
         </div>
         <div class="field">
           <label for="cal-version">参数方案</label>
-          <select id="cal-version" class="input" :value="cal.paramVersion" @change="cal.loadVersion($event.target.value)">
+          <select id="cal-version" class="input" :value="cal.paramVersion" :disabled="cal.running || parameterLoading" @change="applyParameterVersion($event.target.value)">
             <option v-for="version in versionOptions" :key="version" :value="version">{{ parameterVersionLabel(version) }}</option>
           </select>
         </div>
+        <p v-if="selectedParameterVersion?.requiresReevaluation" class="source-candidate-note" role="status">{{ selectedParameterVersion.candidateKind === 'manual-edit' ? '导入的人工修改候选，没有完成率定指标。' : '来源指标仅作交付复核参考。' }}需按当前输入复算，采用候选不会生成新的率定结果。</p>
+        <details v-if="selectedParameterVersion?.originalCalibrationPlan" class="method-note"><summary>同事原方案</summary><div class="action-row"><button class="btn" type="button" :disabled="cal.running || parameterLoading" @click="restoreOriginalPlan">恢复原率定设置</button><button class="btn" type="button" :disabled="cal.running || parameterLoading" @click="replayOriginalPlan">原方案重放</button></div><small>恢复设置只带入计算条件；重放使用已算出的参数计算 17 场，其中补算场次单独标记。</small></details>
+        <p v-if="cal.sourcePlan?.operation === 'search'" class="source-candidate-note" role="status">已恢复同事原洪水划分、起始参数和搜索设置。确认率定后才会执行 {{ cal.maxEvaluations }} 次评价；人工试算请采用已算出的参数方案。</p>
+        <p v-else-if="cal.originalPlanChanged" class="source-candidate-note" role="status">原方案已调整，请复核洪水划分、搜索范围和汇流方案；结果将按当前设置计算。</p>
+        <template v-if="app.backendCase">
+          <div class="field"><label for="science-version">科学配置版本</label><select id="science-version" class="input" :value="cal.scienceVersionId || ''" :disabled="cal.running" @change="selectScienceVersion($event.target.value)"><option value="">当前明确条件 · 提交时登记</option><option v-for="row in scienceVersions" :key="row.scienceVersionId" :value="row.scienceVersionId">{{ row.name }}</option></select><small v-if="scienceError" class="field-note warn-text">{{ scienceError }}</small></div>
+          <div class="field"><label for="cal-state-policy">状态计算方式</label><select id="cal-state-policy" class="input" :value="cal.statePolicy" :disabled="cal.running || Boolean(cal.scienceVersionId)" @change="cal.setScienceField('statePolicy', $event.target.value)"><option value="independent-warmup">物理洪水组独立预热</option><option value="continuous-origin">从连续原点计算</option></select><small class="field-note">{{ cal.scienceVersionId ? '采用所选科学版本的状态配置。' : '重叠窗口先合并，每组共享一条连续轨迹。' }}</small></div>
+          <div v-if="calMode === 'event' && !cal.scienceVersionId" class="field"><label for="cal-pet-mode">场次蒸散发</label><select id="cal-pet-mode" class="input" :value="cal.evaporationMode" :disabled="cal.running" @change="cal.setScienceField('evaporationMode', $event.target.value)"><option value="constant-zero">0 mm/h · 明确假设</option><option value="monthly-climatology-assumption">逐月给定值 · 非实测</option></select></div>
+        </template>
 
         <template v-if="calMode === 'event'">
           <div class="form-group-title">洪水场次</div>
@@ -66,6 +75,7 @@
             <div><span>独立检验</span><b>{{ independentEvents.length }} 场</b></div>
           </div>
           <p class="section-note">先在下方洪水台账设置用途，再执行率定。</p>
+          <div v-if="app.backendCase" class="physical-group-note" :class="{ warn: physicalGrouping.conflicts.length }" aria-label="物理洪水分组检查"><b>{{ physicalGrouping.groupCount }} 个物理洪水组 · {{ physicalGrouping.uniqueHours }} 个唯一小时</b><span>率定 {{ physicalGrouping.counts.calibration }} 组 · 验证 {{ physicalGrouping.counts.validation }} 组 · 独检 {{ physicalGrouping.counts.independentTest }} 组</span><p v-if="physicalGrouping.conflicts.length" role="status">{{ physicalConflict }}</p><small v-else>目标按组等权，重叠小时只评价一次。</small></div>
           <div class="field">
             <label for="cal-event">当前过程</label>
             <select id="cal-event" class="input" :value="cal.eventId" @change="selectFloodById($event.target.value)">
@@ -105,23 +115,25 @@
         <div class="form-group-title">拟合评价</div>
         <div class="objective-list">
           <label class="objective-row"><span><input type="checkbox" :checked="cal.criteria.metrics.nse" @change="cal.setObjectiveMetric('nse', $event.target.checked)" /> 纳什效率系数（NSE）</span><span>权重 <input :value="cal.criteria.weights.nse" type="number" min="0" max="1" step="0.05" @change="cal.setObjectiveWeight('nse', $event.target.value)" /></span></label>
+          <label v-if="app.backendCase" class="objective-row"><span><input type="checkbox" :checked="cal.criteria.metrics.kge" @change="cal.setObjectiveMetric('kge', $event.target.checked)" /> Kling–Gupta 效率（KGE）</span><span>权重 <input :value="cal.criteria.weights.kge" type="number" min="0" max="1" step="0.05" @change="cal.setObjectiveWeight('kge', $event.target.value)" /></span></label>
           <label class="objective-row"><span><input type="checkbox" :checked="cal.criteria.metrics.peak" @change="cal.setObjectiveMetric('peak', $event.target.checked)" /> 洪峰相对误差</span><span>权重 <input :value="cal.criteria.weights.peak" type="number" min="0" max="1" step="0.05" @change="cal.setObjectiveWeight('peak', $event.target.value)" /></span></label>
           <label class="objective-row"><span><input type="checkbox" :checked="cal.criteria.metrics.time" @change="cal.setObjectiveMetric('time', $event.target.checked)" /> 峰现时间误差</span><span>权重 <input :value="cal.criteria.weights.time" type="number" min="0" max="1" step="0.05" @change="cal.setObjectiveWeight('time', $event.target.value)" /></span></label>
-          <label class="objective-row"><span><input type="checkbox" :checked="cal.criteria.metrics.volume" @change="cal.setObjectiveMetric('volume', $event.target.checked)" /> 水量相对误差</span><span>权重 <input :value="cal.criteria.weights.volume" type="number" min="0" max="1" step="0.05" @change="cal.setObjectiveWeight('volume', $event.target.value)" /></span></label>
+          <label class="objective-row"><span><input type="checkbox" :checked="cal.criteria.metrics.volume" @change="cal.setObjectiveMetric('volume', $event.target.checked)" /> {{ cal.criteria.waterBalanceMetric === 'PBIAS' ? '水量偏差（PBIAS）' : '水量相对误差' }}</span><span>权重 <input :value="cal.criteria.weights.volume" type="number" min="0" max="1" step="0.05" @change="cal.setObjectiveWeight('volume', $event.target.value)" /></span></label>
         </div>
         <p class="weight-status" :class="{ warn: !objectiveWeightValid }">已选指标权重合计 {{ objectiveWeightTotal.toFixed(2) }}，应为 1.00。</p>
         <div class="threshold-grid">
           <div class="field"><label for="peak-tolerance">洪峰误差阈值</label><input id="peak-tolerance" class="input" type="number" :value="cal.criteria.tolerances.peakPercent" @change="cal.setObjectiveTolerance('peakPercent', $event.target.value)" /></div>
           <div class="field"><label for="time-tolerance">峰现误差阈值</label><input id="time-tolerance" class="input" type="number" :value="cal.criteria.tolerances.peakTimeHours" @change="cal.setObjectiveTolerance('peakTimeHours', $event.target.value)" /></div>
         </div>
-        <details v-if="app.backendCase && cal.calibrationTarget !== 'routing'" class="method-note"><summary>评价与参数换算</summary>合格率按 NSE≥0.5 统计；洪峰与峰时误差单列。搜索中 KC、C 与河网参数固定；KI/KG 由日退水参数换算。</details>
+        <details v-if="app.backendCase && cal.calibrationTarget !== 'routing'" class="method-note"><summary>评价与参数换算</summary>合格率按 NSE≥0.5 统计；物理洪水组内唯一小时计算指标，各组等权。KI/KG 由日退水参数换算。{{ cal.calibrationTarget === 'joint' ? '产流、坡面与河道同时搜索；KC/C 按所选联合预设。' : 'KC、C 与河网参数固定。' }}</details>
 
         <div class="form-group-title">搜索设置</div>
         <div v-if="app.backendCase?.routingSearchParameterDefinitions" class="field">
           <label for="calibration-target">率定参数组</label>
-          <select id="calibration-target" class="input" :value="cal.calibrationTarget" :disabled="cal.running" @change="cal.setCalibrationTarget($event.target.value)"><option value="runoff">产流参数</option><option value="routing">坡面汇流参数</option></select>
+          <select id="calibration-target" class="input" :value="cal.calibrationTarget" :disabled="cal.running" @change="cal.setCalibrationTarget($event.target.value)"><option value="runoff">产流参数</option><option value="routing">坡面汇流参数</option><option v-if="app.backendCase?.jointSearchParameterDefinitions" value="joint">产流＋坡面＋河道联合率定</option></select>
         </div>
-        <div v-if="app.backendCase && cal.calibrationTarget !== 'routing'" class="field">
+        <div v-if="cal.calibrationTarget === 'joint'" class="field"><label for="joint-profile">联合参数预设</label><select id="joint-profile" class="input" :value="cal.jointProfile" :disabled="cal.running" @change="cal.setJointProfile($event.target.value)"><option v-for="profile in jointProfiles" :key="profile.id" :value="profile.id">{{ profile.label }}</option></select><small class="field-note">{{ cal.jointProfile === 'all-physical-16' ? '宽范围为同事保留的诊断试验，请复核搜索范围。' : '联合搜索使用同一评价预算，起始方案重新评价计入预算。' }}</small></div>
+        <div v-if="app.backendCase && cal.calibrationTarget === 'runoff'" class="field">
           <label for="search-strategy">搜索安排</label>
           <select id="search-strategy" class="input" :value="cal.searchStrategy" @change="cal.setOptimizerConfig('searchStrategy', $event.target.value)"><option value="joint">所选参数联合搜索</option><option value="staged">分阶段：蓄水产流 → 水源划分</option></select>
           <small v-if="cal.searchStrategy === 'staged'" class="field-note">总评价预算分配至两个阶段，后一阶段承接前一阶段最优参数。</small>
@@ -138,6 +150,7 @@
           <div class="field"><label for="population-size">种群规模</label><input id="population-size" class="input" type="number" :min="app.backendCase ? 4 : 8" step="4" :value="cal.populationSize" @change="cal.setOptimizerConfig('populationSize', $event.target.value)" /></div>
         </div>
         <p class="method-note">{{ activeAlgorithm?.note }}</p>
+        <SearchPlanSummary v-if="app.backendCase" :rows="previewSearchRows" :budget="cal.maxEvaluations" :original-source="cal.sourcePlan?.operation === 'search'" :state-policy="cal.statePolicy" :continuous-origin="cal.continuousOrigin" :required-input="cal.requiredInputBundleVersionId" :actual-warmup-hours="Number(cal.warmupDays) * 24" :pet-label="petLabel" :science="cal.scienceDescriptor" :routing-version="app.selectedRoutingVersionId" :groups="calMode === 'event' ? physicalGrouping : null" />
 
         <div class="action-row">
           <button class="btn primary" type="button" :disabled="!calculationCanRun" @click="startCalibration">{{ cal.running ? '正在提交' : (app.basinId === 'nananxi-xufan' ? '确认率定任务' : '开始率定') }}</button>
@@ -158,7 +171,7 @@
           <div class="field"><label for="simulation-section">模拟对象</label><select id="simulation-section" class="input" :value="cal.section" @change="cal.setSection($event.target.value)"><option v-for="name in calSections" :key="name" :value="name">{{ name }}</option></select></div>
           <div class="field"><label for="simulation-start">开始时间</label><input id="simulation-start" class="input" type="datetime-local" step="3600" :value="cal.simulationStart" @change="cal.setSimulationField('simulationStart', $event.target.value)" /></div>
           <div class="field"><label for="simulation-end">结束时间</label><input id="simulation-end" class="input" type="datetime-local" step="3600" :value="cal.simulationEnd" @change="cal.setSimulationField('simulationEnd', $event.target.value)" /></div>
-          <div class="field"><label for="simulation-warmup">预热期（天）</label><input id="simulation-warmup" class="input" type="number" min="1" :value="cal.warmupDays" @change="cal.setSimulationField('warmupDays', $event.target.value)" /></div>
+          <div class="field"><label for="simulation-warmup">预热期（天）</label><input id="simulation-warmup" class="input" type="number" min="1" :value="cal.warmupDays" :disabled="Boolean(cal.scienceVersionId)" @change="cal.setSimulationField('warmupDays', $event.target.value)" /></div>
           <div class="field"><label for="simulation-state">初始状态版本</label><input id="simulation-state" class="input" :value="cal.initialStateVersionId" @change="cal.setSimulationField('initialStateVersionId', $event.target.value)" /></div>
           <div class="field"><label for="simulation-step">输出时间步长</label><select id="simulation-step" class="input" :value="cal.outputStepHours" @change="cal.setSimulationField('outputStepHours', $event.target.value)"><option :value="1">1小时</option><option v-if="!app.backendCase" :value="3">3小时</option><option v-if="!app.backendCase" :value="6">6小时</option></select></div>
           <div v-if="cal.visibleSimulationResult" class="simulation-result-card">
@@ -226,7 +239,7 @@
               <label><input type="checkbox" :checked="trial.visible" :disabled="trial.taskId === processResult?.taskId" @change="setTrialVisible(trial.taskId, $event.target.checked)" /><i :style="{ background: trial.color }" />{{ trial.label }}</label>
               <span class="trial-change">{{ index ? changedParameters(trialRows[index - 1].parameters, trial.parameters) || '参数未变' : '对照参数' }}</span>
               <span class="trial-score">NSE {{ hydrologyNumber(trial.hydrograph?.metrics?.nse, 3) }}</span>
-              <button class="btn mini" type="button" :disabled="cal.running" @click="cal.loadVersion(trial.parameterVersionId)">采用参数</button>
+              <button class="btn mini" type="button" :disabled="cal.running" @click="applyParameterVersion(trial.parameterVersionId)">采用参数</button>
             </div>
             <p v-if="trialLoadError" role="status">{{ trialLoadError }}</p>
           </div>
@@ -279,7 +292,8 @@
                 <label v-if="eventSelectionMethod === 'date-range'"><span>结束</span><input v-model="eventSelectionEnd" type="date" /></label>
                 <div class="event-selection-count"><b>{{ candidateEvents.length }}</b><span>/ {{ eligibleEvents.length }} 场可用</span></div>
               </div>
-              <div class="event-selection-note">先确定本次率定候选集，再按洪峰大小分层随机划分；未入选场次不会被删除。</div>
+              <div class="event-selection-note">先确定候选集，合并重叠洪水组，再按组洪峰分层随机划分；7∶2∶1 按组数分配。未入选场次保留。</div>
+              <details v-if="retainedInputEvents.length" class="retained-events-note"><summary>保留 {{ retainedInputEvents.length }} 个非当前输入场次与本地草稿</summary><p>这些记录保留在工作区，不参与当前过程选择、候选筛选或计算。请选择其所属输入版本后再核对。</p><div><span v-for="event in retainedInputEvents" :key="event.id">{{ event.sourceFloodNo || event.eventId || event.id }} · {{ event.start?.slice(0, 10) || '窗口待核查' }}</span></div></details>
               <div class="event-selection-stats">
                 <span>洪峰范围 <b>{{ candidatePeakStats.min != null ? `${candidatePeakStats.min.toFixed(1)}–${candidatePeakStats.max.toFixed(1)} m³/s` : '—' }}</b></span>
                 <span>洪峰中位数 <b>{{ candidatePeakStats.median != null ? `${candidatePeakStats.median.toFixed(1)} m³/s` : '—' }}</b></span>
@@ -290,7 +304,7 @@
             </div>
             <div v-if="isNananxiHistory" class="event-batch-actions">
               <label><span>随机种子</span><input v-model.trim="eventSplitSeed" type="text" inputmode="numeric" aria-label="随机划分种子" /></label>
-              <button type="button" @click="assignEventsByRatio">随机按 7∶2∶1 划分</button>
+              <button type="button" @click="assignEventsByRatio">按物理洪水组 7∶2∶1 划分</button>
               <button type="button" @click="assignAllCalibration">候选场次全部率定</button>
               <button type="button" @click="clearEventPurposes">清空</button>
             </div>
@@ -335,7 +349,7 @@
             </template>
             <template v-else-if="matchingCalibrationResult">
               <div class="result-summary" :class="{ stale: !matchingCalibrationResult.isCurrent }">
-                <div><span>{{ matchingCalibrationResult.resultSource === 'model-backend' ? '率定平均 NSE' : '综合评分' }}</span><b>{{ matchingCalibrationResult.resultSource === 'model-backend' ? hydrologyNumber(matchingCalibrationResult.calibrationMetrics?.nse, 3) : (matchingCalibrationResult.score?.toFixed(1) ?? '—') }}</b><em v-if="matchingCalibrationResult.resultSource !== 'model-backend'">分</em></div>
+                <div><span>{{ matchingCalibrationResult.resultSource === 'model-backend' ? (matchingCalibrationResult.evaluationPolicy ? '物理洪水组平均 NSE' : '率定平均 NSE') : '综合评分' }}</span><b>{{ matchingCalibrationResult.resultSource === 'model-backend' ? hydrologyNumber(matchingCalibrationResult.calibrationMetrics?.nse, 3) : (matchingCalibrationResult.score?.toFixed(1) ?? '—') }}</b><em v-if="matchingCalibrationResult.resultSource !== 'model-backend'">分</em></div>
                 <p>{{ matchingCalibrationResult.isCurrent ? matchingCalibrationResult.grade : '计算条件已变更，请重新率定。' }}</p>
               </div>
               <p class="result-time">完成时间：{{ dayjs(matchingCalibrationResult.completedAt).format('YYYY-MM-DD HH:mm:ss') }}</p>
@@ -353,6 +367,8 @@
               <div v-for="stage in matchingCalibrationResult.optimizer.stages" :key="stage.id"><b>{{ stage.label }}</b><span>{{ stage.evaluations }} 次评价</span><strong>{{ Number(stage.bestLoss).toFixed(4) }}</strong><small>目标函数值{{ stage.retainedInitial ? ' · 保留阶段起始方案' : '' }}</small></div>
             </div>
             <SearchPlanResult v-if="workMode === 'calibration' && matchingCalibrationResult?.searchPlan" :plan="matchingCalibrationResult.searchPlan" />
+            <details v-if="matchingCalibrationResult?.evaluationPolicy" class="physical-result" aria-label="物理洪水组评价"><summary>组评价与窗口诊断</summary><p>{{ matchingCalibrationResult.overlapGroups?.length }} 组 · 组内唯一小时，各组等权。窗口指标仅作场次诊断。</p><div class="plan-table"><table><thead><tr><th>洪水组</th><th>用途</th><th>NSE</th><th>有效小时</th></tr></thead><tbody><tr v-for="row in matchingCalibrationResult.overlapGroupMetrics" :key="row.event_id || row.id"><td>{{ row.event_id || row.id }}</td><td>{{ row.group }}</td><td>{{ hydrologyNumber(row.NSE ?? row.nse, 3) }}</td><td>{{ row.paired_hours ?? row.pairedHours ?? '—' }}</td></tr></tbody></table></div><p v-for="(row, group) in matchingCalibrationResult.windowSummary" :key="group">窗口诊断 {{ group }}：{{ row.event_count }} 个窗口 · 平均 NSE {{ hydrologyNumber(row.mean_NSE, 3) }}</p></details>
+            <p v-if="matchingCalibrationResult?.optimizer?.baselineReevaluated" class="method-note">当前起始方案已重新评价 · 有效 {{ matchingCalibrationResult.optimizer.validEvaluations }} 次 / 无效 {{ matchingCalibrationResult.optimizer.invalidEvaluations }} 次 · {{ matchingCalibrationResult.optimizer.terminationReason === 'BUDGET_EXHAUSTED' ? '评价预算已用完' : matchingCalibrationResult.optimizer.terminationReason }}</p>
             <section v-if="workMode === 'calibration' && app.hasEventCatalog" class="parameter-result-card" aria-label="率定参数结果">
               <div class="parameter-result-head">
                 <div><b>率定参数版本</b><span>{{ activeParameterVersion?.id || '暂无参数版本' }}</span></div>
@@ -375,7 +391,7 @@
               <p v-else-if="!releaseReadiness.reviewed" class="parameter-result-note">待审核</p>
               <p v-else class="parameter-result-note ok-text">可发布</p>
               <div v-if="activeParameterVersion" class="parameter-result-actions">
-                <button class="btn mini" type="button" :disabled="cal.running" @click="cal.loadVersion(activeParameterVersion.id)">{{ activeParameterVersion.routingCandidate ? '采用产汇流方案' : '采用该参数' }}</button>
+                <button class="btn mini" type="button" :disabled="cal.running" @click="applyParameterVersion(activeParameterVersion.id)">{{ activeParameterVersion.routingCandidate ? '采用产汇流方案' : '采用该参数' }}</button>
                 <button v-if="activeParameterVersion.productionEligible === true && !releaseReadiness.reviewed && releaseReadiness.independentPassed" class="btn mini" type="button" @click="reviewCandidate">审核通过</button>
                 <button v-if="releaseReadiness.canPublish" class="btn mini primary" type="button" @click="publishCandidate">发布到自动预报参数库</button>
               </div>
@@ -391,7 +407,8 @@
           <p v-if="parameterConstraint" role="status">{{ parameterConstraint }}</p>
           <span v-else>固定当前参数计算，保留历次过程线</span>
         </div>
-        <SearchSpaceEditor v-if="app.backendCase?.searchParameterDefinitions" :key="cal.calibrationTarget" :model-value="activeSearchSelection" :definitions="activeSearchDefinitions" :params="activeSearchParameters" :routing="cal.calibrationTarget === 'routing'" :disabled="cal.running" :error="searchError" @update:model-value="updateSearchSelection" />
+        <SearchSpaceEditor v-if="app.backendCase?.searchParameterDefinitions" :key="`${cal.calibrationTarget}:${cal.jointProfile}`" :model-value="activeSearchSelection" :definitions="activeSearchDefinitions" :params="activeSearchParameters" :routing="cal.calibrationTarget === 'routing'" :joint="cal.calibrationTarget === 'joint'" :title="cal.calibrationTarget === 'joint' ? '产流搜索参数' : ''" :disabled="cal.running" :error="runoffSearchError" @update:model-value="updateSearchSelection" />
+        <SearchSpaceEditor v-if="cal.calibrationTarget === 'joint'" title="坡面与河道搜索参数" routing joint :model-value="cal.routingSearchParameters" :definitions="jointRoutingDefinitions" :params="routingCoordinates" :disabled="cal.running" :error="routingSearchError" @update:model-value="cal.setRoutingSearchParameters" />
         <div v-if="app.hasLakeBalance" class="param-groups" aria-label="参数分组">
           <button v-for="group in parameterGroups" :key="group.key" type="button" :class="{ active: paramGroup === group.key }" @click="paramGroup = group.key">{{ group.label }}</button>
         </div>
@@ -421,7 +438,8 @@ import CalibrationProcessChart from '@/components/charts/CalibrationProcessChart
 import ParamTuner from '@/components/params/ParamTuner.vue'
 import SearchSpaceEditor from '@/components/params/SearchSpaceEditor.vue'
 import SearchPlanResult from '@/components/params/SearchPlanResult.vue'
-import { searchSelectionError } from '@/services/calibrationSpaceService'
+import SearchPlanSummary from '@/components/params/SearchPlanSummary.vue'
+import { searchSelectionError, selectedSearchParameters, routingSearchCoordinates, searchCoordinates } from '@/services/calibrationSpaceService'
 import { PARAMETER_VERSION_CATALOG } from '@/fixtures/catalogs/parameter-versions'
 import { useAppStore } from '@/stores/app'
 import { useStateStore } from '@/stores/state'
@@ -432,6 +450,7 @@ import {
   normalizeCalibrationResult,
   selectCalibrationCandidates,
   stratifiedRandomEventSplit,
+  physicalFloodGroups,
   submitCalibrationRequest
 } from '@/services/calibrationSubmissionService'
 import { selectObservedHydrologyDataset, selectObservedPrecipitationDataset } from '@/services/datasetSelectionService'
@@ -452,7 +471,8 @@ import { observedModelProcess, modelEventStatistics } from '@/services/modelInpu
 import { frozenInputBundleVersionId } from '@/services/inputProductService'
 import { hydrologyText, hydrologyNumber } from '@/services/hydrologyPresentation'
 import { trialConditions, changedParameters, TRIAL_COLORS } from '@/services/manualCalibrationService'
-import { modelApi } from '@/services/modelBackendService'
+import { modelApi, loadScienceVersions } from '@/services/modelBackendService'
+import { currentInputFloodEvents } from '@/services/backendEventCatalogService'
 
 const cal = useCalibrationStore()
 const tasks = useTasksStore()
@@ -474,24 +494,130 @@ watch(() => [app.backendCase, app.selectedRoutingVersionId], async () => {
     if (!routingRecord.value) routingError.value = '请选择已登记的汇流方案'
   } catch (error) { if (revision === routingReadRevision) routingError.value = error.message }
 }, { immediate: true })
+const scienceVersions = ref([]), scienceError = ref(''), scienceLoading = ref(false)
+let scienceReadRevision = 0
+watch(() => [app.backendCase, cal.scienceVersionId], async () => {
+  const revision = ++scienceReadRevision
+  scienceError.value = ''
+  if (!app.backendCase) { scienceVersions.value = []; scienceLoading.value = false; return }
+  scienceLoading.value = true
+  try {
+    const versions = await loadScienceVersions()
+    if (revision !== scienceReadRevision) return
+    scienceVersions.value = versions
+    if (cal.scienceVersionId) {
+      const record = versions.find(row => row.scienceVersionId === cal.scienceVersionId)
+      if (record) {
+        cal.scienceDescriptor = JSON.parse(JSON.stringify({ ...record, resolvedContinuousOrigin: cal.continuousOrigin || record.resolvedContinuousOrigin || null }))
+        cal.statePolicy = record.statePolicy?.strategy || 'independent-warmup'
+        cal.warmupDays = (cal.candidateWarmupHours ?? (Number(record.statePolicy?.warmupHours) || 168)) / 24
+      }
+      else scienceError.value = '所选科学版本未在当前工作区登记，请重新选择或导入候选。'
+    }
+  } catch (error) { if (revision === scienceReadRevision) scienceError.value = error.message }
+  finally { if (revision === scienceReadRevision) scienceLoading.value = false }
+}, { immediate: true })
+function selectScienceVersion(value) {
+  const descriptor = scienceVersions.value.find(row => row.scienceVersionId === value)
+  cal.setScienceVersion(descriptor || null)
+}
+const parameterLoading = ref(false)
+async function applyParameterVersion(value) {
+  if (parameterLoading.value) return
+  parameterLoading.value = true
+  try {
+    if (await cal.loadVersion(value) === false) { ElMessage.warning(cal.runMessage); return }
+    if (cal.scienceVersionId) {
+      const descriptor = scienceVersions.value.find(row => row.scienceVersionId === cal.scienceVersionId)
+      if (descriptor) cal.setScienceVersion({ ...descriptor, resolvedContinuousOrigin: cal.continuousOrigin || descriptor.resolvedContinuousOrigin || null })
+    }
+  } finally { parameterLoading.value = false }
+}
+async function restoreOriginalPlan() {
+  if (parameterLoading.value) return
+  parameterLoading.value = true
+  try {
+    if (await cal.restoreOriginalPlan(cal.paramVersion) === false) { ElMessage.warning(cal.runMessage); return }
+    eventSplitSeed.value = String(cal.eventSplitSeed)
+    eventAssignment.value = cal.eventAssignment
+    calMode.value = 'event'; workMode.value = 'calibration'
+    ElMessage.success('原方案设置已恢复，请复核后确认率定。')
+  } finally { parameterLoading.value = false }
+}
+async function replayOriginalPlan() {
+  if (parameterLoading.value || cal.running) return
+  parameterLoading.value = true
+  try {
+    const request = await cal.restoreOriginalPlan(cal.paramVersion, 'fixed-replay')
+    if (!request) { ElMessage.warning(cal.runMessage); return }
+    eventSplitSeed.value = String(cal.eventSplitSeed); eventAssignment.value = cal.eventAssignment
+    calMode.value = 'event'; workMode.value = 'calibration'
+    cal.running = true
+    const outcome = await cal.runBackendRequest(request)
+    if (!outcome.ok) throw new Error(outcome.errors.join('；'))
+    registeredParameterVersionId.value = outcome.result.parameterVersionId || null
+    requestStatus.value = '原方案重放已完成，补算场次与原率定场次分别保留。'
+    ElMessage.success('原方案重放完成')
+  } catch (error) { ElMessage.warning(error.message) }
+  finally { parameterLoading.value = false; cal.running = false }
+}
+const petLabel = computed(() => cal.scienceVersionId
+  ? `${cal.scienceDescriptor?.name || '登记科学配置'} · ${cal.scienceDescriptor?.petMode === 'CONSTANT_ZERO_EXPLICIT_REQUEST' ? '0 mm/h' : '版本 PET'}`
+  : cal.calibrationMode === 'event' && cal.evaporationMode !== 'monthly-climatology-assumption' ? '0 mm/h · 明确假设' : '逐月给定值 · 非实测')
+const routingCoordinates = computed(() => routingSearchCoordinates(routingRecord.value?.parameters))
+const jointProfiles = computed(() => app.backendCase?.jointSearchProfiles || [
+  { id: 'reference-16', label: '原范围 16 变量 · KC/C 可变' },
+  { id: 'fixed-kc-c-14', label: '14 变量 · 固定当前 KC/C' }
+])
+const jointDefinitions = computed(() => jointProfiles.value.find(row => row.id === cal.jointProfile)?.definitions
+  || app.backendCase?.jointSearchParameterDefinitions || {})
+const jointRoutingDefinitions = computed(() => (jointDefinitions.value.routing || []).map(row =>
+  row.key === 'muskingum_x' && routingCoordinates.value.muskingum_x == null
+    ? { ...row, unavailable: '当前各河段 X 不同，保留逐河段原值，不编造统一起始 X。' } : row))
 const activeSearchSelection = computed(() => cal.calibrationTarget === 'routing' ? cal.routingSearchParameters : cal.searchParameters)
-const activeSearchDefinitions = computed(() => (cal.calibrationTarget === 'routing' ? app.backendCase?.routingSearchParameterDefinitions : app.backendCase?.searchParameterDefinitions) || [])
+const activeSearchDefinitions = computed(() => (cal.calibrationTarget === 'routing' ? app.backendCase?.routingSearchParameterDefinitions
+  : cal.calibrationTarget === 'joint' ? jointDefinitions.value.runoff?.filter(row => cal.jointProfile !== 'fixed-kc-c-14' || !['KC', 'C'].includes(row.key))
+  : app.backendCase?.searchParameterDefinitions) || [])
 const activeSearchParameters = computed(() => cal.calibrationTarget === 'routing'
-  ? Object.fromEntries(['RS', 'RI', 'RG'].map(key => [key + '_k_hours', routingRecord.value?.parameters.default_slope_k_hours[key]])) : cal.params)
+  ? routingCoordinates.value : cal.params)
+const runoffSearchError = computed(() => searchSelectionError(activeSearchSelection.value, activeSearchDefinitions.value,
+  activeSearchParameters.value, cal.calibrationTarget === 'runoff' ? cal.searchStrategy : 'joint'))
+const routingSearchError = computed(() => cal.calibrationTarget === 'joint'
+  ? searchSelectionError(cal.routingSearchParameters, jointRoutingDefinitions.value, routingCoordinates.value, 'joint') : '')
+const routingReferenceWarning = computed(() => routingRecord.value?.searchReferenceOnly && !cal.sourcePlan
+  ? '原汇流基准仅用于原方案搜索；已调整设置时，请先选择有效汇流方案。' : '')
 const searchError = computed(() => {
   if (!app.backendCase) return ''
-  if (cal.calibrationTarget === 'routing' && !routingRecord.value) return routingError.value || '正在读取汇流方案'
-  return searchSelectionError(activeSearchSelection.value, activeSearchDefinitions.value, activeSearchParameters.value, cal.calibrationTarget === 'routing' ? 'joint' : cal.searchStrategy)
+  if (parameterLoading.value) return '正在核对候选所需资料版本'
+  if (routingReferenceWarning.value) return routingReferenceWarning.value
+  if (cal.requiredInputBundleVersionId && app.selectedInputBundleVersionId !== cal.requiredInputBundleVersionId) return `当前候选要求资料 ${cal.requiredInputBundleVersionId}，请重新选择该候选或改用当前资料的方案`
+  if (cal.scienceVersionId && scienceLoading.value) return '正在核对所选科学配置与预热时长'
+  if (cal.scienceVersionId && scienceError.value) return scienceError.value
+  if (['routing', 'joint'].includes(cal.calibrationTarget) && !routingRecord.value) return routingError.value || '正在读取汇流方案'
+  return runoffSearchError.value || routingSearchError.value
+})
+const previewSearchRows = computed(() => {
+  const scopes = cal.calibrationTarget === 'joint' ? [
+    ['runoff', jointDefinitions.value.runoff || [], cal.searchParameters, searchCoordinates(cal.params)],
+    ['routing', jointRoutingDefinitions.value, cal.routingSearchParameters, routingCoordinates.value]
+  ] : [[cal.calibrationTarget, activeSearchDefinitions.value, activeSearchSelection.value,
+    cal.calibrationTarget === 'routing' ? routingCoordinates.value : searchCoordinates(cal.params)]]
+  return scopes.flatMap(([scope, definitions, selection, current]) => definitions.map(row => {
+    const active = !row.unavailable && !(scope === 'runoff' && cal.calibrationTarget === 'joint' && cal.jointProfile === 'fixed-kc-c-14' && ['KC', 'C'].includes(row.key))
+      && (selection == null || Object.hasOwn(selection, row.key))
+    return { ...row, scope, active, initial: current[row.key], ...(selection?.[row.key] || {}) }
+  }))
 })
 function updateSearchSelection(value) { cal.calibrationTarget === 'routing' ? cal.setRoutingSearchParameters(value) : cal.setSearchParameters(value) }
 const parameterConstraint = computed(() => {
   if (!app.backendCase) return ''
   const p = cal.params
   if (p.WM <= p.WUM + p.WLM) return 'WM 须大于 WUM + WLM'
-  if (p.KI + p.KG >= 0.98) return 'KI + KG 须小于 0.98'
+  if (p.KI + p.KG >= 1) return 'KI + KG 须小于 1'
   return ''
 })
-const manualCanRun = computed(() => app.backendCase?.manualCalibration && !cal.running && !parameterConstraint.value
+const manualCanRun = computed(() => app.backendCase?.manualCalibration && !cal.running && !parameterLoading.value && !cal.sourcePlan && !routingReferenceWarning.value && !parameterConstraint.value
+  && (cal.calibrationMode !== 'event' || !physicalConflict.value) && !(cal.scienceVersionId && (scienceError.value || scienceLoading.value))
   && cal.executionAvailability.ready && cal.validateCalibration().errors.every(error => error.includes('次评价')))
 const calMode = ref(cal.calibrationMode)
 const workMode = ref(cal.operationMode || 'calibration')
@@ -501,8 +627,8 @@ const paramGroup = ref('runoff')
 const eventQuery = ref('')
 const eventYear = ref('all')
 const eventPurposeFilter = ref('all')
-const eventSplitSeed = ref('42')
-const eventAssignment = ref(null)
+const eventSplitSeed = ref(String(cal.eventSplitSeed ?? 42))
+const eventAssignment = ref(cal.eventAssignment || null)
 const eventSelectionMethod = ref('all-valid')
 const eventTopN = ref(50)
 const eventPeakThreshold = ref(100)
@@ -531,7 +657,7 @@ const eventQualityLabel = computed(() => {
   const quality = eventQuality.value
   if (!quality) return '尚无资料检查结论；未生成模拟过程。'
   const reasons = [...(quality.exclusion_reasons || quality.reject_reasons || []), ...(quality.warning_reasons || [])]
-  return `${quality.model_input_ready ? '计算资料通过 · 可提交诊断任务' : '计算资料未通过 · 请核查资料'}${reasons.length ? ` · ${reasons.join('、')}` : ''}。场次蒸散发取零，结果不得作为生产预报。`
+    return `${quality.model_input_ready ? '计算资料通过 · 可提交诊断任务' : '计算资料未通过 · 请核查资料'}${reasons.length ? ` · ${reasons.join('、')}` : ''}。本次蒸散发：${petLabel.value}。`
 })
 const nseLabel = computed(() => {
   const nse = backendHydrograph.value?.metrics?.nse ?? (cal.executionAvailability.mode === 'frontend-fixture' ? cal.peakSummary.nse : null)
@@ -540,6 +666,7 @@ const nseLabel = computed(() => {
 const simulationPeakLabel = computed(() => hydrologyNumber(cal.visibleSimulationResult?.hydrograph?.peak ?? cal.visibleSimulationResult?.peak, 2))
 const parameterLibrary = computed(() => parameterLibraryFor(caseData.value, app.basinId, app.modelScale, app.activeContext))
 const simulationParameterVersions = computed(() => parameterLibrary.value?.simulationRateLibrary?.versions || [])
+const selectedParameterVersion = computed(() => simulationParameterVersions.value.find(row => row.id === cal.paramVersion) || null)
 const activeParameterVersion = computed(() => {
   if (matchingCalibrationResult.value?.parameterVersionId) return simulationParameterVersions.value.find(version => version.id === matchingCalibrationResult.value.parameterVersionId) || null
   if (app.backendCase && workMode.value === 'calibration') return null
@@ -561,8 +688,10 @@ const independentEventRows = computed(() => {
 })
 const calculationCanRun = computed(() => {
   if (cal.running || !cal.executionAvailability.ready || !cal.sectionId) return false
+  if (parameterLoading.value || (cal.requiredInputBundleVersionId && app.selectedInputBundleVersionId !== cal.requiredInputBundleVersionId)) return false
   if (['queued', 'running', 'cancelling'].includes(activeTask.value?.status)) return false
   if (workMode.value === 'calibration' && (searchError.value || parameterConstraint.value)) return false
+  if (workMode.value === 'calibration' && calMode.value === 'event' && (physicalConflict.value || physicalGrouping.value.errors.length)) return false
   if (workMode.value === 'calibration' && !objectiveWeightValid.value) return false
   if (workMode.value === 'calibration' && calMode.value === 'event') return calibrationEvents.value.length > 0 && validationEvents.value.length > 0
   if (workMode.value === 'calibration') return cal.validateCalibration().ok
@@ -570,7 +699,10 @@ const calculationCanRun = computed(() => {
 })
 const calculationBlockReason = computed(() => {
   if (!cal.executionAvailability.ready) return cal.executionAvailability.reason
+  if (parameterLoading.value) return '正在核对候选所需资料版本'
+  if (cal.requiredInputBundleVersionId && app.selectedInputBundleVersionId !== cal.requiredInputBundleVersionId) return `当前候选要求资料 ${cal.requiredInputBundleVersionId}，请重新选择该候选`
   if (workMode.value === 'calibration' && (parameterConstraint.value || searchError.value)) return parameterConstraint.value || searchError.value
+  if (workMode.value === 'calibration' && calMode.value === 'event' && (physicalConflict.value || physicalGrouping.value.errors.length)) return physicalConflict.value || physicalGrouping.value.errors[0]
   if (workMode.value === 'calibration' && !objectiveWeightValid.value) return '已选评价指标的权重合计需为 1.00。'
   if (workMode.value === 'calibration' && calMode.value === 'event' && (!calibrationEvents.value.length || !validationEvents.value.length)) return '请至少各登记一场率定洪水和验证洪水。'
   if (workMode.value === 'calibration' && !cal.validateCalibration().ok) return cal.validateCalibration().errors[0]
@@ -633,7 +765,9 @@ const shownParamDefs = computed(() => {
   const group = parameterGroups.find((item) => item.key === paramGroup.value)
   return group ? activeParamDefs.value.filter((item) => group.keys.includes(item.key)) : activeParamDefs.value
 })
-const activeEvents = computed(() => cal.events.filter((event) => event.status !== 'inactive'))
+const activeEvents = computed(() => currentInputFloodEvents(cal.events, { registeredOnly: isModelInputWorkspace.value,
+  selectedBundleVersionId: app.selectedInputBundleVersionId, registeredBundleVersionId: cal.backendInputBundleVersionId }))
+const retainedInputEvents = computed(() => isModelInputWorkspace.value ? cal.events.filter(event => event.runtimeRegistered !== true) : [])
 const eventYears = computed(() => [...new Set(activeEvents.value.map((event) => dayjs(event.start).year()))].sort((a, b) => b - a))
 const registeredRuntimeEvents = computed(() => isModelInputWorkspace.value ? activeEvents.value.filter((event) => event.runtimeRegistered === true) : activeEvents.value)
 const eligibleEvents = computed(() => selectCalibrationCandidates(registeredRuntimeEvents.value, { method: 'all-valid' }))
@@ -731,6 +865,9 @@ watch(continuousResultPeriods, rows => {
 const calibrationEvents = computed(() => eligibleEvents.value.filter((event) => event.purpose === '率定'))
 const validationEvents = computed(() => eligibleEvents.value.filter((event) => event.purpose === '验证'))
 const independentEvents = computed(() => eligibleEvents.value.filter((event) => event.purpose === '独立检验'))
+const physicalGrouping = computed(() => physicalFloodGroups(eligibleEvents.value))
+const physicalConflict = computed(() => physicalGrouping.value.conflicts.length
+  ? `重叠洪水跨用途：${physicalGrouping.value.conflicts.map(group => group.memberEventIds.join('、')).join('；')}。请在台账设为同一用途，当前用途不会自动改写。` : '')
 const eventSetSummary = computed(() => isNananxiHistory.value
   ? `候选 ${candidateEvents.value.length} · 率定 ${calibrationEvents.value.length} · 验证 ${validationEvents.value.length} · 独检 ${independentEvents.value.length}`
   : `率定 ${calibrationEvents.value.length} · 验证 ${validationEvents.value.length}`)
@@ -767,7 +904,7 @@ const backendHydrograph = computed(() => {
 const processResult = computed(() => workMode.value === 'simulation' ? cal.visibleSimulationResult : matchingCalibrationResult.value)
 const trialRows = computed(() => {
   if (workMode.value !== 'calibration' || !processResult.value?.frozenRequest || processResult.value.calibrationTarget === 'routing') return []
-  const key = trialConditions(processResult.value.frozenRequest)
+  const key = trialConditions(processResult.value.frozenRequest, processResult.value)
   const period = calMode.value === 'continuous' ? selectedContinuousPeriod.value : cal.eventId
   return cal.trialRecords.filter(row => row.conditions === key).map((row, index) => ({
     ...row, label: index === 0 ? '基准曲线' : `方案 ${index}${row.manual ? ' · 人工试调' : ' · 自动率定'}`,
@@ -864,7 +1001,10 @@ watch(eligibleEvents, (events) => {
 })
 watch([eventSelectionMethod, eventTopN, eventPeakThreshold, eventSelectionYear, eventSelectionStart, eventSelectionEnd, manualCandidateIds], () => {
   eventAssignment.value = null
+  cal.eventAssignment = null
 }, { deep: true })
+watch(eventSplitSeed, value => { cal.eventSplitSeed = Number(value) || 42 })
+watch(() => cal.eventAssignment, value => { eventAssignment.value = value })
 watch(eventPageCount, (count) => { eventPage.value = Math.min(eventPage.value, count) })
 watch(() => [app.basinId, app.modelScale, app.modelConfigId], ([basinId, modelScale, modelConfigId]) => {
   cal.setContext(basinId, modelScale, modelConfigId)
@@ -1050,10 +1190,11 @@ function assignEventsByRatio() {
   const reset = activeEvents.value.map((event) => ({ id: event.id, purpose: '未使用' }))
   cal.setEventPurposes([...reset, ...assignments])
   eventAssignment.value = {
-    method: 'stratified-random-by-observed-peak',
+    method: 'stratified-random-by-physical-group-peak',
     seed,
     ratios: { calibration: 0.7, validation: 0.2, independentTest: 0.1 },
     selectedEventIds: candidates.map((event) => event.eventId || event.id),
+    physicalGroups: physicalFloodGroups(candidates, { includeUnused: true }).groups.map(({ id, memberEventIds, uniqueHours }) => ({ id, memberEventIds, uniqueHours })),
     selection: eventSelectionPayload.value,
     snapshot: candidates.map((event) => ({
       id: event.eventId || event.id,
@@ -1072,7 +1213,9 @@ function assignEventsByRatio() {
       independentTest: assignments.filter((item) => item.purpose === '独立检验').length
     }
   }
-  ElMessage.success(`已按洪峰分层随机划分：率定 ${eventAssignment.value.counts.calibration} 场、验证 ${eventAssignment.value.counts.validation} 场、独立检验 ${eventAssignment.value.counts.independentTest} 场；种子 ${seed}`)
+  cal.eventAssignment = JSON.parse(JSON.stringify(eventAssignment.value))
+  cal.saveCurrentWorkspace()
+  ElMessage.success(`已按物理洪水组洪峰分层划分：率定 ${physicalGrouping.value.counts.calibration} 组、验证 ${physicalGrouping.value.counts.validation} 组、独立检验 ${physicalGrouping.value.counts.independentTest} 组；种子 ${seed}`)
 }
 
 function setEventPurposeManually(id, purpose) {
@@ -1142,7 +1285,7 @@ async function startManualTrial() {
   if (!manualCanRun.value) return
   const prior = cal.runResult
   if (prior?.frozenRequest && prior.calibrationTarget !== 'routing' && !cal.trialRecords.some(row => row.taskId === prior.taskId)) {
-    cal.trialRecords.push({ taskId: prior.taskId, conditions: trialConditions(prior.frozenRequest),
+    cal.trialRecords.push({ taskId: prior.taskId, conditions: trialConditions(prior.frozenRequest, prior),
       parameterVersionId: prior.parameterVersionId, parameters: { ...prior.bestParameters },
       completedAt: prior.completedAt, manual: prior.evaluationMode === 'manual', visible: true })
     trialResults[prior.taskId] = prior
@@ -1152,19 +1295,22 @@ async function startManualTrial() {
 }
 
 async function prepareBackendTask(operationMode, manual = false) {
-  const request = buildCalibrationRequest({
+  let request
+  try { request = buildCalibrationRequest({
     app,
-    calibration: cal,
+    calibration: { ...cal, ...(cal.calibrationTarget === 'joint' && cal.routingSearchParameters == null
+      ? { routingSearchParameters: selectedSearchParameters(jointRoutingDefinitions.value) } : {}) },
     operationMode,
     events: registeredRuntimeEvents.value,
     eventAssignment: eventAssignment.value,
     eventSelection: eventSelectionPayload.value
-  })
+  }) } catch (error) { ElMessage.warning(error.message); return }
   if (manual) {
     request.calibration.evaluationMode = 'manual'
     delete request.calibration.searchParameters
     delete request.calibration.routingSearchParameters
     delete request.calibration.target
+    delete request.calibration.jointProfile
   }
   cal.running = true
   const requestedContextKey = cal.contextKey
@@ -1347,6 +1493,14 @@ function saveSimulationState() {
 .run-message { min-height: 18px; margin: 8px 0 0; }
 .run-message.warn { color: var(--orange); font-weight: 700; }
 .request-status { padding: 8px 10px; border-left: 3px solid #2a7b70; background: #eef7f4; color: #245e57; }
+.source-candidate-note { margin:8px 0;padding:8px;border-left:3px solid #b37a34;background:#fff7eb;color:#986225;font-size:10px;line-height:1.5; }
+.physical-group-note { display:grid;gap:5px;margin:9px 0;padding:9px;border-left:3px solid #278579;background:#edf7f3;color:#2d665d;font-size:10px;line-height:1.5; }
+.physical-group-note span,.physical-group-note small { color:#58796e; }
+.physical-group-note.warn { background:#fff5e9;border-color:#bf7c32;color:#995a20; }
+.physical-group-note p { margin:0;overflow-wrap:anywhere; }
+.physical-result { margin:12px 0;padding:9px;border:1px solid #d5e4df;border-radius:5px;color:#42675d;font-size:11px; }
+.physical-result summary { cursor:pointer;font-weight:700; }.physical-result p { font-size:10px;line-height:1.5; }
+.physical-result .plan-table { overflow:auto;max-height:220px; }.physical-result table { border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:10px; }.physical-result td,.physical-result th { padding:6px;border-bottom:1px solid #dfe8e3;text-align:right;white-space:nowrap; }.physical-result td:first-child,.physical-result th:first-child { text-align:left; }
 .parameter-intro { margin: 0 0 10px; }
 .parameter-result-card { display: grid; gap: 8px; margin-top: 12px; padding: 10px; border: 1px solid #d5e2e6; border-left: 3px solid #2b8278; background: #f7fbfa; }
 .parameter-result-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
@@ -1447,6 +1601,7 @@ function saveSimulationState() {
 .event-selection-count { display: inline-flex; align-items: baseline; gap: 4px; min-height: 28px; padding: 0 8px; border-left: 3px solid #2a8178; background: #f1f8f6; color: #658087; font-size: 10px; }
 .event-selection-count b { color: #14776e; font-size: 15px; font-variant-numeric: tabular-nums; }
 .event-selection-note { margin-top: 4px; color: #6b7d82; font-size: 9px; line-height: 1.3; }
+.retained-events-note { margin-top:7px;padding:7px;border:1px solid #d3dfdf;border-radius:3px;background:#f6f9f8;color:#627975;font-size:9px;line-height:1.5; }.retained-events-note summary{cursor:pointer}.retained-events-note p{margin:6px 0}.retained-events-note div{display:grid;gap:3px;max-height:150px;overflow:auto;color:#788b86}
 .event-selection-stats { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 7px; color: #657b82; font-size: 9px; }
 .event-selection-stats b { color: #245b62; font-variant-numeric: tabular-nums; }
 .data-inline-control { display: inline-flex; align-items: center; gap: 3px; color: #3d5f67; font-weight: 800; }

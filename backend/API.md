@@ -313,3 +313,33 @@ Metadata is stored in the additive `state_metadata` SQL table. Saving a name or 
 - 返回 `searchPlan:{mode,rows,hourlySource,routing}`，每行含 key/label/symbol/unit、active、initial、value、minimum、maximum。固定项边界为 null，routing 为 fixed。计划保存在不可变结果及参数成果中，`searchSpace` 保留实际活动搜索坐标；前端SQL草稿另保存尚未提交的选择。
 - 多随机种子检验保留自定搜索范围。WLM边界及综合工作流与自定范围互斥，提交前明确选择预设范围方案。
 
+# 20261012 接入补充（1.10.0）
+
+`calibration.target` 新增 `joint`，对应产流、三分量坡面和河道联合搜索。`jointProfile` 为 `reference-16`（含KC/C）或 `fixed-kc-c-14`（当前KC/C固定）；`searchParameters` 指产流范围，`routingSearchParameters` 指三坡面K、`muskingum_k_scale`、`muskingum_x`。河段K倍数相对于提交时选定的汇流版本。所有路径继续由后端登记，客户端不能传入文件路径。
+
+`calibration.statePolicy` 支持 `independent-warmup` 和 `continuous-origin`；后者可携带本地整点 `continuousOrigin`。模拟请求的 `period.continuousOrigin` 用于重放已冻结原点；父状态续算不另指定原点。连续原点与首个请求时刻不能超过十年。场次PET可显式选 `constant-zero`、`monthly-climatology-assumption`，或用 `inputs.evaporation.mode=science-version` 和 `science.versionId` 选择不可变科学配置。
+
+`GET /api/model/science-versions` 返回登记科学条件及当前实现摘要；`GET /api/model/science-versions/{id}` 导出经校验的完整依赖闭包。入队时冻结 `lineage.modelImplementationSHA256/scienceConfigurationSHA256/petConfigurationSHA256`。末状态携带同样身份和 `scienceSnapshot`。缺身份的历史状态继续可读，跨实现续算需要重新初始化。
+
+场次提交后冻结 `period.overlapGroups`。闭区间重叠（包括共用一小时）的窗口必须同用途，否则400拒绝。结果主汇总按物理洪水组的唯一小时重新计算，`overlapGroupMetrics` 保存组指标，`eventMetrics` 和 `windowSummary` 保存窗口诊断，`evaluationPolicy=EQUAL_PHYSICAL_GROUP_UNIQUE_HOURS`。报告包增加 `overlap-group-metrics.csv`。
+
+优化结果包含实际基线评价、有效/无效次数及终止原因。基线计入总预算；若后续候选更差，保留当前方案。联合候选保存 `bestParameters/bestRoutingParameters/routingCandidate/science`；采用和人工重放应携带完整方案、来源输入版本与原点。
+
+MDB通过 `scripts/import_mdb_bundle.py` 显式从只读副本登记独立输入版本，不能作为浏览器任意本地路径执行。查询结果须有完成标记和行数核验；超时、截断或冲突记录拒绝登记。完整年NC保留未查询时段缺测，所需模拟范围先按请求终点裁剪，再严格检查。新资料的观测覆盖和连续缺口政策写在自己的质量配置中；水量误差缺测时只代表共同有效小时。
+
+## 同事原方案与状态衔接（1.11.0）
+
+`GET /api/model/parameter-versions/{id}/original-plan?operation=search|fixed-replay` 返回 `{plan,request}`，只读取，不入队。计划嵌在原候选中，冻结10份来源配置及其摘要、16窗口用途、7个物理组、16变量顺序、原产汇流基准、五指标权重和DE控制参数。
+
+`search` 恢复原种群、种子20260820、分组种子42、960评价、48个体、19代、F=0.8、CR=0.7。原当前参数作为初始种群候选，无效参数组计入预算；原河道K基准只作为可信来源搜索的倍率参考，不允许普通固定模拟采用。`fixed-replay` 使用候选最佳参数，仅一次固定评价，补算17窗口。提交仍走既有 `POST /api/model/tasks`。
+
+请求的 `sourcePlan={parameterVersionId,planId,planSHA256,operation}` 由后端重新核验。修改用途、目标权重、种子、范围或原汇流参考后，页面解除原方案标识，按当前方案提交。允许缩小试运行预算，但不超过原预算。普通未核验请求不能借原标识绕过汇流或资料检查。
+
+来源资料使用 `sourceQcPolicy=SOURCE_ORIGINAL_20261011`，原QC接受16窗口。`31230701`因721h被原QC排除，只允许可信来源固定重放补算，保持 `accepted=false` 和补算说明；缺降雨或其他QC失败不能补算。原16窗口和7组评价分别保存于 `sourcePlanEvaluation.originalWindowMetrics/originalGroupMetrics`，17扩展组不能改称原7组。
+
+联合预设增加 `all-physical-16`，宽范围仍在原搜索编辑器中。五指标目标支持NSE、KGE、PBIAS、洪峰误差及峰现时间误差；旧 `VOLUME_ERROR`默认保持兼容。
+
+`stateInitialization`的 `initialization.strategy=CONTINUOUS` 使用显式科学版本及 `period.continuousOrigin`，从原点补算至目标时刻。`stateContinuation`和 `forecast`校验父检查点后继承父科学配置；显式不同科学条件返回400。案例目录提供当前 `modelImplementationSHA256`，前端据此提示旧状态重新初始化。科学条件依赖见《SCIENCE_CONTEXT》。
+
+普通人工试调允许单场洪水，仍须有率定用途、有效观测和完整降雨。冻结的原搜索计划不进入更换种子的诊断实验；需要参数检验时先采用候选，登记普通自动方案后再选入诊断页。
+

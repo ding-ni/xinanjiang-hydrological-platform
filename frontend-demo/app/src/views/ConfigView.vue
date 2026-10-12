@@ -817,11 +817,11 @@ function save() {
   ElMessage.success('配置已保存，模型方案与业务规则已更新')
 }
 
-function loadVer(ver) {
+async function loadVer(ver) {
   if (isModelInputWorkspace.value) {
     const version = parameterLibrary.value?.simulationRateLibrary?.versions?.find((row) => row.id === ver)
     if (!app.backendCase || app.backendError || !version?.parameters) return ElMessage.warning('当前真实参数或模型服务不可用，不能用示意参数替代。')
-    calibration.loadVersion(ver)
+    if (await calibration.loadVersion(ver) === false) return ElMessage.warning(calibration.runMessage)
     calibration.setOperationMode('simulation')
     router.push('/calibration')
     ElMessage.success(`已载入诊断参数 ${ver} 到连续模拟`)

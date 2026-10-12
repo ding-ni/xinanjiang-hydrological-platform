@@ -117,7 +117,10 @@ class StateImportTests(unittest.TestCase):
                                lambda c: c['routing']['prev_in'].pop(), lambda c: c['routing']['prev_out'].__setitem__(0, -1),
                                lambda c: c.update(inputBundleManifestSHA256='other'), lambda c: c.update(routingManifestSHA256='other'),
                                lambda c: c['parameters'].update({'runoff.WM': 1}), lambda c: c.update(time='2017-06-20T01:01'),
-                               lambda c: c.update(petMode='different'), lambda c: c.update(parameters=[]), lambda c: c.update(land=None)]:
+                               lambda c: c.update(petMode='different'), lambda c: c.update(parameters=[]), lambda c: c.update(land=None),
+                               lambda c: c.update(modelImplementationSHA256='0' * 64),
+                               lambda c: c.update(scienceConfigurationSHA256='0' * 64),
+                               lambda c: c.update(petConfigurationSHA256='0' * 64), lambda c: c.pop('modelImplementationSHA256')]:
                     invalid = copy.deepcopy(source); mutate(invalid)
                     with self.assertRaises(ValueError):
                         validate_checkpoint(manager, invalid)

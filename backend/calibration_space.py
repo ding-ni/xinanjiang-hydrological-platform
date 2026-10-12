@@ -6,6 +6,10 @@ from common import MODEL, read_json
 
 SPACE_FILE = MODEL / 'config/parameter_space_runoff_multievent_stage2_daily_source.json'
 STORAGE = {'WM', 'WUM', 'WLM', 'B', 'IM'}
+REFERENCE_LIMITS = {
+    'WM': (50, 300), 'WUM': (5, 80), 'WLM': (20, 200), 'B': (.01, .8),
+    'SM': (5, 100), 'EX': (.5, 2.5), 'IM': (0, .1),
+}
 
 
 def definitions():
@@ -18,7 +22,8 @@ def definitions():
         elif key == 'groundwater_fraction':
             label, symbol, unit, low, high = '地下径流分配比例', 'fG', '1', .02, .80
         else:
-            label, low, high, unit = PARAMETERS[key]
+            label, _physical_low, _physical_high, unit = PARAMETERS[key]
+            low, high = REFERENCE_LIMITS[key]
             symbol = key
         rows.append({'key': key, 'label': label, 'symbol': symbol, 'unit': unit,
                      'minimum': spec['minimum'], 'maximum': spec['maximum'], 'limitMin': low, 'limitMax': high,

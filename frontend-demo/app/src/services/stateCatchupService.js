@@ -1,3 +1,5 @@
+import { stateScienceBlockReason } from './scientificSelectionService.js'
+
 // State times are local model hours, not browser-clock forecast publication times.
 export function catchupWindow(stateTime, issueTime) {
   const parse = value => {
@@ -15,9 +17,9 @@ export function catchupWindow(stateTime, issueTime) {
   return { hours, ready: true, reason: '', endTime: String(issueTime).replace(' ', 'T') }
 }
 
-export function compatibleCatchupState(node, inputVersion, routingVersion) {
+export function compatibleCatchupState(node, inputVersion, routingVersion, modelImplementationSHA256) {
   const checkpoint = node.checkpoint || node
   const input = node.inputBundleVersionId || checkpoint.inputBundleVersionId || checkpoint.lineage?.inputBundleVersionId
   const routing = checkpoint.routingVersionId || checkpoint.lineage?.routingVersionId || 'control-split-v2'
-  return node.resultSource === 'model-backend' && input === inputVersion && routing === routingVersion
+  return node.resultSource === 'model-backend' && input === inputVersion && routing === routingVersion && !stateScienceBlockReason(node, modelImplementationSHA256)
 }

@@ -402,6 +402,7 @@ import { Close } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { useForecastStore } from '@/stores/forecast'
 import { catchupWindow, compatibleCatchupState } from '@/services/stateCatchupService'
+import { stateScienceBlockReason } from '@/services/scientificSelectionService'
 import { useTasksStore } from '@/stores/tasks'
 import { useMonitorStore } from '@/stores/monitor'
 import { useAppStore } from '@/stores/app'
@@ -474,6 +475,8 @@ const pageCanRun = computed(() => app.backendCase
   : forecast.canRun && parameterReady.value && activeRainfallProducts.value.length > 0 && eligibleStateNodes.value.length > 0)
 const forecastBlockReason = computed(() => {
   if (!forecast.executionAvailability.ready) return forecast.executionAvailability.reason
+  if (app.backendCase && state.domainInitialStates.length && !eligibleStateNodes.value.length
+    && state.domainInitialStates.some(node => stateScienceBlockReason(node, app.backendCase?.modelImplementationSHA256))) return '历史状态需重新初始化后起报，请在状态页生成新的初始状态。'
   if (!activeRainfallProducts.value.length) return '请给定本次逐小时降雨情景'
   if (!caseData.value?.datasets?.datasets?.length) return '当前流域没有可用于预报的小时资料。'
   if (!parameterReady.value) return forecast.forecastMode === 'automatic' ? '请选择已发布生产参数' : '请沿用起报状态参数；更换参数后先重新初始化状态'
@@ -544,7 +547,7 @@ const activeRouting = computed(() => ({
 const eligibleStateNodes = computed(() => {
   const issue = dayjs(forecast.startTime)
   return state.domainInitialStates.filter((node) => !dayjs(node.time).isAfter(issue)
-    && (!app.backendCase || compatibleCatchupState(node, app.selectedInputBundleVersionId, app.selectedRoutingVersionId)))
+    && (!app.backendCase || compatibleCatchupState(node, app.selectedInputBundleVersionId, app.selectedRoutingVersionId, app.backendCase.modelImplementationSHA256)))
 })
 const activeStateNode = computed(() => eligibleStateNodes.value.find((node) => node.id === forecast.stateVersion) || eligibleStateNodes.value[0] || {
   time: '—',
@@ -904,7 +907,7 @@ async function confirmAndRun() {
     await run()
     return
   }
-  const request = buildForecastRequest({ app, forecast, rainProduct: currentRainProduct.value })
+  const request = buildForecastRequest({ app, forecast, rainProduct: currentRainProduct.value, parentState: app.backendCase ? activeStateNode.value : null })
   const key = operationKey.value
   const context = forecast.contextKey
   let taskId = null

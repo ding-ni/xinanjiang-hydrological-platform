@@ -5,21 +5,22 @@
     <p v-if="importMessage" role="status">{{ importMessage }}</p>
     <div class="library-toolbar">
       <label class="search"><Search class="icon" /><input v-model="query" class="input" aria-label="检索状态" placeholder="名称、时间或编号" type="search" /></label>
-      <select v-model="strategy" class="input" aria-label="状态来源"><option value="">全部来源</option><option value="MODEL_END_STATE">模型末状态</option><option value="FIXED_WARMUP">降雨预热</option><option value="OBSERVED_FLOW_ANCHORED">按实测流量初始化</option><option value="IMPORTED">导入状态</option></select>
+      <select v-model="strategy" class="input" aria-label="状态来源"><option value="">全部来源</option><option value="MODEL_END_STATE">模型末状态</option><option value="CONTINUOUS">从连续起点补算</option><option value="FIXED_WARMUP">降雨预热</option><option value="OBSERVED_FLOW_ANCHORED">按实测流量初始化</option><option value="IMPORTED">导入状态</option></select>
       <button class="btn favorite-filter" :class="{ selected: favorites }" :aria-pressed="favorites" @click="favorites = !favorites"><StarFilled class="icon" />收藏</button>
     </div>
     <p v-if="error" class="library-error" role="alert">{{ error }}</p>
     <div class="library-layout">
       <div ref="nodeList" class="node-list">
         <button v-for="row in visible" :key="row.id" class="node-item" :class="{ active: row.id === activeId }" :title="row.id" :disabled="disabled" @click="$emit('select', row.id)">
-          <span><b>{{ stateName(row, metadata) }}</b><small>{{ row.time.slice(0, 16) }} · {{ row.source }}</small></span><StarFilled v-if="metadata[row.id]?.favorite" class="icon starred" />
+          <span><b>{{ stateName(row, metadata) }}</b><small>{{ row.time.slice(0, 16) }} · {{ row.source }}<template v-if="stateScienceBlockReason(row)"> · 需重新初始化</template></small></span><StarFilled v-if="metadata[row.id]?.favorite" class="icon starred" />
         </button>
         <div v-if="!visible.length" class="library-empty">{{ states.length ? '没有匹配的状态' : '暂无状态' }}</div>
       </div>
       <div v-if="selected" class="state-selection">
         <form class="name-editor" @submit.prevent="saveName"><input v-model="name" class="input" aria-label="状态名称" maxlength="80" :placeholder="stateName(selected, {})" :disabled="busy || disabled" /><button class="btn icon-btn" aria-label="保存状态名称" title="保存名称" :disabled="busy || disabled || name === savedName"><Check class="icon" /></button><button class="btn icon-btn" type="button" :aria-label="metadata[activeId]?.favorite ? '取消收藏状态' : '收藏状态'" :title="metadata[activeId]?.favorite ? '取消收藏' : '收藏'" :disabled="busy || disabled" @click="toggleFavorite"><StarFilled v-if="metadata[activeId]?.favorite" class="icon starred" /><Star v-else class="icon" /></button></form>
         <div class="selection-metrics"><div><span>状态时刻</span><b>{{ selected.time.slice(0, 16) }}</b></div><div><span>张力水 W/WM</span><b>{{ number(selected.means.soil, 3) }}</b></div><div><span>自由水 S</span><b>{{ number(selected.means.free, 2) }} <small>mm</small></b></div><div v-if="selected.checkpoint?.initialization?.anchor"><span>徐畈初始流量</span><b>{{ number(selected.checkpoint.initialization.anchor.flowCms, 2) }} <small>m³/s</small></b></div></div>
-        <div class="selection-actions"><button class="btn primary" :disabled="disabled" @click="$emit('continue')">用于续算</button><button class="btn" :disabled="busy" @click="download('json')"><Download class="icon" />状态文件</button><button class="btn" :disabled="busy" @click="download('csv')">网格 CSV</button></div>
+        <p v-if="stateScienceBlockReason(selected)" class="library-error" role="status">{{ stateScienceBlockReason(selected) }}</p>
+        <div class="selection-actions"><button class="btn primary" :disabled="disabled || Boolean(stateScienceBlockReason(selected))" @click="$emit('continue')">用于续算</button><button class="btn" :disabled="busy" @click="download('json')"><Download class="icon" />状态文件</button><button class="btn" :disabled="busy" @click="download('csv')">网格 CSV</button></div>
         <details><summary>版本信息</summary><dl><dt>状态</dt><dd>{{ selected.id }}</dd><dt>参数</dt><dd>{{ selected.parameterVersionId }}</dd><dt>输入</dt><dd>{{ selected.inputBundleVersionId }}</dd><dt>汇流</dt><dd>{{ selected.checkpoint?.routingVersionId }}</dd></dl></details>
       </div>
     </div>
@@ -31,9 +32,11 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Check, Download, Refresh, Search, Star, StarFilled } from '@element-plus/icons-vue'
 import { modelApi } from '@/services/modelBackendService'
 import { checkpointCsv, filterStates, stateName } from '@/services/statePresentation'
+import { stateScienceBlockReason as scientificStateBlockReason } from '@/services/scientificSelectionService'
 
-const props = defineProps({ states: { type: Array, default: () => [] }, activeId: String, disabled: Boolean })
+const props = defineProps({ states: { type: Array, default: () => [] }, activeId: String, disabled: Boolean, modelHash: String })
 const emit = defineEmits(['select', 'continue', 'refresh', 'imported'])
+const stateScienceBlockReason = state => scientificStateBlockReason(state, props.modelHash)
 const fileInput = ref(null), canImport = ref(false), pendingImport = ref(null), importName = ref(''), importMessage = ref('')
 async function readImport(event) {
   const file = event.target.files[0]

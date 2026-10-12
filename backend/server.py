@@ -38,6 +38,8 @@ from platform_config import SETTINGS
 from workspace_service import WorkspaceLock, workspace_identity, workspace_info, DraftRepository
 from workspace_backup import create_backup
 from forecast_products import ForecastProducts, freeze_forecast_parameters
+from science_context import ScienceVersions, freeze_science_selection, inherit_state_science
+from original_calibration_plan import validate_original_request
 
 LABELS = {"calibration": "洪水场次率定", "simulation": "连续模拟", "stateInitialization": "状态初始化", "stateContinuation": "状态续算", "forecast": "洪水预报"}
 RUN_TYPES = {"calibration": "eventCalibration", "simulation": "continuousSimulation", "stateInitialization": "stateInitialization", "stateContinuation": "stateContinuation", "forecast": "forecast"}
@@ -61,6 +63,7 @@ class TaskManager:
         self.runtime_root = self.root.parent
         self.products = products or InputProducts(runtime_root=self.runtime_root)
         self.routing_versions = RoutingVersions(runtime_root=self.runtime_root)
+        self.science_versions = ScienceVersions(runtime_root=self.runtime_root)
         self.forecast_products = ForecastProducts(self.runtime_root)
         self.input_tasks = None
         self.root.mkdir(parents=True, exist_ok=True)
@@ -101,11 +104,13 @@ class TaskManager:
             request = normalize_diagnostic(request, self)
             return self._enqueue(request, task_prefix="JOB", run_type=request["runType"],
                                  label={"pointQuery": "任意点流量查询", "diagnosticExperiment": "诊断实验", "productionWorkflow": "完整参数诊断验收"}[request['runType']])
+        request = validate_original_request(request, self.runtime_root)
         request, bundle = freeze_input_selection(request, self.products)
         request = freeze_routing_selection(request, bundle, self.routing_versions)
-        request = normalize_request(request, case_catalog(bundle))
+        request = normalize_request(request, case_catalog(bundle), runtime_root=self.runtime_root)
         request = freeze_initialization(request, bundle)
         parent = request.get("period", {}).get("initialStateVersionId")
+        checkpoint = None
         if parent:
             if not str(parent).startswith("STATE-JOB-") or any(mark in str(parent) for mark in ("/", "\\")):
                 raise ValueError("父状态版本无效")
@@ -113,6 +118,9 @@ class TaskManager:
             if any(checkpoint["context"].get(key) != request["context"].get(key)
                    for key in ("projectId", "resolutionId", "modelConfigId", "contextKey")):
                 raise ValueError("父状态与请求上下文不一致")
+            request = inherit_state_science(request, checkpoint, self.runtime_root)
+        request, _science = freeze_science_selection(request, self.runtime_root)
+        if checkpoint is not None:
             assert_state_input_compatibility(checkpoint, request)
             if request['runType'] == 'forecast':
                 self.forecast_products.freeze(request)
@@ -127,6 +135,8 @@ class TaskManager:
             label = '人工参数试调'
         elif (request.get('calibration') or {}).get('target') == 'routing':
             label = '坡面汇流率定'
+        elif (request.get('calibration') or {}).get('target') == 'joint':
+            label = '产流、坡面与河道联合率定'
         digest = hashlib.sha256(json.dumps(request, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         with self.lock:
             request_id = request.get("requestId")
@@ -413,6 +423,13 @@ def handler(manager, frontend, input_manager=None, products=None):
                     payload = manager.routing_versions.list() if self.command == "GET" else manager.routing_versions.create(self.read_body())
                 self.send_json(200 if self.command == "GET" else 201, payload)
                 return
+            if self.command == 'GET' and path == f'{prefix}/science-versions':
+                self.send_json(200, manager.science_versions.list())
+                return
+            if self.command == 'GET' and path.startswith(f'{prefix}/science-versions/'):
+                version = path[len(f'{prefix}/science-versions/'):]
+                self.send_json(200, manager.science_versions.export(version))
+                return
             if self.command == "GET" and path == f"{prefix}/input-products":
                 self.send_json(200, products.list_versions())
                 return
@@ -515,6 +532,7 @@ def handler(manager, frontend, input_manager=None, products=None):
                     folder = safe_task(manager.root, task_id).resolve()
                     allowed = {"request.json", "result.json", "status.json", "task.log", "input-manifest.json", "event-quality.json", "period-quality.json", "routing-evidence.json", "formal-diagnostic-reports.json", "reach_flow.csv", "component_flow.csv", "annual_water_balance_metrics.csv", "continuous_hourly_flow.csv", "continuous_water_balance_report.json", "production-gate-report.json"}
                     allowed.update({'checkpoint.json', 'source-checkpoint.json', 'forecast-rain.json', 'forecast-end-state.json'})
+                    allowed.add('overlap-group-metrics.csv')
                     candidates = [p for p in folder.iterdir() if p.name in allowed and p.is_file()]
                     for child in folder.rglob('*'):
                         relative_parts = child.relative_to(folder).parts[:-1]
@@ -580,6 +598,14 @@ def handler(manager, frontend, input_manager=None, products=None):
             if self.command == "GET" and path == f"{prefix}/parameter-versions":
                 rows = [read_json(p) for p in (manager.runtime_root / "parameters").glob("*.json")]
                 self.send_json(200, {"versions": [row for row in rows if manager.available_artifact(row["taskId"])]})
+                return
+            if self.command == 'GET' and path.startswith(f'{prefix}/parameter-versions/') and path.endswith('/original-plan'):
+                from original_calibration_plan import original_plan_payload
+                pieces = path[len(f'{prefix}/parameter-versions/'):].split('/')
+                if len(pieces) != 2:
+                    raise KeyError('原方案设置不存在')
+                self.send_json(200, original_plan_payload(pieces[0], manager.runtime_root, products=manager.products,
+                                                         operation=argument('operation', 'search')))
                 return
             if path.startswith("/api/") or self.command != "GET":
                 raise KeyError("接口不存在")

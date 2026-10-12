@@ -62,6 +62,7 @@ import { modelApi, uniqueRequestId } from '@/services/modelBackendService'
 import { hydrologyText } from '@/services/hydrologyPresentation'
 import { diagnosticValue, diagnosticThreshold } from '@/services/diagnosticPresentation'
 import { filterTasks, taskStatusLabels } from '@/services/taskPresentation'
+import { isEditableDiagnosticSource } from '@/services/diagnosticSourceService'
 
 const app = useAppStore()
 const calibration = useCalibrationStore()
@@ -86,7 +87,7 @@ const spatialRunning = computed(() => spatialTasks.value.some(active))
 const latestSpatial = computed(() => spatialTasks.value.find(row => ['completed', 'archived'].includes(row.status)))
 const filteredDiagnostics = computed(() => filterTasks(diagnostics.value, { query: taskQuery.value, status: taskStatus.value }))
 const simulations = computed(() => tasks.value.filter(row => ['completed','archived'].includes(row.status) && ['simulation','stateInitialization'].includes(row.runConfig?.runType) && !row.runConfig?.period?.initialStateVersionId))
-const calibrations = computed(() => tasks.value.filter(row => row.runConfig?.runType === 'calibration' && row.runConfig.calibration?.evaluationMode !== 'manual' && row.runConfig.calibration?.target !== 'routing'))
+const calibrations = computed(() => tasks.value.filter(isEditableDiagnosticSource))
 const customSearchSource = computed(() => calibrations.value.find(row => row.taskId === experimentSource.value)?.runConfig.calibration?.searchParameters != null)
 const minimumBudget = computed(() => {
   const optimizer = calibrations.value.find(row => row.taskId === experimentSource.value)?.runConfig?.calibration?.optimizer
@@ -118,7 +119,7 @@ async function refresh(propagateError = false) {
     const catalog = await modelApi('routing-versions'); const listing = await modelApi('tasks')
     const product = spatial.value?.bundleVersionId === input ? spatial.value : await modelApi(`spatial-products?bundleVersionId=${encodeURIComponent(input)}`, { timeoutMs: 30000 })
     if (disposed || token !== revision || key !== app.contextKey || input !== app.selectedInputBundleVersionId) return
-    versions.value = catalog.versions; tasks.value = listing.tasks.filter(row => row.contextKey === key)
+    versions.value = catalog.versions.filter(row => !row.searchReferenceOnly); tasks.value = listing.tasks.filter(row => row.contextKey === key)
     if (!editVersion.value || !versions.value.some(row => row.routingVersionId === editVersion.value)) { editVersion.value = app.selectedRoutingVersionId; loadRouting() }
     if (spatial.value !== product) spatial.value = product
     const selected = inspected.value?.taskId || route.query.task
@@ -141,7 +142,23 @@ function parseList(value) { const fields = value.split(/[,，]/).map(item => ite
 async function submitWorkflow() { const row = await mutate(() => { const source = calibrations.value.find(item => item.taskId === experimentSource.value); if (!source) throw new Error('来源率定任务已不可用，请重新选择。'); const base = JSON.parse(JSON.stringify(source.runConfig)); base.calibration.optimizer.maxEvaluations = budget.value; return modelApi('tasks', { method: 'POST', body: { requestId: uniqueRequestId('WORKFLOW'), runType: 'productionWorkflow', baseRequest: base, warmupYear: warmupYear.value, yearGroups: Object.fromEntries(yearLabels.map(group => [group.id, parseList(yearText[group.id])])), wlmUpperBounds: parseList(workflowBounds.value), seeds: parseList(workflowSeeds.value) } }) }); if (row) { await inspect(row); message.value = '模型综合检验已提交。' } }
 async function operate(row, command) { await mutate(() => modelApi(`tasks/${row.taskId}/${command}`, { method: 'POST', body: {} })) }
 async function inspect(row, propagateError = false) { const token = ++inspectRevision, key = app.contextKey; if (inspected.value?.taskId !== row.taskId) { result.value = null; log.value = '' } inspected.value = row; try { const logs = await modelApi(`tasks/${row.taskId}/log`); const answer = ['completed','archived'].includes(row.status) ? await modelApi(`tasks/${row.taskId}/result`) : null; if (!disposed && token === inspectRevision && key === app.contextKey) { log.value = logs.tail; result.value = answer } } catch (failure) { if (token === inspectRevision && !disposed && key === app.contextKey) error.value = failure.message; if (propagateError === true) throw failure } }
-function adoptCandidate() { error.value = ''; message.value = ''; const base = inspected.value.runConfig.baseRequest; if (calibration.running) { error.value = '率定工作区正在计算。'; return } if (base.context.contextKey !== app.contextKey || base.inputs.bundleVersionId !== app.selectedInputBundleVersionId || base.routing.versionId !== app.selectedRoutingVersionId) { error.value = '工作区上下文、输入或汇流版本与实验不同，不能直接采用。'; return } calibration.setContext(app.basinId, app.modelScale, app.modelConfigId); calibration.params = { ...result.value.bestParameters }; calibration.paramVersion = result.value.parameterVersionId; calibration.markNeedsRun('参数已更新，请重新计算。'); calibration.saveCurrentWorkspace(); app.updateWorkContext({ parameterVersionId: result.value.parameterVersionId }); message.value = '候选参数已载入率定工作区。' }
+async function adoptCandidate() {
+  error.value = ''; message.value = ''
+  if (calibration.running || busy.value) { error.value = '率定工作区正在计算。'; return }
+  const context = app.contextKey, version = result.value?.parameterVersionId
+  if (!version || inspected.value?.runConfig?.context?.contextKey !== context) { error.value = '候选方案与当前流域不一致。'; return }
+  busy.value = true
+  try {
+    const { versions } = await modelApi('parameter-versions')
+    if (app.contextKey !== context) throw new Error('工作区已切换，请在原流域采用方案。')
+    app.projectData.backendParameterVersions = versions
+    calibration.setContext(app.basinId, app.modelScale, app.modelConfigId)
+    if (await calibration.loadVersion(version) !== true) throw new Error(calibration.runMessage || '候选方案尚未登记。')
+    app.updateWorkContext({ parameterVersionId: version })
+    message.value = '已采用完整参数方案，蒸散发、初态和汇流条件一并载入。'
+  } catch (failure) { error.value = failure.message }
+  finally { busy.value = false }
+}
 watch(() => route.query.task, () => { inspected.value = null; result.value = null; refresh() })
 watch(() => [app.contextKey, app.selectedInputBundleVersionId], () => { revision++; inspectRevision++; clearTimeout(poll); tasks.value = []; spatial.value = null; inspected.value = null; result.value = null; parameters.value = null; editVersion.value = ''; pointSource.value = ''; experimentSource.value = ''; error.value = ''; message.value = ''; refresh() })
 onMounted(refresh)

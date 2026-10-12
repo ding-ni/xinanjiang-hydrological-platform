@@ -4,8 +4,14 @@ export function searchCoordinates(params) {
 }
 
 export function selectedSearchParameters(definitions, keys = null) {
-  return Object.fromEntries(definitions.filter(row => keys == null || keys.includes(row.key))
+  return Object.fromEntries(definitions.filter(row => !row.unavailable && (keys == null || keys.includes(row.key)))
     .map(row => [row.key, { minimum: row.minimum, maximum: row.maximum }]))
+}
+
+export function routingSearchCoordinates(payload = {}) {
+  const xs = [...new Set(Object.values(payload.reach_muskingum || {}).map(row => Number(row.x)))]
+  return { ...Object.fromEntries(['RS', 'RI', 'RG'].map(key => [`${key}_k_hours`, payload.default_slope_k_hours?.[key]])),
+    muskingum_k_scale: 1, muskingum_x: xs.length === 1 && Number.isFinite(xs[0]) ? xs[0] : null }
 }
 
 export function searchSelectionError(selection, definitions, params, strategy) {
@@ -17,6 +23,7 @@ export function searchSelectionError(selection, definitions, params, strategy) {
   for (const key of keys) {
     const definition = definitions.find(row => row.key === key)
     if (!definition) return `${key} 未登记为搜索参数`
+    if (definition.unavailable) return definition.unavailable
     const bounds = selection[key]
     if (!bounds || typeof bounds !== 'object' || Object.keys(bounds).sort().join(',') !== 'maximum,minimum') return `${definition.symbol} 需要完整的搜索下限和上限`
     const { minimum: lo, maximum: hi } = bounds

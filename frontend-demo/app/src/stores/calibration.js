@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { trialConditions } from '@/services/manualCalibrationService'
+import { physicalFloodGroups } from '@/services/calibrationSubmissionService'
 import {
   DEFAULT_PARAMS,
   VERSION_PRESETS,
@@ -13,7 +14,7 @@ import { useTasksStore } from '@/stores/tasks'
 import { useAppStore } from '@/stores/app'
 import { registerCalibrationResult, parameterLibraryFor } from '@/services/parameterLibraryService'
 import { useStateStore } from '@/stores/state'
-import { modelApi } from '@/services/modelBackendService'
+import { modelApi, normalizeBackendTask } from '@/services/modelBackendService'
 import { saveBusinessDraft } from '@/services/workspaceService'
 import { mergeBackendFloodEvents, registeredBackendEventSelection } from '@/services/backendEventCatalogService'
 import { cloneWorkspaceValue, restoreWorkspaceEventRecords } from '@/services/workspaceSnapshotService'
@@ -80,12 +81,14 @@ function criteriaTemplate() {
   return {
     metrics: {
       nse: true,
+      kge: false,
       peak: true,
       time: true,
       volume: false
     },
     weights: {
       nse: 0.5,
+      kge: 0.2,
       peak: 0.25,
       time: 0.25,
       volume: 0.1
@@ -95,6 +98,12 @@ function criteriaTemplate() {
       peakTimeHours: 2
     }
   }
+}
+
+function normalizedCriteria(value = {}) {
+  const defaults = criteriaTemplate()
+  return { ...defaults, ...clonePlain(value), metrics: { ...defaults.metrics, ...value.metrics },
+    weights: { ...defaults.weights, ...value.weights }, tolerances: { ...defaults.tolerances, ...value.tolerances } }
 }
 
 const EVENT_OVERRIDE_STORAGE = 'hydro_flood_event_overrides_v1:'
@@ -283,7 +292,13 @@ function createWorkspace(context) {
     searchParameters: null,
     calibrationTarget: 'runoff',
     routingSearchParameters: null,
+    jointProfile: 'reference-16', statePolicy: 'independent-warmup',
+    scienceVersionId: null, scienceDescriptor: null, evaporationMode: 'constant-zero',
+    continuousOrigin: null, requiredInputBundleVersionId: null,
+    candidateWarmupHours: null,
     searchSeed: 42,
+    optimizerSettings: {}, sourcePlan: null, sourcePlanRequestTemplate: null, originalCalibrationPlan: null, originalPlanChanged: false,
+    searchParameterOrder: null, eventSplitSeed: 42, eventAssignment: null,
     params,
     baseline: { ...params },
     operationMode: 'calibration',
@@ -337,7 +352,11 @@ const WORKSPACE_FIELDS = [
   'searchParameters',
   'calibrationTarget',
   'routingSearchParameters',
+  'jointProfile', 'statePolicy', 'scienceVersionId', 'scienceDescriptor', 'evaporationMode',
+  'continuousOrigin', 'requiredInputBundleVersionId',
+  'candidateWarmupHours',
   'searchSeed',
+  'optimizerSettings', 'sourcePlan', 'sourcePlanRequestTemplate', 'originalCalibrationPlan', 'originalPlanChanged', 'searchParameterOrder', 'eventSplitSeed', 'eventAssignment',
   'params',
   'baseline',
   'operationMode',
@@ -379,6 +398,7 @@ function restoreWorkspace(base, saved) {
     if (saved[key] !== undefined) restored[key] = clonePlain(saved[key])
   })
   Object.assign(restored, restoreWorkspaceEventRecords(base.events, saved.events, base, saved, saved.quarantinedEvents))
+  restored.criteria = normalizedCriteria(restored.criteria)
   if (!['selinco', 'nananxi-xufan'].includes(base.domainId) && ['新安江大桥', '兰江口', '寿昌控制断面'].includes(restored.section)) {
     restored.section = ''
     restored.params = { ...base.params }
@@ -560,7 +580,7 @@ export const useCalibrationStore = defineStore('calibration', {
         workspace.runMessage = `真实连续模拟完成，末状态 ${result.endStateVersionId}；仅供诊断。`
       } else if (request.runType === 'calibration') {
         if (result.calibrationTarget !== 'routing' && !workspace.trialRecords.some(row => row.taskId === task.taskId)) {
-          workspace.trialRecords.push({ taskId: task.taskId, conditions: trialConditions(request),
+          workspace.trialRecords.push({ taskId: task.taskId, conditions: trialConditions(request, result),
             parameterVersionId: result.parameterVersionId, parameters: { ...result.bestParameters },
             completedAt: task.completedAt, manual: result.evaluationMode === 'manual', visible: true })
         }
@@ -723,6 +743,7 @@ export const useCalibrationStore = defineStore('calibration', {
       this.saveCurrentWorkspace()
     },
     setWarmupDays(value) {
+      if (this.scienceVersionId) return
       const days = Math.max(1, Math.round(Number(value) || 1))
       if (this.warmupDays === days) return
       this.warmupDays = days
@@ -743,6 +764,21 @@ export const useCalibrationStore = defineStore('calibration', {
       this.saveCurrentWorkspace()
     },
     loadFromTaskConfig(runType, config = {}) {
+      this.optimizerSettings = clonePlain(config.optimizerSettings || {})
+      this.sourcePlan = clonePlain(config.sourcePlan || null)
+      this.sourcePlanRequestTemplate = this.sourcePlan ? clonePlain(config) : null
+      this.searchParameterOrder = clonePlain(config.searchParameterOrder || null)
+      this.originalPlanChanged = false
+      this.eventAssignment = clonePlain(config.eventAssignment || null)
+      this.jointProfile = config.jointProfile || config.calibration?.jointProfile || 'reference-16'
+      this.statePolicy = config.statePolicy || config.calibration?.statePolicy || 'independent-warmup'
+      this.scienceVersionId = config.scienceVersionId || config.science?.versionId || null
+      this.scienceDescriptor = clonePlain(config.scienceDescriptor || (this.scienceVersionId ? { ...config.lineage, scienceVersionId: this.scienceVersionId } : null))
+      this.evaporationMode = config.evaporationMode || config.inputs?.evaporation?.mode || 'constant-zero'
+      this.continuousOrigin = config.continuousOrigin || config.calibration?.continuousOrigin || config.period?.continuousOrigin || config.scienceDescriptor?.resolvedContinuousOrigin || null
+      this.requiredInputBundleVersionId = config.requiredInputBundleVersionId || config.inputs?.bundleVersionId || null
+      this.candidateWarmupHours = Number.isFinite(config.actualWarmupHours) ? config.actualWarmupHours
+        : Number.isFinite(config.warmupDays) && this.scienceVersionId ? config.warmupDays * 24 : null
       if (config.params) {
         this.params = { ...(this.backendContractVersion ? {} : DEFAULT_PARAMS), ...clonePlain(config.params) }
         this.baseline = { ...this.params }
@@ -773,14 +809,16 @@ export const useCalibrationStore = defineStore('calibration', {
         if (config.warmupDays) this.warmupDays = config.warmupDays
         if (Array.isArray(config.events)) {
           const selected = new Map(config.events.map((row) => [row.id, row]))
-          this.events = this.events.map((row) => normalizeFloodEvent({ ...row, ...(selected.get(row.id) || {}), purpose: selected.get(row.id)?.purpose || '未使用' }))
+          this.events = this.events.map((row) => normalizeFloodEvent({ ...row, ...(selected.get(row.id) || {}),
+            purpose: selected.get(row.id)?.purpose || '未使用', status: row.status, runtimeRegistered: row.runtimeRegistered,
+            registeredStatus: row.registeredStatus }))
         }
-        if (config.criteria) this.criteria = clonePlain(config.criteria)
+        if (config.criteria) this.criteria = normalizedCriteria(config.criteria)
         if (config.eventId) this.setEvent(config.eventId)
         if (config.period) {
-          Object.entries(config.period).forEach(([key, value]) => {
-            if (key in this) this[key] = value
-          })
+          for (const key of ['calibrationStart', 'calibrationEnd', 'validationStart', 'validationEnd', 'independentStart', 'independentEnd']) {
+            if (config.period[key] !== undefined) this[key] = config.period[key]
+          }
         }
         this.runResult = null
         this.runMessage = '已从运行档案带入率定条件，请复核后执行。'
@@ -794,10 +832,19 @@ export const useCalibrationStore = defineStore('calibration', {
     markNeedsRun(message = '设置已更新，请重新率定。') {
       if (!backendWaits.has(this.activeTaskId)) this.running = false
       this.runStatus = 'needs-run'
-      this.runMessage = message
+      this.runMessage = this.originalPlanChanged ? `原方案已调整。${message}` : message
       this.dirty = true
       if (this.runResult) this.runResult = { ...this.runResult, isCurrent: false }
       if (this.simulationResult) this.simulationResult = { ...this.simulationResult, isCurrent: false }
+    },
+    detachOriginalPlan() {
+      if (!this.sourcePlan) return
+      this.sourcePlan = null
+      this.sourcePlanRequestTemplate = null
+      this.originalPlanChanged = true
+      this.searchParameterOrder = null
+      this.optimizerSettings = {}
+      this.eventAssignment = null
     },
     setParam(key, value) {
       if (!(key in this.params)) return
@@ -805,6 +852,7 @@ export const useCalibrationStore = defineStore('calibration', {
       let normalized = Number(value)
       if (!Number.isFinite(normalized)) return
       if (definition) normalized = Math.min(definition.max, Math.max(definition.min, normalized))
+      this.detachOriginalPlan()
       this.params[key] = definition?.step < 1 ? +normalized.toFixed(this.backendContractVersion ? 8 : 3) : +normalized.toFixed(1)
       this.markNeedsRun('参数已调整，请重新率定。')
       this.saveCurrentWorkspace()
@@ -813,17 +861,55 @@ export const useCalibrationStore = defineStore('calibration', {
       this.params = { ...this.baseline }
       this.markNeedsRun('已恢复参数方案，请重新率定。')
     },
-    loadVersion(version) {
+    async loadVersion(version) {
       if (this.backendContractVersion) {
         const app = useAppStore()
         const row = parameterLibraryFor(app.projectData, this.domainId, this.modelScale, app.activeContext).simulationRateLibrary?.versions?.find((item) => item.id === version)
         const parameters = row?.parameters || (version === app.backendCase?.parameterVersionId ? app.backendCase.parameters : null)
-        if (!parameters) return
+        if (!parameters) { this.runMessage = '参数方案尚未登记，请刷新后重新选择。'; return false }
+        if (row?.calibrationTarget === 'joint' && !row.routingCandidate?.routingVersionId) {
+          this.runMessage = '联合候选缺少汇流版本，不能仅采用产流参数。'
+          return false
+        }
+        const requiredInput = row?.requiredInputBundleVersionId || row?.inputBundleVersionId || row?.lineage?.inputBundleVersionId || null
+        if (requiredInput) {
+          const requestedContext = this.contextKey
+          try {
+            await app.selectInputBundleVersion(requiredInput)
+            if (this.contextKey !== requestedContext) throw new Error('工作区已切换，请在原案例重新选择该候选')
+          } catch (error) {
+            this.runMessage = `该候选要求资料 ${requiredInput}；未载入候选：${error.message}`
+            return false
+          }
+        }
         this.params = { ...parameters }; this.baseline = { ...parameters }; this.paramVersion = version
+        this.sourcePlan = null; this.sourcePlanRequestTemplate = null; this.originalCalibrationPlan = clonePlain(row?.originalCalibrationPlan || null)
+        this.originalPlanChanged = false; this.searchParameterOrder = null; this.optimizerSettings = {}
+        this.requiredInputBundleVersionId = requiredInput
+        this.candidateWarmupHours = Number.isFinite(row?.actualWarmupHours) ? row.actualWarmupHours : null
         if (row?.routingCandidate?.routingVersionId) app.updateWorkContext({ selectedRoutingVersionId: row.routingCandidate.routingVersionId })
-        this.markNeedsRun('已选择真实参数版本，请重新计算。')
+        if (row?.science?.versionId) {
+          this.scienceVersionId = row.science.versionId
+          this.scienceDescriptor = clonePlain({ ...row.scienceSnapshot?.manifest, ...row.lineage,
+            scienceVersionId: row.science.versionId, petMode: row.petMode,
+            statePolicy: row.scienceSnapshot?.manifest?.statePolicy || row.scienceDescriptor?.statePolicy || { strategy: row.statePolicy },
+            resolvedContinuousOrigin: row.continuousOrigin || row.scienceDescriptor?.resolvedContinuousOrigin || null })
+          this.statePolicy = row.statePolicy || this.scienceDescriptor.statePolicy?.strategy || 'independent-warmup'
+          this.warmupDays = (this.candidateWarmupHours ?? (Number(this.scienceDescriptor.statePolicy?.warmupHours) || 168)) / 24
+          this.evaporationMode = 'science-version'
+        } else {
+          this.scienceVersionId = null; this.scienceDescriptor = null
+          this.statePolicy = 'independent-warmup'; this.evaporationMode = 'monthly-climatology-assumption'
+        }
+        this.continuousOrigin = row?.continuousOrigin || row?.scienceDescriptor?.resolvedContinuousOrigin || null
+        if (row?.calibrationTarget === 'joint') {
+          this.calibrationTarget = 'joint'; this.searchStrategy = 'joint'
+          this.jointProfile = row.jointProfile || 'reference-16'
+          this.searchParameters = null; this.routingSearchParameters = null
+        }
+        this.markNeedsRun(row?.science?.versionId ? '已采用产流、汇流与科学条件，请复核后重新计算。' : '已选择真实参数版本，请重新计算。')
         this.saveCurrentWorkspace()
-        return
+        return true
       }
       const base = String(version).replace(/-tune.*$/, '')
       const preset = ['selinco', 'nananxi-xufan'].includes(this.domainId) ? VERSION_PRESETS[base] || DEFAULT_PARAMS : {}
@@ -831,6 +917,33 @@ export const useCalibrationStore = defineStore('calibration', {
       this.params = { ...preset }
       this.baseline = { ...preset }
       this.markNeedsRun('已切换参数方案，请重新率定。')
+    },
+    async restoreOriginalPlan(version, operation = 'search') {
+      if (this.running) return false
+      const app = useAppStore()
+      const context = this.contextKey
+      try {
+        const { plan, request } = await modelApi(`parameter-versions/${encodeURIComponent(version)}/original-plan?operation=${operation}`)
+        if (!plan || !request || request.context?.contextKey !== context) throw new Error('原方案与当前流域不一致')
+        await app.selectInputBundleVersion(request.inputs.bundleVersionId)
+        if (this.contextKey !== context) throw new Error('工作区已切换，请在原流域恢复方案')
+        app.updateWorkContext({ selectedRoutingVersionId: request.routing.versionId })
+        this.loadFromTaskConfig('eventCalibration', normalizeBackendTask({ runConfig: request }).runConfig)
+        this.originalCalibrationPlan = clonePlain(plan)
+        this.sourcePlan = clonePlain(request.sourcePlan)
+        this.sourcePlanRequestTemplate = clonePlain(request)
+        this.paramVersion = version
+        this.eventSplitSeed = plan.sourceSplitSeed ?? 42
+        this.eventAssignment = clonePlain(request.period.eventAssignment || null)
+        this.candidateWarmupHours = plan.actualWarmupHours ?? request.period.warmupDays * 24
+        this.initialStateVersionId = null
+        this.markNeedsRun('已恢复原方案的起始参数、洪水划分和搜索设置，请复核后确认率定。')
+        this.saveCurrentWorkspace()
+        return operation === 'fixed-replay' ? request : true
+      } catch (error) {
+        this.runMessage = `未恢复原方案：${error.message}`
+        return false
+      }
     },
     setSection(section) {
       if (this.section === section) return
@@ -870,6 +983,7 @@ export const useCalibrationStore = defineStore('calibration', {
       const event = this.events.find((item) => item.id === id)
       if (!event || event.status === 'inactive' || !FLOOD_EVENT_PURPOSES.includes(purpose)) return
       if (event.purpose === purpose) return
+      this.detachOriginalPlan()
       event.purpose = purpose
       this.markNeedsRun('洪水场次用途已调整，请重新率定。')
       this.syncEventCatalog()
@@ -884,6 +998,7 @@ export const useCalibrationStore = defineStore('calibration', {
         changed += 1
       })
       if (changed) {
+        this.detachOriginalPlan()
         this.markNeedsRun('洪水场次用途已调整，请重新率定。')
         this.syncEventCatalog()
       }
@@ -1066,22 +1181,26 @@ export const useCalibrationStore = defineStore('calibration', {
     },
     setObjectiveMetric(key, enabled) {
       if (!(key in this.criteria.metrics)) return
+      this.detachOriginalPlan()
       this.criteria.metrics[key] = Boolean(enabled)
       this.markNeedsRun('评价指标已调整，请重新率定。')
     },
     setObjectiveWeight(key, value) {
       if (!(key in this.criteria.weights)) return
+      this.detachOriginalPlan()
       const normalized = Math.max(0, Math.min(1, Number(value) || 0))
       this.criteria.weights[key] = +normalized.toFixed(2)
       this.markNeedsRun('评价指标权重已调整，请重新率定。')
     },
     setObjectiveTolerance(key, value) {
       if (!(key in this.criteria.tolerances)) return
+      this.detachOriginalPlan()
       this.criteria.tolerances[key] = Math.max(0, Number(value) || 0)
       this.markNeedsRun('参考阈值已调整，请重新率定。')
     },
     setOptimizerConfig(key, value) {
       if (!['algorithm', 'maxEvaluations', 'populationSize', 'searchStrategy', 'searchSeed'].includes(key)) return
+      this.detachOriginalPlan()
       if (key === 'algorithm' || key === 'searchStrategy') {
         this[key] = String(value)
       } else if (key === 'searchSeed') {
@@ -1094,24 +1213,64 @@ export const useCalibrationStore = defineStore('calibration', {
       this.saveCurrentWorkspace()
     },
     setSearchParameters(value) {
+      this.detachOriginalPlan()
       this.searchParameters = clonePlain(value)
       this.markNeedsRun('率定参数范围已调整。')
       this.saveCurrentWorkspace()
     },
     setCalibrationTarget(value) {
-      if (!['runoff', 'routing'].includes(value) || this.running) return
+      if (!['runoff', 'routing', 'joint'].includes(value) || this.running) return
+      this.detachOriginalPlan()
       this.calibrationTarget = value
-      if (value === 'routing') this.searchStrategy = 'joint'
+      if (value !== 'runoff') this.searchStrategy = 'joint'
       this.markNeedsRun('率定参数组已调整。')
       this.saveCurrentWorkspace()
     },
     setRoutingSearchParameters(value) {
+      this.detachOriginalPlan()
       this.routingSearchParameters = clonePlain(value)
       this.markNeedsRun('坡面汇流搜索范围已调整。')
       this.saveCurrentWorkspace()
     },
+    setJointProfile(value) {
+      if (!['reference-16', 'fixed-kc-c-14', 'all-physical-16'].includes(value) || this.running) return
+      this.detachOriginalPlan()
+      if (value !== this.jointProfile) { this.searchParameters = null; this.routingSearchParameters = null; this.sourcePlan = null; this.optimizerSettings = {} }
+      this.jointProfile = value
+      if (this.searchParameters && value === 'fixed-kc-c-14') {
+        const { KC, C, ...remaining } = this.searchParameters
+        this.searchParameters = remaining
+      }
+      this.markNeedsRun('联合率定预设已调整，请复核当前搜索参数。')
+      this.saveCurrentWorkspace()
+    },
+    setScienceVersion(descriptor) {
+      const previous = this.scienceVersionId
+      if (previous !== (descriptor?.scienceVersionId || null)) this.detachOriginalPlan()
+      this.scienceVersionId = descriptor?.scienceVersionId || null
+      if (!descriptor || previous !== this.scienceVersionId) this.candidateWarmupHours = null
+      this.scienceDescriptor = clonePlain(descriptor || null)
+      if (descriptor) {
+        this.statePolicy = descriptor.statePolicy?.strategy || 'independent-warmup'
+        this.warmupDays = (this.candidateWarmupHours ?? (Number(descriptor.statePolicy?.warmupHours) || 168)) / 24
+        this.evaporationMode = 'science-version'
+        this.continuousOrigin = descriptor.resolvedContinuousOrigin || (previous === this.scienceVersionId ? this.continuousOrigin : null)
+      } else { this.evaporationMode = 'constant-zero'; this.continuousOrigin = null }
+      this.markNeedsRun('科学条件已调整，请重新计算。')
+      this.saveCurrentWorkspace()
+    },
+    setScienceField(key, value) {
+      if (!['statePolicy', 'evaporationMode'].includes(key) || this.running) return
+      if (this.scienceVersionId) return
+      this.detachOriginalPlan()
+      this[key] = value
+      if (key === 'statePolicy' && value !== 'continuous-origin') this.continuousOrigin = null
+      this.markNeedsRun('预热与蒸散发条件已调整，请重新计算。')
+      this.saveCurrentWorkspace()
+    },
     setPeriod(key, value) {
       if (!['calibrationStart', 'calibrationEnd', 'validationStart', 'validationEnd', 'independentStart', 'independentEnd'].includes(key)) return
+      this.detachOriginalPlan()
       this[key] = value
       this.markNeedsRun('率定时段已调整，请重新率定。')
     },
@@ -1126,6 +1285,9 @@ export const useCalibrationStore = defineStore('calibration', {
         const counts = this.eventCounts
         if (!counts.calibration) errors.push('至少选择一场率定洪水')
         if (!counts.validation) errors.push('至少选择一场验证洪水')
+        const physical = physicalFloodGroups(this.events.filter(row => row.status === 'active' && (!this.backendContractVersion || row.runtimeRegistered === true)))
+        if (physical.conflicts.length) errors.push(`重叠洪水不能跨用途：${physical.conflicts.map(group => group.memberEventIds.join('、')).join('；')}`)
+        if (physical.errors.length) errors.push(physical.errors[0])
       } else {
         if (!this.calibrationStart || !this.calibrationEnd || this.calibrationStart >= this.calibrationEnd) errors.push('率定时段不完整')
         if (!this.validationStart || !this.validationEnd || this.validationStart >= this.validationEnd) errors.push('验证时段不完整')

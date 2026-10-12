@@ -163,7 +163,15 @@ with sync_playwright() as playwright:
             check('sql-source-backend-spatialization-register-select')
 
             page.goto(args.url + '/#/calibration')
+            page.get_by_role('button', name='参数率定', exact=False).click()
+            # This uses the new rain product, rather than replaying a previous
+            # candidate that is bound to its original immutable input bundle.
+            page.locator('#cal-version').select_option('NANANXI_XAJ_REFERENCE_V1')
+            expect(page.locator('#cal-version')).to_be_enabled(timeout=60000)
+            expect(page.locator('#cal-version')).to_have_value('NANANXI_XAJ_REFERENCE_V1')
+            page.locator('#science-version').select_option('')
             page.get_by_role('button', name='连续模拟', exact=False).first.click()
+            expect(page.get_by_label('预热期（天）', exact=True)).to_be_enabled()
             page.get_by_label('开始时间', exact=True).fill('2017-06-23T00:00')
             page.get_by_label('结束时间', exact=True).fill('2017-06-24T23:00')
             page.get_by_label('预热期（天）', exact=True).fill('1')

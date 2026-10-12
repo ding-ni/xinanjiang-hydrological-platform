@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "upgradeId": "BACKEND-20261012-SELECTIVE",
+  "baselineManifest": "历史归档/统一系统接入基线/20261009-133316/baseline-manifest.json",
+  "baselineManifestSha256": "301AF0FE18384EFC984BE17DBA823779BC4B869CE0EA715EC1891B403A137C70",
+  "sourceDeliveryRoot": "后端文件/南安溪产流汇流模型_20261012终结版/南安溪产流汇流模型_20261012终结版/空间可视化人工调参版/model",
+  "policy": "Unlisted baseline files retain original hashes; listed files use explicit upgraded hashes.",
+  "baselineFileCount": 312,
+  "changedFileCount": 6,
+  "files": [
+    {
+      "path": "code/calibration_platform/algorithms.py",
+      "operation": "MODIFIED",
+      "baselineSha256": "F6DAAED2AEA57B223AEDEA43C51862AD1D01ADA041346771CE49BE61601F32B6",
+      "sha256": "1FFCAB81FD042A735F2FC4D34AD87EA8CD01581B2D512688F6A0DF4F2DA64ED9",
+      "bytes": 7014,
+      "origin": "UNIFIED_CORRECTION",
+      "sourcePath": "后端文件/南安溪产流汇流模型_20261012终结版/南安溪产流汇流模型_20261012终结版/空间可视化人工调参版/model/code/calibration_platform/algorithms.py",
+      "sourceSha256": "09CE937CF76D7E2C7639D05769061B8407F95E44B5E986639BE3E6162FB3ED66",
+      "reason": "Restore original CURRENT_ACTIVE_PARAMETERS population seed and preserve budgeted incumbent search"
+    },
+    {
+      "path": "code/calibration_platform/routing_kernel.py",
+      "operation": "ADDED",
+      "baselineSha256": null,
+      "sha256": "B413D29BFB485FF7095A64B0C6CBDA79A241E22A4DB603AC78913E3C581EE4F7",
+      "bytes": 1381,
+      "origin": "UNIFIED_CORRECTION",
+      "sourcePath": "后端文件/南安溪产流汇流模型_20261012终结版/南安溪产流汇流模型_20261012终结版/空间可视化人工调参版/model/code/calibration_platform/routing_kernel.py",
+      "sourceSha256": "973D6C2C6F43F9D5618F1E8AB0D2A71DDC16AAD5ADD94576FDB29F4F1639F203",
+      "reason": "20261012 recurrence with corrected per-unit per-component slope decay"
+    },
+    {
+      "path": "code/runoff_platform/core/numeric_compilation.py",
+      "operation": "ADDED",
+      "baselineSha256": null,
+      "sha256": "2521B85C249138D5D1DDBDDC3F8BDB252A302A8A258A319AA75D07D56BDF1B23",
+      "bytes": 1460,
+      "origin": "UNIFIED_CORRECTION",
+      "sourcePath": null,
+      "sourceSha256": null,
+      "reason": "Shared optional compilation; cache restricted to runtime and safe Python fallback"
+    },
+    {
+      "path": "code/runoff_platform/models/xaj_vectorized.py",
+      "operation": "MODIFIED",
+      "baselineSha256": "372341FD6BCE1EFD468B2C5E670E86AFD7FBAE6B298180D3149ACAC34A8933BE",
+      "sha256": "F7C8CE9090EEDDEC753A2B9420A7FD4F90867F9ADF4FF353A545C0C3B44A096A",
+      "bytes": 10973,
+      "origin": "UNIFIED_CORRECTION",
+      "sourcePath": "后端文件/南安溪产流汇流模型_20261012终结版/南安溪产流汇流模型_20261012终结版/空间可视化人工调参版/model/code/runoff_platform/models/xaj_vectorized.py",
+      "sourceSha256": "E91D08CB6244D7D5FF1F3A32D4AEC98CFFC3AAC5F631D484A598410659254001",
+      "reason": "20261012 numeric kernel and 13 diagnostics; unified runtime compilation cache"
+    },
+    {
+      "path": "data_interface/spatial/grid_to_unit_weight_control_split_v2.csv",
+      "operation": "ADDED",
+      "baselineSha256": null,
+      "sha256": "00B66A317A1BB7460744C1FF7A90FED5304E91E50C6079F5D96193E1AC00D4B9",
+      "bytes": 24572,
+      "origin": "UNIFIED_CORRECTION",
+      "sourcePath": null,
+      "sourceSha256": null,
+      "reason": "Preserved original control-split mapping copied during initial unified integration"
+    },
+    {
+      "path": "scripts/run_formal_multievent_calibration.py",
+      "operation": "MODIFIED",
+      "baselineSha256": "8AB375DEE763008C93D1BF747450C4EFD0DDD5699B32864CF94AC80D44739A77",
+      "sha256": "67E5EC32FF3D733DBC3CC1FAACEA22CAD4599C000C80DFBD9B62BBEBC3609C4C",
+      "bytes": 60562,
+      "origin": "UNIFIED_CORRECTION",
+      "sourcePath": "后端文件/南安溪产流汇流模型_20261012终结版/南安溪产流汇流模型_20261012终结版/空间可视化人工调参版/model/scripts/run_formal_multievent_calibration.py",
+      "sourceSha256": "0132200F50CFFDB27E564F6884C0314894F00F791373169FE8EB1104CA62FD9A",
+      "reason": "Selective FastRoutingRunner upgrade: resolved control node, unit K parser, hourly guard and compiled recurrence"
+    }
+  ]
+}

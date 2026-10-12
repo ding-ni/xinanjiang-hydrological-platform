@@ -31,13 +31,13 @@ class RoutingVersions:
         row = read_json(safe_task(self.root, version).with_suffix(".json"))
         if row.get("routingVersionId") != version or row.get("parametersSHA256") != payload_digest(row["parameters"]):
             raise ValueError("汇流版本摘要不一致")
-        self.validate(row["parameters"])
+        self.validate(row["parameters"], allow_search_reference=row.get('searchReferenceOnly') is True)
         return row
 
     def list(self):
         return {"versions": [self.resolve(), *[self.resolve(p.stem) for p in sorted(self.root.glob("*.json"))]]}
 
-    def validate(self, payload):
+    def validate(self, payload, allow_search_reference=False):
         reference = self.resolve()["parameters"]
         if not isinstance(payload, dict) or set(payload) != set(reference):
             raise ValueError("汇流参数字段必须与参考配置一致")
@@ -66,7 +66,7 @@ class RoutingVersions:
             if not isinstance(row, dict) or set(row) != {"k_hours", "x"}:
                 raise ValueError(f"河段 {name} 参数字段错误")
             k, x = row["k_hours"], row["x"]
-            if not numeric(k, 0.5, 720) or not numeric(x, 0, 0.5) or not 2 * k * x <= 1 <= 2 * k * (1 - x):
+            if not numeric(k, 0.5, 720) or not numeric(x, 0, 0.5) or (not allow_search_reference and not 2 * k * x <= 1 <= 2 * k * (1 - x)):
                 raise ValueError(f"河段 {name} 不满足逐小时 Muskingum 稳定条件 2KX ≤ 1 ≤ 2K(1-X)")
 
     def create(self, request):

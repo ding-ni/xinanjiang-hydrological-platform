@@ -1,6 +1,6 @@
 # 输入产品阶段契约（2026-10-10）
 
-本轮仅本机诊断，所有产物 productionEligible=false；原交付/vendor 只读，旧资料和版本不覆盖、不删除。
+本轮仅本机诊断，所有产物 productionEligible=false；原交付只读，vendor 数值升级逐项登记，旧资料和版本不覆盖、不删除。
 
 ## HTTP 与浏览选择
 
@@ -52,3 +52,8 @@ server.py 负责同源 HTTP 和 DATA/JOB 两类任务编排；InputService、模
 固定默认保持基线 Forcing/Observation 常量以及模型输入名称。InputService 私有bundle可选；直接构造的 model_root 测试夹具不强制接 registry。实际 HTTP 输入查询（含省略 bundleVersionId）每次先 resolve 校验完整性，再按版本与摘要复用 reader；缓存不能跳过摘要核验或混读变动后的资料。生成产品仍sourceType=model-qc（模型QC数据通道）；但公开 metadata/qualityNotes/sourceLabel 必须明确用户来源、未独立验收，不能将用户声明伪称原始实测认证。
 
 续算必须与父状态的bundleVersionId（旧无字段视为固定默认）、forcingVersion、observationVersion、PET和冻结汇流版本一致；跨资料版本需重新初始化，禁止无提示继承。已有离线历史结果保留其原版本，不被当前选择覆盖。
+# 20261012 MDB独立输入补充
+
+MDB在CLI中显式登记源快照，Access只连接副本；每次SELECT有单次超时、完成标记、记录数和文件摘要。查询范围为本轮所需连续区间及完整fl_code，范围外雨量/流量不声称已审计。雨量重复相同值只保留一次，冲突拒绝；非法/负值/缺记录保留缺测，只有效站参与IDW。产品仍沿现有不可变InputProducts注册，包含独立NC、观测流量、场次、质量配置和来源闭包。
+
+`manifest.forcingPolicy=STRICT_MISSING` 使用公共strict_forcing加载器；浏览和worker读取同一产品。先裁剪所需终点，再检查实际需要的历史/预热缺测。新MDB的observation_coverage包含覆盖率、最大连续缺测、涨峰退水段覆盖和部分洪量范围，不套用旧默认接受政策。覆盖门槛为暂用诊断配置，不能冒称生产标准。

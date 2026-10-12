@@ -1,6 +1,6 @@
 import { it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mergeBackendFloodEvents, registeredBackendEventSelection } from '../src/services/backendEventCatalogService.js'
+import { mergeBackendFloodEvents, registeredBackendEventSelection, currentInputFloodEvents } from '../src/services/backendEventCatalogService.js'
 import { normalizeModelInputCatalog } from '../src/services/modelInputService.js'
 import { cloneWorkspaceValue, mergeWorkspaceFloodEvents } from '../src/services/workspaceSnapshotService.js'
 import { eligibleFloodEvents, normalizeFloodEvent } from '../src/services/floodEventService.js'
@@ -49,6 +49,26 @@ function localEvent(overrides = {}) {
     ...overrides
   })
 }
+
+it('switching to a registered MDB shows only its process events while old input records stay retained', () => {
+  const old = localEvent({ id: 'xf-old-1964', eventId: 'xf-old-1964', start: '1964-04-04T00:00',
+    end: '1964-04-05T00:00', runtimeRegistered: true, registeredStatus: 'active' })
+  const current = Array.from({ length: 17 }, (_, index) => qcEvent({ id: `mdb-${index}`, eventId: `mdb-${index}`,
+    start: `2024-04-${String(index+1).padStart(2,'0')}T00:00`, end: `2024-04-${String(index+1).padStart(2,'0')}T23:00` }))
+  const snapshot = structuredClone(old)
+  const merged = mergeBackendFloodEvents([old], current)
+  const active = currentInputFloodEvents(merged, { registeredOnly: true,
+    selectedBundleVersionId: 'INPUT-MDB', registeredBundleVersionId: 'INPUT-MDB' })
+  assert.equal(active.length, 17)
+  assert.equal(active.some(row => row.start.startsWith('1964')), false)
+  assert.equal(merged.length, 18)
+  const retained = merged.find(row => row.id === old.id)
+  assert.equal(retained.runtimeRegistered, false)
+  assert.equal(retained.purpose, old.purpose)
+  assert.deepEqual(old, snapshot)
+  assert.deepEqual(currentInputFloodEvents(merged, { registeredOnly: true,
+    selectedBundleVersionId: 'INPUT-new', registeredBundleVersionId: 'INPUT-MDB' }), [])
+})
 
 it('QC statistics, time window and provenance cannot be overwritten by static event values', () => {
   const previous = localEvent()

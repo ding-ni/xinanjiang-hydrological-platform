@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1.0",
+  "purpose": "改变资料或研究条件时的可选科学验证资料清单；不作为同事17窗口方案接入的前置条件，不授予生产资格",
+  "currentScope": "SOURCE_17_WINDOW_SOLUTION_INTEGRATION",
+  "additionalEvidenceScope": "OPTIONAL_FUTURE_SCIENTIFIC_RESEARCH",
+  "projectId": "nananxi-xufan",
+  "sectionId": "70115800",
+  "reviewYears": [2021, 2022, 2023, 2024],
+  "productionEligible": false,
+  "implementationChecks": [
+    "同一输入、PET、初态和产汇流参数的率定与人工重放一致",
+    "逐单元坡面K的标准与快速汇流一致",
+    "重叠窗口共享物理轨迹并去重小时",
+    "仅率定组进入目标函数",
+    "新末状态携带实现、PET内容和科学条件摘要"
+  ],
+  "evidenceToProvide": [
+    {"item": "真实PET或有来源的ET0", "status": "AWAITING_SOURCE_DATA", "requiredFields": ["time", "pet_mm_h"], "notes": "源时间须为本地整点，说明蒸发器或ET0来源及KC折算定义；不得将假定月PET标为实测。"},
+    {"item": "2021—2024断面及调度资料", "status": "AWAITING_SOURCE_REVIEW", "notes": "补断面位置、水位流量关系、迁站与调度影响的逐年证据；旧2014/2017审查不覆盖本轮资料。"},
+    {"item": "缺测及零雨语义", "status": "AWAITING_SOURCE_REVIEW", "notes": "同站同小时冲突拒绝；负值、非法值、缺记录均保留缺测；全零站年需独立资料确认。"},
+    {"item": "未参与此前方案选择的验证时段", "status": "AWAITING_UNTOUCHED_HOLDOUT", "notes": "既有17窗口与独立组已多次被评价；另登记未用于选参的新时段后再评价泛化。"}
+  ],
+  "reportingPolicy": {
+    "objective": "EQUAL_PHYSICAL_GROUP_UNIQUE_HOURS",
+    "windowAndGroupMetricsSeparate": true,
+    "partialObservationVolume": "COMMON_VALID_HOURS_ONLY",
+    "parameterEstimate": "BEST_WITHIN_DECLARED_BUDGET",
+    "assumedPetBlocksProduction": true
+  }
+}

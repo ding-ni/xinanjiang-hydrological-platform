@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import re
+import shutil
 import threading
 import uuid
 from datetime import datetime, timedelta
@@ -179,7 +180,9 @@ class InputProducts:
         keys = ("schemaVersion", "bundleVersionId", "projectId", "resolutionId", "name", "operation",
                 "sourceType", "sourceLabel", "forcingVersion", "observationVersion", "modelInputVersion",
                 "productionEligible", "timeConvention", "coverage", "qualityNotes", "summary", "createdAt",
-                "sourceId", "sourceOrigin", "parentBundleVersionId", "sourceTaskId")
+                "sourceId", "sourceOrigin", "parentBundleVersionId", "sourceTaskId",
+                "targetCoordinatePolicy", "forcingValueDtype", "sourceReplayOnly", "sourceQcPolicy",
+                "eventQualityConfigurationSHA256", "sourceQcOrigin")
         result = {key: copy.deepcopy(manifest[key]) for key in keys if key in manifest}
         result.update(manifestSHA256=digest, registered=True, default=manifest["bundleVersionId"] == DEFAULT_BUNDLE_VERSION_ID)
         if registration:
@@ -347,6 +350,8 @@ class InputProducts:
             raise ValueError("源资料记录不能指向其他文件")
         if verify:
             self._verify_files({"files": [manifest["file"]]})
+            if manifest.get("sourceType") == "mdb":
+                self._verify_files({"files": manifest["immutableSourceFiles"]})
         public = {key: copy.deepcopy(value) for key, value in manifest.items() if key != "file"}
         public.update(sourceSHA256=manifest["file"]["sha256"], manifestSHA256=file_sha256(manifest_path), registered=True)
         public.update(start=manifest["coverage"]["start"], end=manifest["coverage"]["end"])
@@ -356,6 +361,43 @@ class InputProducts:
 
     def list_sources(self):
         return {"sources": [self.source(path.name)["public"] for path in sorted(self.sources_root.glob("SRC-*")) if path.is_dir()]}
+
+    def register_mdb_source(self, source_path, *, name, provenance_note):
+        """CLI-only immutable MDB snapshot; never connect to the original file."""
+        path = Path(source_path).resolve()
+        if not path.is_file() or path.suffix.lower() not in {".mdb", ".accdb"}:
+            raise ValueError("MDB源须为已有.mdb/.accdb文件")
+        name = _text(name, "资料名", 200)
+        provenance_note = _text(provenance_note, "来源核对说明", 2000)
+        digest = file_sha256(path)
+        source_id = "SRC-MDB-" + digest
+        folder = self.sources_root / source_id
+        with self._lock:
+            if (folder / "manifest.json").is_file():
+                return self.source(source_id)
+            folder.mkdir(parents=True, exist_ok=True)
+            target = folder / ("database" + path.suffix.lower())
+            if target.exists() and file_sha256(target) != digest:
+                raise ValueError("已有content-addressed数据库副本摘要不一致")
+            if not target.exists():
+                shutil.copyfile(path, target)
+            if file_sha256(target) != digest or file_sha256(path) != digest:
+                raise ValueError("复制期间MDB改变，拒绝登记")
+            descriptor = {"schemaVersion": "1.0", "sourceType": "mdb", "sha256": digest,
+                          "databaseFile": self.reference(target), "originalName": path.name,
+                          "missingValuePolicy": "PRESERVE_MISSING_NO_ZERO_FILL", "productionEligible": False}
+            write_json(folder / "source.json", descriptor)
+            manifest = {"schemaVersion": "1.0", "sourceId": source_id, "projectId": PROJECT_ID,
+                        "resolutionId": RESOLUTION_ID, "sourceType": "mdb", "name": name,
+                        "provenanceNote": provenance_note, "sourceLabel": "独立MDB资料快照；原文件未连接、未更改",
+                        "createdAt": now(), "productionEligible": False,
+                        "scientificAuthenticity": "SOURCE_SNAPSHOT_NOT_PRODUCTION_CERTIFIED",
+                        "coverage": {"start": None, "end": None}, "stationCount": None,
+                        "databaseSHA256": digest, "originalName": path.name,
+                        "immutableSourceFiles": [self.file_record(target)],
+                        "file": self.file_record(folder / "source.json")}
+            write_json(folder / "manifest.json", manifest)
+            return self.source(source_id)
 
     def normalize_processing_request(self, payload):
         if not isinstance(payload, dict):
@@ -382,6 +424,8 @@ class InputProducts:
                 raise ValueError("qcWindow 不接受站点插值字段")
         else:
             source = self.source(payload.get("sourceId"))
+            if source["manifest"].get("sourceType") == "mdb":
+                raise ValueError("MDB须通过显式MDB导入生成完整输入版本，不能冒充站点JSON窗口")
             first, last = source["manifest"]["coverage"]["start"], source["manifest"]["coverage"]["end"]
             if start < hourly_time(first) or end > hourly_time(last):
                 raise ValueError("站点处理窗口须完整落在源资料覆盖内")

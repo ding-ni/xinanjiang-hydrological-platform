@@ -33,9 +33,11 @@ test('state catchup covers the missing hours, never reruns the checkpoint hour',
 })
 
 test('catchup source must be a model checkpoint with matching input and routing', () => {
-  const node = { resultSource: 'model-backend', inputBundleVersionId: 'v1', checkpoint: { routingVersionId: 'r1' } }
+  const node = { resultSource: 'model-backend', inputBundleVersionId: 'v1', checkpoint: { routingVersionId: 'r1',
+    scienceVersionId: 'SCIENCE-parent', modelImplementationSHA256: '1'.repeat(64), scienceConfigurationSHA256: '2'.repeat(64), petConfigurationSHA256: '3'.repeat(64) } }
   assert.equal(compatibleCatchupState(node, 'v1', 'r1'), true)
   assert.equal(compatibleCatchupState(node, 'v2', 'r1'), false)
   assert.equal(compatibleCatchupState(node, 'v1', 'r2'), false)
   assert.equal(compatibleCatchupState({ ...node, resultSource: 'fixture' }, 'v1', 'r1'), false)
+  assert.equal(compatibleCatchupState({ ...node, checkpoint: { routingVersionId: 'r1' } }, 'v1', 'r1'), false)
 })

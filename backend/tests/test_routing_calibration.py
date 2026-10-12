@@ -115,7 +115,9 @@ class RoutingNumericalTests(unittest.TestCase):
             self.assertEqual(result['bestRoutingParameters']['reach_muskingum'], base['reach_muskingum'])
             self.assertEqual(result['bestRoutingParameters']['unit_component_slope_k_hours'], base['unit_component_slope_k_hours'])
             k = result['bestRoutingParameters']['default_slope_k_hours']['RS']
-            self.assertNotEqual(k, base['default_slope_k_hours']['RS'])
+            self.assertLessEqual(result['optimizer']['best_loss'], result['optimizer']['stages'][0]['initialLoss'])
+            if result['optimizer']['stages'][0]['retainedInitial']:
+                self.assertEqual(k, base['default_slope_k_hours']['RS'])
             self.assertTrue(.5 <= k <= 4)
             self.assertEqual(result['optimizer']['evaluations'], 4)
             self.assertEqual([row['key'] for row in result['searchPlan']['rows'] if row['active']], ['RS_k_hours'])

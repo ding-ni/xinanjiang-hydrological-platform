@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from common import DEFAULT_INPUT_BUNDLE, MODEL, RUNTIME, clean, read_json
+from observation_quality import evaluate_observation_coverage
 
 
 PROJECT_ID = "nananxi-xufan"
@@ -126,7 +127,7 @@ class InputService:
             raise ValueError("注册 QC 流量时刻重复或包含未登记时区")
         flows = pd.to_numeric(frame["flow_m3_s"], errors="coerce").to_numpy(dtype=float)
         self.observed = pd.Series(flows, index=flow_times).sort_index()
-        self.observed = self.observed.where(np.isfinite(self.observed))
+        self.observed = self.observed.where(np.isfinite(self.observed) & (self.observed >= 0))
         if self.observed.dropna().empty:
             raise ValueError("注册 QC 流量为空")
         self.event_catalog = read_json(self.paths["events"])
@@ -198,6 +199,21 @@ class InputService:
         missing = sorted(years.difference(self.years))
         if missing:
             raise FileNotFoundError("所选年份无固定版本 QC 降雨：" + ",".join(map(str, missing)))
+        if self.bundle.get("manifest", {}).get("forcingPolicy") == "STRICT_MISSING":
+            from strict_forcing import load_hourly_forcing
+            actual, values, counts, audit = load_hourly_forcing(
+                self.bundle, self.grids, start, end, require_complete=False)
+            observed = self.observed.reindex(actual)
+            contributing = values[:, self.control_indexes]
+            complete = np.isfinite(contributing).all(axis=1)
+            rainfall = np.full(len(actual), np.nan)
+            rainfall[complete] = np.average(contributing[complete], axis=1,
+                                            weights=self.areas[self.control_indexes])
+            return {"times": actual, "values": values, "counts": counts, "observed": observed,
+                    "rainfall": rainfall, "years": years,
+                    "present": np.array(audit["present_hour_mask"], dtype=bool),
+                    "countFields": audit["station_count_fields"],
+                    "negativeCount": audit["negative_values_reclassified_missing"], "strictForcingAudit": audit}
         values = np.full((len(times), len(self.grids)), np.nan, dtype=float)
         counts = np.full(len(times), -1, dtype=np.int16)
         present = np.zeros(len(times), dtype=bool)
@@ -264,11 +280,20 @@ class InputService:
         if any(value == 0 for value in counts):
             warning_reasons.append("SOURCE_STATIONS_BELOW_MINIMUM")
         if arrays["negativeCount"]:
-            warning_reasons.append("NEGATIVE_PRECIPITATION_CLIPPED_AS_WORKER")
+            warning_reasons.append("NEGATIVE_PRECIPITATION_RECLASSIFIED_MISSING" if arrays.get("strictForcingAudit")
+                                   else "NEGATIVE_PRECIPITATION_CLIPPED_AS_WORKER")
         quality = {"warningReasons": warning_reasons, "stationCountFields": arrays["countFields"],
                    "sourceStationCountAvailable": all(value is not None for value in counts),
-                   "negativePrecipitationClippedCount": arrays["negativeCount"],
+                   "negativePrecipitationClippedCount": 0 if arrays.get("strictForcingAudit") else arrays["negativeCount"],
+                   "negativePrecipitationReclassifiedMissingCount": arrays["negativeCount"] if arrays.get("strictForcingAudit") else 0,
                    "missingHours": int((~arrays["present"]).sum())}
+        observation_quality = evaluate_observation_coverage(arrays["times"], arrays["observed"].to_numpy(),
+                                                           self.quality_config)
+        quality["observationCoverage"] = observation_quality
+        quality["warningReasons"] = list(dict.fromkeys(warning_reasons + observation_quality["warning_reasons"]))
+        if arrays.get("strictForcingAudit"):
+            quality["strictForcingAudit"] = {key: value for key, value in arrays["strictForcingAudit"].items()
+                                              if key not in {"present_hour_mask", "negative_counts_by_hour", "nonfinite_counts_by_hour"}}
         result = {"schemaVersion": "2.0", "caseKey": CASE_KEY, "sourceType": "model-qc",
                   "bundleVersionId": self.bundle_version, "bundleManifestSHA256": self.bundle_digest,
                   "forcingVersion": self.forcing_version, "observationVersion": self.observation_version,
@@ -398,6 +423,20 @@ class InputService:
             first = int(arrays["times"].searchsorted(start))
             displayed = {**arrays, **{key: arrays[key][first:] for key in
                                       ("times", "values", "counts", "observed", "rainfall", "present")}}
+            if arrays.get("strictForcingAudit"):
+                audit = arrays["strictForcingAudit"]
+                displayed_audit = {**audit, "start": start.isoformat(), "end": end.isoformat(),
+                                   "requested_hours": len(displayed["times"]),
+                                   "present_hour_mask": audit["present_hour_mask"][first:],
+                                   "negative_counts_by_hour": audit["negative_counts_by_hour"][first:],
+                                   "nonfinite_counts_by_hour": audit["nonfinite_counts_by_hour"][first:]}
+                ready = displayed["present"] & self.np.isfinite(displayed["values"]).all(axis=1) & (displayed["counts"] > 0)
+                displayed_audit.update(missing_time_hours=int((~displayed["present"]).sum()),
+                                       incomplete_forcing_hours=int((~ready).sum()),
+                                       negative_values_reclassified_missing=sum(displayed_audit["negative_counts_by_hour"]),
+                                       nonfinite_values=sum(displayed_audit["nonfinite_counts_by_hour"]))
+                displayed.update(strictForcingAudit=displayed_audit,
+                                 negativeCount=displayed_audit["negative_values_reclassified_missing"])
             result = self._window_payload(displayed)
             quality = self._evaluate_event_quality(
                 event_id=event_id, start=start, end=end, times=arrays["times"],
@@ -413,6 +452,15 @@ class InputService:
             quality["flow_completeness"] = flow_completeness
             if flow_completeness < 1.0:
                 quality["warning_reasons"].append("FLOW_INCOMPLETE")
+            observation_quality = evaluate_observation_coverage(
+                event_times, self.observed.reindex(event_times).to_numpy(), self.quality_config)
+            quality["observation_coverage"] = observation_quality
+            quality["maximum_observed_missing_gap_hours"] = observation_quality["maximum_missing_gap_hours"]
+            quality["observed_phase_coverage"] = observation_quality["phase_coverage"]
+            quality["observed_volume_scope"] = observation_quality["volume_scope"]
+            quality["exclusion_reasons"] = list(dict.fromkeys(quality["exclusion_reasons"] + observation_quality["exclusion_reasons"]))
+            quality["warning_reasons"] = list(dict.fromkeys(quality["warning_reasons"] + observation_quality["warning_reasons"]))
+            quality["accepted"] = bool(quality["accepted"] and observation_quality["accepted"])
             quality["task_precipitation_complete"] = bool(self.np.isfinite(arrays["values"]).all())
             quality["task_time_axis_complete"] = bool(arrays["present"].all())
             quality["model_input_ready"] = (quality["task_precipitation_complete"] and

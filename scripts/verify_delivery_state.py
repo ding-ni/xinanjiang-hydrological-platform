@@ -6,10 +6,14 @@ from pathlib import Path
 import time
 from urllib.request import Request, urlopen
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
+from platform_config import APP_VERSION
+
 
 COLLECTIONS = ('tasks', 'input-tasks', 'workspace/drafts', 'database/schemes',
                'states', 'routing-versions', 'parameter-versions', 'forecast-rain',
-               'result-catalog')
+               'science-versions', 'result-catalog')
 ACTIVE = {'queued', 'running', 'cancelling'}
 
 
@@ -68,7 +72,7 @@ def main():
     report = {'status': 'failed', 'mode': args.mode}
     try:
         api, current = inspect(args.url, Path(args.installation).resolve())
-        assert current['version'] == '1.9.0', current['version']
+        assert current['version'] == APP_VERSION, current['version']
         assert current['taskCount'] > 0 and current['checkpoints']
         report['current'] = current
         if args.mode == 'capture':

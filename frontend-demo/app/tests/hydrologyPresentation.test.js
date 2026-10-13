@@ -7,7 +7,8 @@ test('human terminology is expanded without rewriting immutable version identifi
   assert.equal(hydrologyText('原 OBSERVED_FLOW_ANCHORED 策略'), '原 按实测流量初始化 策略')
   assert.equal(hydrologyText('NANANXI_QC_20260819_CONTROL_V2'), 'NANANXI_QC_20260819_CONTROL_V2')
   assert.equal(hydrologyText(null), '')
-  assert.equal(hydrologyText('交付固定 QC 20260819 / 控制切分 v2'), '交付整编资料 20260819 / 徐畈控制断面 v2')
+  assert.equal(hydrologyText('交付固定 QC 20260819 / 控制切分 v2'), '交付固定 质量检查 20260819 / 控制切分 v2')
+  assert.equal(hydrologyText('合作者交付固定 QC；参考诊断资料，未获得生产资格'), '合作者交付固定 质量检查；参考诊断资料，未获得生产资格')
 })
 
 test('hydrological values show bounded precision without making missing values zero', () => {
@@ -23,11 +24,11 @@ test('parameter labels distinguish the original frozen and manual candidates usi
     importProvenance: { sourceTaskId: 'CAL-source', candidateKind: 'frozen-calibration' },
     originalCalibrationPlan: { sourceTaskId: 'CAL-source', planId: 'SOURCE-PLAN-original' }
   }
-  assert.equal(parameterSchemeLabel(id, source), '同事原方案 · 冻结率定候选 · 12345678')
+  assert.equal(parameterSchemeLabel(id, source), '导入原方案 · 冻结率定候选 · 12345678')
   const manual = { ...source, candidateKind: 'manual-edit', importProvenance: { ...source.importProvenance, candidateKind: 'manual-edit' } }
-  assert.equal(parameterSchemeLabel(id, manual), '同事原方案 · 人工修改候选 · 12345678')
-  assert.equal(parameterSchemeLabel(id, { ...source, originalCalibrationPlan: null }), '同事导入 · 冻结率定候选 · 12345678')
-  assert.equal(parameterSchemeLabel(id, { ...source, originalCalibrationPlan: { ...source.originalCalibrationPlan, sourceTaskId: 'CAL-another' } }), '同事导入 · 冻结率定候选 · 12345678')
+  assert.equal(parameterSchemeLabel(id, manual), '导入原方案 · 人工修改候选 · 12345678')
+  assert.equal(parameterSchemeLabel(id, { ...source, originalCalibrationPlan: null }), '导入候选 · 冻结率定候选 · 12345678')
+  assert.equal(parameterSchemeLabel(id, { ...source, originalCalibrationPlan: { ...source.originalCalibrationPlan, sourceTaskId: 'CAL-another' } }), '导入候选 · 冻结率定候选 · 12345678')
   assert.equal(source.candidateKind, 'frozen-calibration')
 })
 

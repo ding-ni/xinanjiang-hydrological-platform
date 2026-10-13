@@ -126,7 +126,7 @@ def main():
             page.get_by_role('button', name='参数率定', exact=False).click()
             page.get_by_role('button', name='洪水场次', exact=True).click()
             save('candidate-selection.json', adopt_candidate())
-            group = page.locator('details').filter(has=page.locator('summary').filter(has_text='同事原方案'))
+            group = page.locator('details').filter(has=page.locator('summary').filter(has_text='原计算条件与重放'))
             group.locator('summary').click()
             before = len(submitted)
             group.get_by_role('button', name='恢复原率定设置', exact=True).click()
@@ -268,7 +268,7 @@ def main():
             page.goto(args.url.rstrip('/') + '/#/calibration')
             page.wait_for_load_state('networkidle')
             page.get_by_role('button', name='参数率定', exact=False).click()
-            group = page.locator('details').filter(has=page.locator('summary').filter(has_text='同事原方案'))
+            group = page.locator('details').filter(has=page.locator('summary').filter(has_text='原计算条件与重放'))
             if not group.evaluate('element => element.open'):
                 group.locator('summary').click()
             before = len(submitted)

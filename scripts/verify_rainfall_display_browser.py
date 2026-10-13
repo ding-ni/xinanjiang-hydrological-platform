@@ -205,20 +205,22 @@ def main():
                 }""", timeout=30000)
 
             def choose_input(text):
-                navigate('config')
-                page.get_by_role('button', name='水雨情资料', exact=True).click()
-                table = page.get_by_role('table', name='已登记计算资料', exact=True)
-                expect(table).to_be_visible(timeout=60000)
+                page.goto(base + '/#/data?tab=inputs', wait_until='networkidle')
+                current = page.locator('[data-current-input]')
+                expect(current).to_be_visible(timeout=60000)
                 versions = api('input-products')['versions']
                 version = next(record['bundleVersionId'] for record in versions
                                if (bool(text.search(record.get('name', ''))) if isinstance(text, re.Pattern)
                                    else text == record['bundleVersionId'] or text in record.get('name', '')))
-                row = table.locator(f'tbody tr[data-input-version="{version}"]')
-                expect(row).to_be_visible(timeout=60000)
-                button = row.get_by_role('button', name='选用此资料', exact=True)
-                if button.count():
-                    button.click()
-                expect(row.get_by_role('button', name='当前使用', exact=True)).to_be_visible(timeout=60000)
+                if current.get_attribute('data-input-version') != version:
+                    others = page.locator('details.other-inputs')
+                    if not others.evaluate('(el) => el.open'):
+                        others.locator(':scope > summary').click()
+                    table = others.get_by_role('table', name='其他模型计算资料', exact=True)
+                    row = table.locator('tbody tr[data-input-version=' + json.dumps(version) + ']')
+                    expect(row).to_be_visible(timeout=60000)
+                    row.get_by_role('button', name='选用此资料', exact=True).click()
+                expect(current).to_have_attribute('data-input-version', version, timeout=60000)
                 navigate('realtime')
                 wait_grid()
                 assert state()['selectedVersion'] == version

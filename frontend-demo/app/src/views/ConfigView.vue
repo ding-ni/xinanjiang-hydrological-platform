@@ -32,39 +32,27 @@
 
       <main class="panel panel-pad">
         <section v-if="isModelInputWorkspace" class="data-contract-card" aria-label="真实模型输入版本">
-          <div><b>当前计算资料</b><span>南安溪 1 km 网格产流 · 河网汇流</span>
+          <div><b>当前模型计算资料</b><span>{{ app.basinName }} · {{ app.activeScaleMeta.label }}</span>
             <span>{{ app.selectedInputProduct?.name || app.selectedInputBundleVersionId }}</span>
             <span v-if="inputCatalogError">{{ inputCatalogError }}</span></div>
-          <RouterLink to="/data">水文资料库 →</RouterLink>
+          <RouterLink to="/data?tab=inputs">查看模型计算资料 →</RouterLink>
         </section>
         <template v-if="tab === '水雨情资料'">
           <div class="panel-title-row">
-            <h3 class="panel-title">水雨情资料接入</h3>
+            <h3 class="panel-title">水雨情资料</h3>
             <button v-if="app.basinId === 'nananxi-xufan'" class="btn" type="button" :disabled="refreshingProjectData" @click="refreshProjectData">{{ refreshingProjectData ? '正在更新' : '更新资料目录' }}</button>
           </div>
           <template v-if="app.basinId === 'nananxi-xufan'">
             <template v-if="isModelInputWorkspace">
-            <InputProductPanel />
-            <p class="hint">历史站点雨量、水位与流量在水文资料库查询；本页管理模型使用的网格降雨与出口流量版本。</p>
-            <div class="pipeline-wide preparation-pipeline">
-              <div><span>1</span><b>计算资料</b><small>网格降雨 / 出口流量</small></div>
-              <i>→</i><div><span>2</span><b>同源空间展示</b><small>{{ observationCatalog?.gridCount ?? '—' }} 网格 / 控制区面积加权</small></div>
-              <i>→</i><div><span>3</span><b>场次资料检查</b><small>包含所选预热期资料</small></div>
-              <i>→</i><div><span>4</span><b>产汇流计算与回放</b><small>保留降雨、流量与逐格状态</small></div>
+            <p class="hint">资料查询、整编和版本选用统一在水文资料库完成。本页只显示当前资料摘要。</p>
+            <div class="input-summary" aria-label="当前模型计算资料摘要">
+              <b>{{ currentInputPresentation.name }}</b>
+              <span>{{ currentInputPresentation.range }}</span>
+              <small>{{ currentInputPresentation.rangeNote }}</small>
+              <dl><template v-for="row in currentInputContents.rows" :key="row.key"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></template></dl>
+              <RouterLink class="btn primary" to="/data?tab=inputs">进入模型计算资料 →</RouterLink>
             </div>
-            <table class="table status-table data-inventory">
-              <thead><tr><th>资料项</th><th>实际覆盖 / 来源</th><th>规模 / 限制</th><th>状态</th></tr></thead>
-              <tbody>
-                <tr><td>1 km 网格雨量</td><td>{{ observationRangeLabel('rain') }}</td><td>{{ observationCatalog?.gridCount ?? '—' }} 格；{{ observationCatalog?.contributingGridCount ?? '—' }} 格贡献控制区</td><td>{{ observationCatalog ? '现用资料' : '查询中' }}</td></tr>
-                <tr><td>徐畈出口流量</td><td>{{ observationRangeLabel('river') }}</td><td>整编后的逐小时过程</td><td>{{ observationCatalog ? '现用资料' : '查询中' }}</td></tr>
-                <tr><td>控制区面雨量</td><td>控制切分 v2 · R0020_UP</td><td>{{ observationCatalog?.controlAreaKm2?.toFixed(6) ?? '—' }} km²；径流深参考面积 {{ observationCatalog?.observationAreaKm2 ?? '—' }} km²</td><td>面积加权</td></tr>
-                <tr><td>洪水场次</td><td>按登记时段提取降雨与流量</td><td>{{ registeredFloodEvents.length }} 场</td><td>逐场检查</td></tr>
-              </tbody>
-            </table>
-            <div class="readiness-cards">
-              <div class="ready"><span>蒸散发与初态</span><b>按率定与模拟所选条件</b></div>
-              <div class="ready"><span>起算方式</span><b>预热或连续起点 · 按所选条件</b></div>
-            </div>
+            <p class="hint">选择模型计算资料后，在“率定与模拟”中选取场次和计算条件。选场次只限定计算时段；需要更换降雨资料时才另行整编。</p>
             </template>
             <template v-else>
             <p class="hint">以下为离线原始资料目录，仅供来源浏览；不代表真实 整编资料 服务或模型计算已接入。</p>
@@ -379,7 +367,7 @@ import { useAppStore } from '@/stores/app'
 import { useCalibrationStore } from '@/stores/calibration'
 import { PARAMETER_VERSION_CATALOG } from '@/fixtures/catalogs/parameter-versions'
 import ContextStatusMetric from '@/components/common/ContextStatusMetric.vue'
-import InputProductPanel from '@/components/config/InputProductPanel.vue'
+import { inputProductContents, inputProductPresentation } from '@/services/inputProductPresentation.js'
 import { loadNananxiEventPackages, loadNananxiEventStatistics, loadNananxiFloodEvents, loadNananxiObservationCatalog } from '@/services/historicalObservationService'
 import { formatObservationCoverage, formatObservationDate } from '@/services/observationCoverageService'
 import { eventDataQuality } from '@/services/floodEventService'
@@ -418,7 +406,8 @@ const parameterLibraryMode = ref('simulation')
 const refreshingProjectData = ref(false)
 const projectDataValidation = computed(() => validateProjectDataContext(app.projectData))
 const isModelInputWorkspace = computed(() => usesModelInputService(app.activeContext))
-const registeredFloodEvents = computed(() => calibration.events.filter((event) => event.runtimeRegistered === true))
+const currentInputPresentation = computed(() => inputProductPresentation(app.selectedInputProduct || {}, { catalog: observationCatalog.value }))
+const currentInputContents = computed(() => inputProductContents(app.selectedInputProduct || {}, { catalog: observationCatalog.value }))
 const displayedAlgorithms = computed(() => isModelInputWorkspace.value ? app.backendCase?.algorithms || [] : algorithmCatalog.value)
 
 function createFloodEventDraft(event = null) {
@@ -936,6 +925,13 @@ function onToggleUse(code) {
 .data-contract-card div { display: grid; gap: 3px; }
 .data-contract-card b { color: #1d5753; font-size: 11px; }
 .data-contract-card strong { align-self: center; color: #26766c; white-space: nowrap; }
+.input-summary { display: grid; gap: 7px; max-width: 820px; margin: 16px 0; padding: 16px; border: 1px solid #d5e3df; background: #f8fbfa; color: #526e76; font-size: 12px; overflow-wrap: anywhere; }
+.input-summary>b { color: #20584f; font-size: 15px; }
+.input-summary small { color: #71868c; line-height: 1.6; }
+.input-summary dl { display: grid; grid-template-columns: minmax(120px, .7fr) minmax(0, 1.3fr); gap: 10px; margin: 10px 0; }
+.input-summary dt { color: #6b7f84; }
+.input-summary dd { margin: 0; color: #2e575c; }
+.input-summary .btn { justify-self: start; text-decoration: none; }
 .tag.neutral { background: #edf3f5; color: #536d78; }
 .business-defaults { margin-top: 18px; }
 .scheme-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }

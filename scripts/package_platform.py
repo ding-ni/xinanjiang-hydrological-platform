@@ -107,6 +107,11 @@ def package(destination):
     for relative in ('清晰化验收.json', '初次实际启动服务/server-receipt.json', '初次浏览器验收/acceptance.json'):
         if (data_acceptance / relative).is_file():
             sources.append((data_acceptance / relative, Path('验收证据/1.11.4') / relative))
+    generic_acceptance = ROOT / '开发产物/资料库通用整理验收_20261013'
+    for relative in ('整理验收.json', '实际启动服务发布前复验/server-receipt.json', '浏览器发布前复验/acceptance.json',
+                     '雨水情衔接实际服务/server-receipt.json', '雨水情衔接验收/acceptance.json'):
+        if (generic_acceptance / relative).is_file():
+            sources.append((generic_acceptance / relative, Path('验收证据/1.11.5') / relative))
     records = []
     destination.mkdir(parents=True)
     for source, relative in sources:

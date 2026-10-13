@@ -1,7 +1,7 @@
 <template>
   <section class="data-workspace">
     <header class="data-heading">
-      <div><span class="eyebrow">南安溪 · 徐畈控制断面</span><h1>水文资料库</h1></div>
+      <div><span class="eyebrow">{{ app.basinName }}</span><h1>水文资料库</h1></div>
       <div class="heading-actions">
         <span v-if="summary" class="database-state"><i /> 本地资料库</span>
         <button class="btn icon-action" title="刷新资料库" aria-label="刷新资料库" :disabled="busy" @click="load"><Refresh /></button>
@@ -12,14 +12,15 @@
     <template v-else>
       <div v-if="error" role="alert" class="error-message">{{ error }}</div>
       <div v-if="message" role="status" class="success-message">{{ message }}</div>
-      <div class="data-totals" v-if="summary">
+      <div class="data-totals" v-if="summary && tab !== 'processing'" aria-label="实测资料库总量">
         <div v-for="item in summary.coverage" :key="item.variable"><span>{{ item.label }}记录</span><b>{{ number(item.records) }}<small>条</small></b><p>{{ item.stations }} 站 · {{ item.start?.slice(0, 10) }} 至 {{ item.end?.slice(0, 10) }}</p></div>
-        <div><span>洪水场次</span><b>{{ summary.events }}<small>场</small></b><p>{{ summary.sourceFiles }} 份年资料 · {{ summary.stations }} 个登记站点</p></div>
+        <div><span>历史洪水目录</span><b>{{ summary.events }}<small>场</small></b><p>{{ summary.sourceFiles }} 份年资料 · {{ summary.stations }} 个登记站点</p></div>
       </div>
       <nav class="data-tabs" aria-label="资料分类">
         <button v-for="item in tabs" :key="item.id" :class="{ active: tab === item.id }" @click="tab = item.id">{{ item.label }}</button>
       </nav>
 
+      <p v-if="tab === 'observations'" class="section-intro">查询测站原始雨量、水位和流量。这里保存的是站点实测记录；网格降雨在“模型计算资料”中查看。</p>
       <div v-if="tab === 'observations'" class="observation-workspace">
         <aside class="station-browser">
           <div class="segmented" aria-label="水文要素"><button v-for="(v, key) in variables" :key="key" :class="{ active: variable === key }" @click="changeVariable(key)">{{ v.label }}</button></div>
@@ -51,7 +52,7 @@
               </div>
             </div>
             <div class="hydrograph"><BaseChart :option="chartOption" /></div>
-            <details class="source-details"><summary>资料来源 · {{ result.sources.length }} 份原始年资料</summary><p>徐畈历史资料只读转换；时间按源资料本地整点。空白表示缺测，0 为原始记录中的零值。</p><code>{{ result.sources.join(' · ') }}</code></details>
+            <details class="source-details"><summary>资料来源 · {{ result.sources.length }} 份原始年资料</summary><p>时间按源资料本地整点。空白表示缺测，0 为原始记录中的零值；查询和导出保留原始值。</p><code>{{ result.sources.join(' · ') }}</code></details>
             <div class="table-heading"><h3>逐时记录</h3><div><button class="btn icon-action" aria-label="上一页记录" :disabled="page === 0" @click="page--"><ArrowLeft /></button><span>{{ page + 1 }} / {{ pageCount }}</span><button class="btn icon-action" aria-label="下一页记录" :disabled="page + 1 >= pageCount" @click="page++"><ArrowRight /></button></div></div>
             <div class="records-scroll"><table class="table"><thead><tr><th>时间</th><th>{{ variables[result.variable].label }}（{{ result.unit }}）</th><th>记录状态</th><th>来源</th></tr></thead><tbody><tr v-for="row in pagedSeries" :key="row.time"><td>{{ row.time.replace('T', ' ') }}</td><td class="numeric">{{ value(row.value) }}</td><td>{{ row.value !== null ? '原始记录' : row.recorded ? '原表空值' : '缺测' }}</td><td>{{ row.sourceId || '—' }}</td></tr></tbody></table></div>
           </div>
@@ -60,33 +61,33 @@
       </div>
 
       <section v-else-if="tab === 'events'" class="event-section">
-        <div class="section-toolbar"><h2>洪水场次目录 <small>{{ filteredEvents.length }} 场</small></h2><label class="search-box"><Search /><input v-model="eventSearch" placeholder="年份或场次编号" aria-label="检索洪水场次" /></label></div>
-        <p class="query-note">此处是资料库的历史洪水索引。同事方案的17个计算窗口及用途，在“率定与模拟”中随配套资料读取。</p>
+        <div class="section-toolbar"><h2>历史洪水目录 <small>{{ filteredEvents.length }} 场</small></h2><label class="search-box"><Search /><input v-model="eventSearch" placeholder="年份或场次编号" aria-label="检索洪水场次" /></label></div>
+        <p class="section-intro">目录登记洪水编号和起止时段，用来查找实测过程；雨量、流量仍保存在实测资料中。模型计算资料有自己的洪水窗口目录，实际参与率定、验证或模拟的场次在“率定与模拟”中选择。</p>
         <div class="records-scroll"><table class="table"><thead><tr><th>场次编号</th><th>开始</th><th>结束</th><th>历时</th><th>洪峰流量（m³/s）</th><th>操作</th></tr></thead><tbody><tr v-for="event in filteredEvents" :key="event.eventId"><td><b>{{ event.floodCode || event.eventId }}</b></td><td>{{ event.start?.replace('T',' ') }}</td><td>{{ event.end?.replace('T',' ') }}</td><td>{{ event.durationHours }} h</td><td class="numeric">{{ value(event.observedInputs?.observedPeakFlowM3s) }}</td><td><button class="text-action" @click="viewEvent(event)">查看实测过程</button></td></tr></tbody></table></div>
       </section>
 
       <section v-else-if="tab === 'processing'" class="processing-section">
         <InputProductPanel :prepared-source="registeredSource">
           <template #station-source>
-            <h4>从实测资料库选取站点雨量</h4>
-            <p class="query-note">明确需要重新整编时，选择站点和时段。保存后只是准备站点资料，尚未生成网格降雨或切换计算资料。</p>
             <form class="source-form" @submit.prevent="registerRain">
               <label>站点资料名称<input class="input" v-model="sourceName" :placeholder="suggestedSourceName" maxlength="120" /></label>
               <label>开始<input class="input" type="datetime-local" v-model="sourceStart" step="3600" required aria-label="站点雨量开始" /></label>
               <label>结束<input class="input" type="datetime-local" v-model="sourceEnd" step="3600" required aria-label="站点雨量结束" /></label>
-              <fieldset><legend>参与降雨空间插值的测站（请按本次资料选择）</legend><label v-for="station in rainStations" :key="station.id"><input type="checkbox" v-model="sourceStations" :value="station.id" />{{ station.name }}</label></fieldset>
+              <fieldset><legend>来源雨量站</legend><label v-for="station in rainStations" :key="station.id"><input type="checkbox" v-model="sourceStations" :value="station.id" />{{ station.name }}</label></fieldset>
               <button class="btn primary" :disabled="busy || !sourceStations.length"><Connection />保存站点雨量资料</button>
             </form>
-            <div v-if="registeredSource" class="source-receipt">已准备站点资料：{{ registeredSource.name }}；下方整编设置已带入。<details><summary>来源编号</summary><code>{{ registeredSource.sourceId }}</code></details></div>
+            <div v-if="registeredSource" class="source-receipt">已保存站点雨量：{{ registeredSource.name }}；下方空间插值设置已带入该来源。<details><summary>来源编号</summary><code>{{ registeredSource.sourceId }}</code></details></div>
           </template>
         </InputProductPanel>
       </section>
 
-      <section v-else class="scheme-section">
-        <div class="section-toolbar"><h2>计算方案</h2><RouterLink class="btn" to="/calibration">率定与模拟<ArrowRight /></RouterLink><RouterLink class="btn" to="/archive">任务与成果<ArrowRight /></RouterLink></div>
-        <form class="scheme-form" @submit.prevent="saveScheme"><div class="scheme-field"><label for="scheme-task">已完成的计算</label><select id="scheme-task" class="input" v-model="schemeTask" required><option value="" disabled>选择计算任务</option><option v-for="task in reusableTasks" :key="task.taskId" :value="task.taskId">{{ task.runTypeLabel }} · {{ task.createdAt }} · {{ task.taskId.slice(-8) }}</option></select></div><label>方案名称<input class="input" v-model="schemeName" maxlength="80" required /></label><button class="btn primary" :disabled="busy || !schemeTask"><Collection />保存方案</button></form>
-        <div class="records-scroll"><table class="table"><thead><tr><th>方案名称</th><th>保存时间</th><th>来源任务</th><th>操作</th></tr></thead><tbody><tr v-for="scheme in schemes" :key="scheme.id"><td><b>{{ scheme.name }}</b></td><td>{{ scheme.createdAt }}</td><td><code>{{ scheme.sourceTaskId }}</code></td><td><button class="btn" :disabled="busy" @click="runScheme(scheme)"><VideoPlay />按方案计算</button></td></tr><tr v-if="!schemes.length"><td colspan="4">完成一次率定或模拟后，可将计算条件保存为方案。</td></tr></tbody></table></div>
-      </section>
+      <details class="saved-conditions" :open="route.query.tab === 'schemes'">
+        <summary>已保存的计算条件 <span>{{ schemes.length }} 份</span></summary>
+        <p class="query-note">保存一次已完成计算的时段、资料版本和计算设置，便于按原条件重新计算。它不生成雨量或洪水资料，也不代替参数、状态及成果的保存；率定类条件重新计算时会重新搜索参数。</p>
+        <div class="section-toolbar"><RouterLink class="btn" to="/calibration">率定与模拟<ArrowRight /></RouterLink><RouterLink class="btn" to="/archive">任务与成果<ArrowRight /></RouterLink></div>
+        <form class="scheme-form" @submit.prevent="saveScheme"><div class="scheme-field"><label for="scheme-task">已完成的计算</label><select id="scheme-task" class="input" v-model="schemeTask" required><option value="" disabled>选择计算任务</option><option v-for="task in reusableTasks" :key="task.taskId" :value="task.taskId">{{ task.runTypeLabel }} · {{ task.createdAt }} · {{ task.taskId.slice(-8) }}</option></select></div><label>条件名称<input class="input" v-model="schemeName" maxlength="80" required /></label><button class="btn primary" :disabled="busy || !schemeTask"><Collection />保存计算条件</button></form>
+        <div class="records-scroll"><table class="table"><thead><tr><th>条件名称</th><th>计算类型</th><th>保存时间</th><th>来源任务</th><th>操作</th></tr></thead><tbody><tr v-for="scheme in schemes" :key="scheme.id"><td><b>{{ scheme.name }}</b></td><td>{{ schemeType(scheme) }}</td><td>{{ scheme.createdAt }}</td><td><code>{{ scheme.sourceTaskId }}</code></td><td><button class="btn" :disabled="busy" @click="runScheme(scheme)"><VideoPlay />按原条件重新计算</button></td></tr><tr v-if="!schemes.length"><td colspan="5">完成一次率定、模拟或状态计算后，可保存该次计算的条件。</td></tr></tbody></table></div>
+      </details>
     </template>
   </section>
 </template>
@@ -107,11 +108,11 @@ const app = useAppStore()
 const monitor = useMonitorStore()
 const route = useRoute()
 const available = computed(() => app.basinId === 'nananxi-xufan' && modelBackendEnabled())
-const tabs = [{ id: 'observations', label: '实测资料' }, { id: 'events', label: '洪水场次' }, { id: 'processing', label: '计算降雨资料' }, { id: 'schemes', label: '计算方案' }]
+const tabs = [{ id: 'observations', label: '实测资料' }, { id: 'events', label: '洪水目录' }, { id: 'processing', label: '模型计算资料' }]
 const variables = { rain: { label: '降雨量', color: '#287ab4' }, level: { label: '水位', color: '#177c72' }, flow: { label: '流量', color: '#bb633e' } }
-const tab = ref(route.query.tab === 'inputs' ? 'processing' : 'observations'), busy = ref(false), error = ref(''), message = ref('')
+const tab = ref(route.query.tab === 'inputs' ? 'processing' : tabs.some(item => item.id === route.query.tab) ? route.query.tab : 'observations'), busy = ref(false), error = ref(''), message = ref('')
 const summary = ref(null), stations = ref([]), events = ref([]), tasks = ref([]), schemes = ref([])
-const variable = ref('rain'), stationId = ref('70149600'), stationSearch = ref(''), eventSearch = ref('')
+const variable = ref('rain'), stationId = ref(''), stationSearch = ref(''), eventSearch = ref('')
 const start = ref(''), end = ref(''), result = ref(null), page = ref(0), resultQuery = ref('')
 if (typeof route.query.station === 'string') stationId.value = route.query.station
 if (Object.hasOwn(variables, route.query.variable)) variable.value = route.query.variable
@@ -186,7 +187,13 @@ function showDisplayPeriod(direction) {
 }
 function changeVariable(key) { variable.value = key; stationSearch.value = ''; stationId.value = stations.value.find(s => s.variable === key)?.id || ''; queryWindow() }
 function selectStation(id) { stationId.value = id; queryWindow() }
-function viewEvent(event) { variable.value = 'flow'; stationId.value = '70115800'; start.value = event.start.slice(0, 16); end.value = event.end.slice(0, 16); tab.value = 'observations'; queryWindow() }
+function viewEvent(event) {
+  variable.value = 'flow'
+  const outlet = event.observedInputs?.stationId || event.sectionId || event.stationId
+  stationId.value = stations.value.find(s => s.variable === 'flow' && s.id === outlet)?.id
+    || stations.value.find(s => s.variable === 'flow')?.id || ''
+  start.value = event.start.slice(0, 16); end.value = event.end.slice(0, 16); tab.value = 'observations'; queryWindow()
+}
 function exportSeries() {
   if (queryChanged.value || !result.value) return
   const anchor = document.createElement('a'); anchor.href = `${String(import.meta.env.VITE_MODEL_API_BASE).replace(/\/$/, '')}/database/export?${params()}`; anchor.download = 'observations.csv'; anchor.click()
@@ -197,10 +204,12 @@ async function registerRain() {
   await act(async valid => { const r = await modelApi('database/rain-source', { method: 'POST', body }); if (valid()) { registeredSource.value = { ...r, start: body.start, end: body.end }; message.value = '站点雨量资料已保存。请核对整编设置后再生成网格降雨。当前计算资料尚未改变。' } })
 }
 async function saveScheme() {
-  await act(async valid => { await modelApi('database/schemes', { method: 'POST', body: { name: schemeName.value, taskId: schemeTask.value } }); const r = await modelApi('database/schemes'); if (valid()) { schemes.value = r.schemes; message.value = '计算方案已保存。' } })
+  const body = { name: schemeName.value.trim(), taskId: schemeTask.value }
+  await act(async valid => { await modelApi('database/schemes', { method: 'POST', body }); const r = await modelApi('database/schemes'); if (valid()) { schemes.value = r.schemes; message.value = '计算条件已保存，可按原条件重新计算。' } })
 }
+function schemeType(scheme) { return tasks.value.find(task => task.taskId === scheme.sourceTaskId)?.runTypeLabel || '见来源任务' }
 async function runScheme(scheme) {
-  try { await ElMessageBox.confirm(`按“${scheme.name}”的原时段、参数和资料版本新建计算？`, '运行计算方案', { confirmButtonText: '开始计算', cancelButtonText: '取消' }) } catch { return }
+  try { await ElMessageBox.confirm(`按“${scheme.name}”保存的时段、资料版本和计算设置新建任务？率定类条件会重新搜索参数。`, '按原条件重新计算', { confirmButtonText: '开始计算', cancelButtonText: '取消' }) } catch { return }
   await act(async valid => { const r = await modelApi(`database/schemes/${scheme.id}/run`, { method: 'POST', body: {} }); if (valid()) message.value = `计算已提交：${r.taskId}。可在成果管理查看进度。` })
 }
 watch([available, () => app.contextKey], ([enabled], previous) => {
@@ -211,6 +220,10 @@ watch([available, () => app.contextKey], ([enabled], previous) => {
   }
   if (enabled) load()
 }, { immediate: true })
+watch(() => route.query.tab, value => {
+  if (value === 'inputs') tab.value = 'processing'
+  else if (tabs.some(item => item.id === value)) tab.value = value
+})
 </script>
 
 <style scoped>
@@ -229,6 +242,12 @@ watch([available, () => app.contextKey], ([enabled], previous) => {
 .section-toolbar { margin: 12px 0 20px; }.section-toolbar h2 { margin-right: auto; }.source-form { margin: 16px 0 24px; }.source-form fieldset { flex-basis: 100%; border: 0; border-top: 1px solid #e0e7e9; padding: 12px 0 0; display: flex; flex-wrap: wrap; gap: 14px; }.source-form fieldset label { display: flex; gap: 5px; align-items: center; font-size: 12px; }.source-form legend { color: #65777e; font-size: 12px; padding-right: 12px; }.scheme-form { padding-bottom: 20px; }.scheme-form label:first-child { flex: 1; min-width: 220px; }.source-receipt { font-size: 12px; overflow-wrap: anywhere; }.error-message,.success-message,.notice { padding: 10px 12px; font-size: 13px; margin: 10px 0; overflow-wrap: anywhere; }.error-message { background: #fff1ed; color: #a44531; }.success-message { background: #edf6ee; color: #36734d; }.notice { background: #f5f7f7; }.empty-state { padding: 80px 20px; color: #798b91; text-align: center; }
 .scheme-field { display: grid; gap: 5px; flex: 1; min-width: 220px; font-size: 12px; color: #65777e; }.scheme-field label { min-width: 0; }
 .query-note,.query-range { color: #61777e; font-size: 12px; line-height: 1.7; }.query-range { margin: 8px 0; }.display-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; padding: 10px 12px; border: 1px solid #dce7e2; background: #f5f8f6; font-size: 12px; }.display-toolbar small { display: block; margin-top: 4px; color: #75878e; }.display-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.section-intro { margin: 0 0 18px; color: #597179; font-size: 13px; line-height: 1.8; }
+.saved-conditions { margin-top: 28px; padding: 14px 0; border-top: 1px solid #dfe8e7; color: #536e74; font-size: 13px; }
+.saved-conditions>summary { display: flex; align-items: center; gap: 12px; cursor: pointer; list-style: none; }
+.saved-conditions>summary::before { content: '›'; color: #347d6c; font-size: 18px; }
+.saved-conditions[open]>summary::before { transform: rotate(90deg); }
+.saved-conditions>summary span { color: #7a8d92; font-size: 12px; }
 @media (max-width: 1100px) { .data-totals { grid-template-columns: repeat(2,minmax(0,1fr)); }.data-totals>div:nth-child(3) { border-left: 0; padding-left: 0; border-top: 1px solid #e5ebed; }.data-totals>div:nth-child(4) { border-top: 1px solid #e5ebed; }.observation-workspace { grid-template-columns: 185px minmax(0,1fr); gap: 16px; } }
 @media (max-width: 700px) { .data-workspace { padding: 14px 12px; }.data-totals b { font-size: 21px; }.data-totals>div { padding: 12px 8px 12px 0; }.data-totals>div+div { padding-left: 10px; }.observation-workspace { grid-template-columns: minmax(0,1fr); }.station-browser { border-right: 0; padding-right: 0; }.station-list { display: flex; overflow-x: auto; }.station-list button { flex: 0 0 145px; }.data-tabs { gap: 20px; }.query-toolbar label { flex: 1; min-width: 145px; }.query-toolbar .input { max-width: 100%; }.series-summary { gap: 10px; }.source-form>label { width: 100%; }.scheme-form label { width: 100%; }.hydrograph { height: 250px; } }
 </style>

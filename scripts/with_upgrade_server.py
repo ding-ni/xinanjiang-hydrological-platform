@@ -4,6 +4,7 @@ The generic skill helper was tried first. This Windows adaptation avoids
 undrained HTTP log pipes and stops the real venv launcher descendants.
 """
 import argparse
+import base64
 import json
 import os
 import socket
@@ -30,6 +31,10 @@ def main():
     parser.add_argument('--runtime', required=True)
     parser.add_argument('--output', required=True)
     parser.add_argument('--port', type=int, default=18892)
+    parser.add_argument('--windows-launcher', action='store_true',
+                        help='Exercise the actual CMD launcher in Windows PowerShell with CP936')
+    parser.add_argument('--upgrade-launcher', action='store_true',
+                        help='Use the 20261012 CMD entry at its fixed workspace and port 18890')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if listening(args.port):
@@ -42,8 +47,26 @@ def main():
     environment = {**os.environ, 'XAJ_RUNTIME_DIR': str(Path(args.runtime).resolve()),
                    'PYTHONUTF8': '1', 'PYTHONDONTWRITEBYTECODE': '1'}
     server_command = [str(ROOT / 'backend/.venv/Scripts/python.exe'), '-B', '-u', str(ROOT / 'backend/server.py'), '--port', str(args.port)]
+    if args.windows_launcher or args.upgrade_launcher:
+        if os.name != 'nt':
+            raise ValueError('The CMD launcher verification requires Windows')
+        quote = lambda value: "'" + str(value).replace("'", "''") + "'"
+        if args.upgrade_launcher:
+            if args.port != 18890 or Path(args.runtime).resolve() != ROOT / 'runtime-20261012':
+                raise ValueError('The upgrade launcher requires its actual workspace and port 18890')
+            invocation = '& ' + quote(ROOT / '启动20261012升级版.cmd') + ' -SkipBuild'
+        else:
+            invocation = ('& ' + quote(ROOT / '启动统一平台.cmd') + ' -Workspace '
+                          + quote(Path(args.runtime).resolve()) + ' -Port ' + str(args.port) + ' -SkipBuild')
+        source = "[Console]::OutputEncoding = [Text.Encoding]::GetEncoding(936)\n" + invocation + "\nexit $LASTEXITCODE"
+        encoded = base64.b64encode(source.encode('utf-16-le')).decode('ascii')
+        server_command = ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                          '-EncodedCommand', encoded]
     flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
     receipt = {'port': args.port, 'workspace': environment['XAJ_RUNTIME_DIR'], 'command': server_command}
+    if args.windows_launcher or args.upgrade_launcher:
+        receipt.update(launcher='启动20261012升级版.cmd' if args.upgrade_launcher else '启动统一平台.cmd',
+                       nativeOutputCodePage=936)
     with (output / 'server-stdout.log').open('w', encoding='utf-8') as stdout, (output / 'server-stderr.log').open('w', encoding='utf-8') as stderr:
         process = subprocess.Popen(server_command, cwd=ROOT, env=environment, stdout=stdout, stderr=stderr, creationflags=flags)
         receipt['processId'] = process.pid

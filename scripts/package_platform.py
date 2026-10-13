@@ -83,6 +83,13 @@ def package(destination):
                               ('原方案页面闭环验收', 'acceptance.json')):
         if (current_acceptance / section / filename).is_file():
             sources.append((current_acceptance / section / filename, Path('验收证据/1.11.0') / section / 'acceptance.json'))
+    launcher_acceptance = ROOT / '开发产物/启动编码修复验收_20261013'
+    if (launcher_acceptance / '启动修复验收.json').is_file():
+        sources.append((launcher_acceptance / '启动修复验收.json', Path('验收证据/1.11.1/启动修复验收.json')))
+    for section, filename in (('升级入口实际启动服务', 'server-receipt.json'), ('升级入口网页验收', 'acceptance.json'),
+                              ('统一入口实际启动服务', 'server-receipt.json'), ('统一入口网页验收', 'acceptance.json')):
+        if (launcher_acceptance / section / filename).is_file():
+            sources.append((launcher_acceptance / section / filename, Path('验收证据/1.11.1') / section / filename))
     records = []
     destination.mkdir(parents=True)
     for source, relative in sources:

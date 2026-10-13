@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parent.parent
-APP_VERSION = '1.11.0'
+APP_VERSION = '1.11.1'
 
 
 def load_settings(root=None, environ=None):
@@ -47,4 +47,6 @@ def load_settings(root=None, environ=None):
 SETTINGS = load_settings()
 
 if __name__ == '__main__':
-    print(json.dumps(SETTINGS, default=str, ensure_ascii=False))
+    # Windows PowerShell 5.1 may decode native stdout with CP936. ASCII JSON
+    # keeps path escapes intact; ConvertFrom-Json restores the Unicode paths.
+    print(json.dumps(SETTINGS, default=str, ensure_ascii=True))

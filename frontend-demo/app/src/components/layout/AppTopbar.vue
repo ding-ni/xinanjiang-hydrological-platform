@@ -26,7 +26,7 @@
         </select>
       </div>
       <div class="chip project-chip" :title="app.activeContext.projectName"><span>模型</span><b>{{ app.activeContext.projectName }}</b></div>
-      <div class="chip clock-chip"><span>资料时刻</span><b>{{ app.dataTime || '—' }}</b></div>
+      <div class="chip clock-chip" title="当前选择的回放或起报时刻，资料覆盖范围见资料页。"><span>工作时刻</span><b>{{ app.dataTime || '—' }}</b></div>
       <div class="chip status" :class="`status-${inputStatus.status}`">
         <span>资料状态</span>
         <b>{{ inputStatus.label }}</b>

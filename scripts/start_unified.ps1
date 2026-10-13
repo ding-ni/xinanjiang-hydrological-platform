@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([int]$Port = 0, [string]$Workspace = '', [string]$Config = '', [switch]$Build, [switch]$SkipBuild, [switch]$CheckOnly)
+param([int]$Port = 0, [string]$Workspace = '', [string]$Config = '', [switch]$Build, [switch]$SkipBuild, [switch]$CheckOnly, [switch]$NoBrowser, [switch]$VerboseRequests)
 $ErrorActionPreference = 'Stop'
 $platformRoot = Split-Path -Parent $PSScriptRoot
 $pythonPath = Join-Path $platformRoot 'backend\.venv\Scripts\python.exe'
@@ -44,7 +44,10 @@ try {
     $env:PYTHONUTF8 = '1'
     Write-Host "Workspace: $($settings.workspace)"
     Write-Host "Platform: http://127.0.0.1:$Port/  (Ctrl+C to stop)"
-    & $pythonPath -B -u backend/server.py --port $Port
+    $serverArguments = @('-B', '-u', 'backend/server.py', '--port', [string]$Port)
+    if (-not $NoBrowser) { $serverArguments += '--open-browser' }
+    if ($VerboseRequests) { $serverArguments += '--verbose-requests' }
+    & $pythonPath @serverArguments
     if ($LASTEXITCODE -ne 0) { throw 'Platform stopped with an error. See the message above.' }
 } finally {
     Pop-Location

@@ -2,15 +2,15 @@
   <section class="grid-routing" aria-label="1 km产流网格汇流关系">
     <div class="relation-stats">
       <div><span>产流网格</span><b>{{ summary.gridCount }}<small>格</small></b></div>
-      <div><span>D8 下游连接</span><b>{{ summary.d8EdgeCount }}<small>条</small></b></div>
-      <div><span>网格—河段权重</span><b>{{ summary.mappingRowCount }}<small>条</small></b></div>
+      <div><span>D8 流向展示</span><b>{{ summary.d8EdgeCount }}<small>条</small></b></div>
+      <div><span>固定面积权重</span><b>{{ summary.mappingRowCount }}<small>条</small></b></div>
       <div><span>局地汇点</span><b>{{ summary.localTerminalCount }}<small>格</small></b></div>
     </div>
 
     <div class="relation-layout">
       <div class="map-panel">
         <div class="map-tools">
-          <label><input v-model="showD8" type="checkbox" /> D8 下游方向</label>
+          <label><input v-model="showD8" type="checkbox" /> 展示 D8 下游方向</label>
           <span class="legend-item"><i class="legend-cell" />产流网格</span>
           <span class="legend-item"><i class="legend-terminal" />无下游邻格</span>
           <span v-if="summary.fallbackGridCount" class="fallback-count">{{ summary.fallbackGridCount }} 格含最近邻挂接</span>
@@ -51,7 +51,7 @@
         <dl v-if="selectedGrid" class="grid-facts">
           <dt>网格高程</dt><dd>{{ format(selectedGrid.elevationM, 1) }} m</dd>
           <dt>网格面积</dt><dd>{{ format(selectedGrid.areaKm2, 4) }} km²</dd>
-          <dt>D8 下游</dt><dd><button v-if="downstreamGrid" class="text-link" type="button" @click="selectedId = downstreamGrid.id">{{ downstreamGrid.id }} ↗</button><span v-else>无更低相邻格点</span></dd>
+          <dt>D8 展示下游</dt><dd><button v-if="downstreamGrid" class="text-link" type="button" @click="selectedId = downstreamGrid.id">{{ downstreamGrid.id }} ↗</button><span v-else>无更低相邻格点</span></dd>
           <dt>面积权重合计</dt><dd>{{ format(selectedGrid.mapping.totalFraction, 6) }}</dd>
         </dl>
         <div class="mapping-list">
@@ -65,7 +65,7 @@
         </div>
       </aside>
     </div>
-    <p class="method-note">格点流向按相邻有效格点的最大下坡坡降确定；河段挂接沿用登记的面积权重。</p>
+    <p class="method-note">D8 箭头展示 1 km 相邻网格的下坡方向；模型实际按登记的固定面积权重将网格产流分配至汇流单元，再沿河段汇流。</p>
   </section>
 </template>
 

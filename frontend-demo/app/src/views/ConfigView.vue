@@ -2,7 +2,7 @@
   <section class="view-config">
     <div class="metric-strip config-metrics">
       <div class="metric config-scope"><span>配置内容</span><b>站网 · 资料 · 洪水 · 模型 · 参数</b></div>
-      <div class="metric"><span>现用方案</span><b>{{ activeConfig.version }}</b></div>
+      <div class="metric"><span>{{ app.backendCase ? '参考参数' : '模型方案' }}</span><b>{{ activeConfig.version }}</b></div>
       <div class="metric">
         <span>{{ app.hasLakeBalance ? '保存状态' : '配置来源' }}</span>
         <b :class="app.hasLakeBalance ? (cfg.dirty ? 'warn' : 'ok') : 'ok'">{{ app.hasLakeBalance ? (cfg.dirty ? '有未保存修改' : '已保存') : '项目资料目录' }}</b>
@@ -62,8 +62,8 @@
               </tbody>
             </table>
             <div class="readiness-cards">
-              <div class="ready"><span>场次蒸散发</span><b>0 mm/h</b></div>
-              <div class="ready"><span>连续模拟蒸散发</span><b>逐月给定值</b></div>
+              <div class="ready"><span>蒸散发与初态</span><b>按率定与模拟所选条件</b></div>
+              <div class="ready"><span>起算方式</span><b>预热或连续起点 · 按所选条件</b></div>
             </div>
             </template>
             <template v-else>
@@ -123,10 +123,10 @@
             <div class="field"><label>降雨资料</label><input class="input" :value="activeDataset.precipitation" readonly /></div>
             <div class="field"><label for="config-section">控制断面</label><select id="config-section" class="input" :value="calibration.section" @change="calibration.setSection($event.target.value)"><option v-for="section in configSectionOptions" :key="section" :value="section">{{ section }}</option></select></div>
             <div class="field"><label for="config-warmup">预热期（天）</label><input id="config-warmup" class="input" type="number" min="1" :value="calibration.warmupDays" @change="calibration.setSimulationField('warmupDays', $event.target.value)" /></div>
-            <div class="field"><label>场次蒸散发</label><input class="input" :value="app.basinId === 'nananxi-xufan' ? '0 mm/h（小时尺度）' : '按资料目录读取'" readonly /></div>
+            <div class="field"><label>蒸散发与初态</label><input class="input" :value="isModelInputWorkspace ? '按率定与模拟所选条件' : app.basinId === 'nananxi-xufan' ? '0 mm/h（小时尺度）' : '按资料目录读取'" readonly /></div>
             <div class="field"><label>资料共同覆盖</label><input class="input" :value="commonObservationRangeLabel" readonly /></div>
           </div>
-          <div class="data-object-note"><b>设置说明</b><span>预热期只用于模型起算状态，不改变降雨和出口水文原始资料。选择场次后，系统按场次起始时刻向前读取对应预热资料。</span></div>
+          <div class="data-object-note"><b>设置说明</b><span>{{ isModelInputWorkspace ? '蒸散发、初态、预热或连续起点在率定与模拟中选定，实际计算条件随任务保存。' : '预热期只用于模型起算状态，不改变降雨和出口水文原始资料。选择场次后，系统按场次起始时刻向前读取对应预热资料。' }}</span></div>
           <div class="data-object-status">
             <span>当前率定对象</span><b>{{ calibration.section }}</b><span>当前预热期</span><b>{{ calibration.warmupDays }} 天</b><span class="data-object-saved">修改后自动保存到当前工作区</span>
           </div>
@@ -136,7 +136,7 @@
           <h3 class="panel-title">分布式模型方案</h3>
           <p v-if="isModelInputWorkspace" class="hint"><RouterLink to="/diagnostics">编辑坡面与河网汇流参数</RouterLink></p>
           <div class="scheme-summary">
-            <div><span>方案</span><b>{{ activeConfig.name }}</b><small>{{ activeConfig.version }} · {{ activeConfig.status }}</small></div>
+            <div><span>方案</span><b>{{ activeConfig.name }}</b><small>{{ app.backendCase ? '参考参数：' : '' }}{{ activeConfig.version }} · {{ activeConfig.status }}</small></div>
             <div><span>计算尺度</span><b>{{ activeConfig.grid }} / {{ activeConfig.gridCount.toLocaleString() }} 有效网格</b><small>{{ activeConfig.subbasins }} 个{{ app.hasLakeBalance ? '入湖流域' : '流域空间单元' }} · {{ activeConfig.dem }}</small></div>
           </div>
           <div class="config-grid two">
@@ -147,7 +147,8 @@
             <div class="field"><label>河网汇流</label><input class="input" :value="activeConfig.channel" readonly /></div>
             <div class="field"><label>参数分区</label><input class="input" :value="isModelInputWorkspace ? '产流参数 · 单元坡面参数 · 河段参数' : '离线方案目录'" readonly /></div>
           </div>
-          <div class="scheme-note"><b>计算分区</b><span>网格：承接降水并计算产流</span><span>子流域：参数分区、坡面汇流和河网组织</span><span>面雨量：按控制区面积加权</span></div>
+          <div v-if="app.backendCase" class="scheme-note"><b>计算分区</b><span>1 km 网格产流，按固定面积权重汇入汇流单元</span><span>汇流单元三分量线性水库 → 河段 Muskingum 汇流 → 徐畈流量</span><span>30 m 是提取河网与汇流分区的地形分辨率</span></div>
+          <div v-else class="scheme-note"><b>计算分区</b><span>网格：承接降水并计算产流</span><span>子流域：参数分区、坡面汇流和河网组织</span><span>面雨量：按控制区面积加权</span></div>
           <details v-if="isModelInputWorkspace"><summary>模型功能目录</summary><table class="table module-status" aria-label="模型功能目录">
             <thead><tr><th>功能</th><th>状态</th><th>说明</th></tr></thead>
             <tbody><tr v-for="module in app.backendCase?.modules || []" :key="module.id"><td>{{ module.label }}</td><td>{{ module.status === 'integrated' ? '可用' : '待开发' }}</td><td>{{ module.reason }}</td></tr><tr v-if="!app.backendCase?.modules?.length"><td colspan="3">暂无功能目录</td></tr></tbody>
@@ -573,10 +574,10 @@ const activeConfig = computed(() => app.hasLakeBalance ? {
   sql: selectObservedHydrologyDataset(app.projectData)?.name || '待接入出口水文资料目录',
   nc: selectObservedPrecipitationDataset(app.projectData, app.modelScale)?.name || '待接入当前尺度降雨场目录',
   ncPattern: 'forcing_{issue}_{source}_1km.nc',
-  hillslope: app.backendCase ? '三分量线性水库 · 全域与单元参数' : '离线目录 · 未确认执行方案',
-  gridToRiver: app.backendCase ? '固定 grid_to_unit_weight_control_split_v2 权重映射' : '离线目录 · 未确认映射',
-  channel: app.backendCase ? '30 m 河网 Muskingum · 控制切分 v2' : '离线目录 · 未确认执行方案',
-  status: app.backendCase ? '当前方案' : app.dataStatus,
+  hillslope: app.backendCase ? '汇流单元三分量线性水库' : '离线目录 · 未确认执行方案',
+  gridToRiver: app.backendCase ? '固定面积权重 · 控制断面切分 v2' : '离线目录 · 未确认映射',
+  channel: app.backendCase ? '30 m 地形提取河网 · 河段 Muskingum 汇流' : '离线目录 · 未确认执行方案',
+  status: app.backendCase ? '模型服务可用' : app.dataStatus,
   runoffMethod: app.backendCase ? '共享新安江液态降雨网格内核' : '分布式新安江目录',
   separation: '自由水蓄水库三水源划分'
 })

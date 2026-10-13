@@ -53,8 +53,8 @@
         </div>
         <div class="field">
           <label for="cal-version">参数方案</label>
-          <select id="cal-version" class="input" :value="cal.paramVersion" :disabled="cal.running || parameterLoading" @change="applyParameterVersion($event.target.value)">
-            <option v-for="version in versionOptions" :key="version" :value="version">{{ parameterVersionLabel(version) }}</option>
+          <select id="cal-version" class="input" :value="cal.paramVersion" :title="cal.paramVersion" :disabled="cal.running || parameterLoading" @change="applyParameterVersion($event.target.value)">
+            <option v-for="version in versionOptions" :key="version" :value="version" :title="version">{{ parameterVersionLabel(version) }}</option>
           </select>
         </div>
         <p v-if="selectedParameterVersion?.requiresReevaluation" class="source-candidate-note" role="status">{{ selectedParameterVersion.candidateKind === 'manual-edit' ? '导入的人工修改候选，没有完成率定指标。' : '来源指标仅作交付复核参考。' }}需按当前输入复算，采用候选不会生成新的率定结果。</p>
@@ -469,7 +469,7 @@ import { projectDataForContext } from '@/services/caseAvailabilityService'
 import { finiteInputValue, loadModelInputCatalog, loadModelInputEvent, usesModelInputService } from '@/services/modelInputService'
 import { observedModelProcess, modelEventStatistics } from '@/services/modelInputPresentation'
 import { frozenInputBundleVersionId } from '@/services/inputProductService'
-import { hydrologyText, hydrologyNumber } from '@/services/hydrologyPresentation'
+import { hydrologyText, hydrologyNumber, parameterSchemeLabel } from '@/services/hydrologyPresentation'
 import { trialConditions, changedParameters, TRIAL_COLORS } from '@/services/manualCalibrationService'
 import { modelApi, loadScienceVersions } from '@/services/modelBackendService'
 import { currentInputFloodEvents } from '@/services/backendEventCatalogService'
@@ -1154,8 +1154,7 @@ function metricText(metrics) {
 }
 
 function parameterVersionLabel(version) {
-  if (version === 'NANANXI_XAJ_REFERENCE_V1') return '新安江参考参数'
-  return version.startsWith('PARAM-JOB-') ? `率定参数 · ${version.slice(-8)}` : version
+  return parameterSchemeLabel(version, simulationParameterVersions.value.find(row => row.id === version))
 }
 
 function releaseReadinessFor(version) {

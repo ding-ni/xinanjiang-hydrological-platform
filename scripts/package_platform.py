@@ -90,6 +90,15 @@ def package(destination):
                               ('统一入口实际启动服务', 'server-receipt.json'), ('统一入口网页验收', 'acceptance.json')):
         if (launcher_acceptance / section / filename).is_file():
             sources.append((launcher_acceptance / section / filename, Path('验收证据/1.11.1') / section / filename))
+    startup_acceptance = ROOT / '开发产物/启动体验与文案验收_20261013'
+    if (startup_acceptance / '启动体验与文案验收.json').is_file():
+        sources.append((startup_acceptance / '启动体验与文案验收.json', Path('验收证据/1.11.2/启动体验与文案验收.json')))
+    for relative in ('升级入口实际启动复验/server-receipt.json', '升级入口网页复验/acceptance.json',
+                     '升级入口网页复验/browser-dispatch.json', '升级入口网页复验/main-pages/acceptance.json',
+                     '统一入口实际启动服务/server-receipt.json', '统一入口网页验收/acceptance.json',
+                     '统一入口网页验收/browser-dispatch.json', '统一入口网页验收/main-pages/acceptance.json'):
+        if (startup_acceptance / relative).is_file():
+            sources.append((startup_acceptance / relative, Path('验收证据/1.11.2') / relative))
     records = []
     destination.mkdir(parents=True)
     for source, relative in sources:

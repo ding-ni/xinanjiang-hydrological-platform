@@ -35,8 +35,12 @@ def main():
                         help='Exercise the actual CMD launcher in Windows PowerShell with CP936')
     parser.add_argument('--upgrade-launcher', action='store_true',
                         help='Use the 20261012 CMD entry at its fixed workspace and port 18890')
+    parser.add_argument('--exercise-browser-launch', action='store_true',
+                        help='Keep the CMD launcher browser dispatch enabled for a configured test browser')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if args.exercise_browser_launch and not (args.windows_launcher or args.upgrade_launcher):
+        parser.error('Browser dispatch verification requires an actual CMD launcher')
     if listening(args.port):
         raise RuntimeError('Test port already in use; existing process is never replaced')
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
@@ -51,13 +55,14 @@ def main():
         if os.name != 'nt':
             raise ValueError('The CMD launcher verification requires Windows')
         quote = lambda value: "'" + str(value).replace("'", "''") + "'"
+        browser_option = '' if args.exercise_browser_launch else ' -NoBrowser'
         if args.upgrade_launcher:
             if args.port != 18890 or Path(args.runtime).resolve() != ROOT / 'runtime-20261012':
                 raise ValueError('The upgrade launcher requires its actual workspace and port 18890')
-            invocation = '& ' + quote(ROOT / '启动20261012升级版.cmd') + ' -SkipBuild'
+            invocation = '& ' + quote(ROOT / '启动20261012升级版.cmd') + ' -SkipBuild' + browser_option
         else:
             invocation = ('& ' + quote(ROOT / '启动统一平台.cmd') + ' -Workspace '
-                          + quote(Path(args.runtime).resolve()) + ' -Port ' + str(args.port) + ' -SkipBuild')
+                          + quote(Path(args.runtime).resolve()) + ' -Port ' + str(args.port) + ' -SkipBuild' + browser_option)
         source = "[Console]::OutputEncoding = [Text.Encoding]::GetEncoding(936)\n" + invocation + "\nexit $LASTEXITCODE"
         encoded = base64.b64encode(source.encode('utf-16-le')).decode('ascii')
         server_command = ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
@@ -70,6 +75,7 @@ def main():
     with (output / 'server-stdout.log').open('w', encoding='utf-8') as stdout, (output / 'server-stderr.log').open('w', encoding='utf-8') as stderr:
         process = subprocess.Popen(server_command, cwd=ROOT, env=environment, stdout=stdout, stderr=stderr, creationflags=flags)
         receipt['processId'] = process.pid
+        (output / 'server-receipt.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
         try:
             # The service reserves its port before importing a fresh database.
             # Wait for HTTP readiness, not just a successful TCP connection.
@@ -102,6 +108,9 @@ def main():
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
+                receipt['cleanupError'] = 'Owned test process did not stop'
+                receipt['testPortClosed'] = not listening(args.port)
+                (output / 'server-receipt.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
                 raise RuntimeError('Owned test process did not stop; inspect saved process receipt')
             receipt['testPortClosed'] = not listening(args.port)
             (output / 'server-receipt.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')

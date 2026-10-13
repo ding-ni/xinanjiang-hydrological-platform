@@ -46,10 +46,10 @@
             </template>
             <template v-else>
               <label for="manual-parameter-version">产流参数</label>
-              <select id="manual-parameter-version" class="input" :value="selectedCandidateId" @change="onParameterCandidate($event.target.value)">
+              <select id="manual-parameter-version" class="input" :value="selectedCandidateId" :title="selectedCandidateId" @change="onParameterCandidate($event.target.value)">
                 <option v-if="app.backendCase" value="__STATE__">沿用起报状态参数</option>
                 <option v-else-if="!candidateParameterVersions.length" value="">尚无率定候选版本</option>
-                <option v-for="version in candidateParameterVersions" :key="version.id" :value="version.id">{{ version.id }} · {{ version.review?.status || '候选' }}</option>
+                <option v-for="version in candidateParameterVersions" :key="version.id" :value="version.id" :title="version.id">{{ parameterSchemeLabel(version.id, version) }} · {{ version.review?.status || '候选' }}</option>
               </select>
               <small>产流参数和汇流方案与起报状态一致。</small>
             </template>
@@ -417,6 +417,7 @@ import { scaleGridByParams } from '@/models/xajParamEngine'
 import { buildForecastRequest, submitForecastRequest, parseHourlyRainfall, listForecastRain, registerForecastRain, forecastCommit } from '@/services/forecastSubmissionService'
 import { parameterLibraryFor, productionParameterVersion as getProductionParameterVersion } from '@/services/parameterLibraryService'
 import { projectDataForContext } from '@/services/caseAvailabilityService'
+import { parameterSchemeLabel } from '@/services/hydrologyPresentation'
 
 const forecast = useForecastStore()
 const tasks = useTasksStore()
@@ -541,7 +542,7 @@ const activeSpatial = computed(() => app.hasLakeBalance
     })
 const activeRouting = computed(() => ({
   runoff: '分布式新安江蓄满产流',
-  hillslope: '网格线性水库坡面汇流',
+  hillslope: app.backendCase ? '汇流单元三分量线性水库' : '网格线性水库坡面汇流',
   channel: app.hasLakeBalance ? 'Strahler 分级河网 + 入湖口汇集' : '按当前河网分段汇流'
 }))
 const eligibleStateNodes = computed(() => {

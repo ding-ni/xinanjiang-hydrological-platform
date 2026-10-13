@@ -15,6 +15,7 @@ import traceback
 import io
 import zipfile
 import csv
+import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -277,7 +278,7 @@ class InputTaskManager(TaskManager):
             return version
 
 
-def handler(manager, frontend, input_manager=None, products=None):
+def handler(manager, frontend, input_manager=None, products=None, *, verbose_requests=False):
     products = products or manager.products
     if input_manager is None:
         if manager.input_tasks is None:
@@ -288,6 +289,12 @@ def handler(manager, frontend, input_manager=None, products=None):
     input_reader_lock = threading.RLock()
     diagnostics = TaskDiagnostics(manager)
     class Handler(BaseHTTPRequestHandler):
+        def log_request(self, code="-", size="-"):
+            # Routine page loads and polling stay quiet; HTTP failures remain
+            # visible, and log_error/exception tracebacks keep their defaults.
+            if verbose_requests or (str(code).isdigit() and int(code) >= 400):
+                super().log_request(code, size)
+
         def send_json(self, status, payload):
             body = json.dumps(clean(payload), ensure_ascii=False, allow_nan=False).encode("utf-8")
             self.send_response(status)
@@ -653,6 +660,8 @@ def main():
     parser.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1", "localhost"])
     parser.add_argument("--port", type=int, default=SETTINGS['port'])
     parser.add_argument("--frontend", default=str(SETTINGS['frontend']))
+    parser.add_argument("--verbose-requests", action="store_true", help="显示全部 HTTP 访问日志")
+    parser.add_argument("--open-browser", action="store_true", help="服务就绪后打开平台页面")
     args = parser.parse_args()
     # Reserve the port before recovering unfinished jobs in the runtime.
     server = PlatformHTTPServer((args.host, args.port), BaseHTTPRequestHandler)
@@ -664,8 +673,16 @@ def main():
         manager = TaskManager()
         print("Preparing hydrological database from existing observations...", flush=True)
         manager.database.import_existing()
-        server.RequestHandlerClass = handler(manager, Path(args.frontend).resolve())
-        print(f"Unified XAJ platform: http://{args.host}:{args.port}", flush=True)
+        server.RequestHandlerClass = handler(manager, Path(args.frontend).resolve(), verbose_requests=args.verbose_requests)
+        address = f"http://{args.host}:{server.server_port}"
+        print(f"Unified XAJ platform: {address}", flush=True)
+        if args.open_browser:
+            try:
+                opened = webbrowser.open(address)
+            except Exception:
+                opened = False
+            if not opened:
+                print(f"浏览器未自动打开，请手动访问：{address}", file=sys.stderr, flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
         pass

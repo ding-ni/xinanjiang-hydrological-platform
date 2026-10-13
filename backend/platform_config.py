@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parent.parent
-APP_VERSION = '1.11.1'
+APP_VERSION = '1.11.2'
 
 
 def load_settings(root=None, environ=None):

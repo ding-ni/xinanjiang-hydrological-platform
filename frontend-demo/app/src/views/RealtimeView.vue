@@ -3,11 +3,11 @@
     <div class="metric-strip">
       <div class="metric"><span>当前流域</span><b>{{ displaySummary.basinName }}</b></div>
       <div class="metric"><span>{{ app.hasLakeBalance ? '入湖控制断面' : '出口断面' }}</span><b>{{ displaySummary.targetSection }}</b></div>
-      <div class="metric"><span>当前流量</span><b>{{ metricValue(displaySummary.currentFlow, 'm³/s') }}</b></div>
-      <div class="metric"><span>{{ app.hasLakeBalance ? '湖面水位' : '当前水位' }}</span><b>{{ metricValue(displaySummary.currentLevel, 'm') }}</b></div>
+      <div class="metric"><span>{{ usesModelInputs ? '实测流量' : '当前流量' }}</span><b>{{ metricValue(displaySummary.currentFlow, 'm³/s') }}</b></div>
+      <div class="metric"><span>{{ app.hasLakeBalance ? '湖面水位' : usesModelInputs ? '实测水位' : '当前水位' }}</span><b>{{ metricValue(displaySummary.currentLevel, 'm') }}</b></div>
       <div class="metric"><span>{{ usesModelInputs ? '徐畈控制区面雨量' : '流域面平均雨量' }}</span><b>{{ hasNananxiObservation ? `${basinRain} mm（${usesModelInputs ? '逐时面积加权' : '离线站点均值'}）` : (app.hasLakeBalance ? `近 ${monitor.rainWindow} 小时 ${basinRain} mm（离线示意）` : '待接入') }}</b></div>
       <div class="metric"><span>模型方案</span><b>{{ app.hasLakeBalance ? `${app.activeModelScheme.label} · ${app.activeScaleMeta.cellCount.toLocaleString()} 有效网格` : app.activeModelScheme.label }}</b></div>
-      <div class="metric"><span>资料时间</span><b>{{ (app.hasLakeBalance || hasNananxiObservation) ? monitor.currentTimeLabel : '待接入' }}</b></div>
+      <div class="metric"><span>{{ usesModelInputs ? '回放时刻' : '资料时间' }}</span><b>{{ (app.hasLakeBalance || hasNananxiObservation) ? monitor.currentTimeLabel : '待接入' }}</b></div>
       <ContextStatusMetric />
     </div>
 
@@ -114,13 +114,15 @@
             </select>
           </div>
           <p v-if="databaseError" class="time-hint" role="alert">{{ databaseError }}</p>
-          <details v-if="usesModelInputs" class="domain-note"><summary>当前资料版本</summary>{{ app.selectedInputBundleVersionId }}</details>
+          <div v-if="usesModelInputs" class="domain-note"><b>当前计算降雨</b><p>{{ currentRainfallPresentation.name }}</p><p>{{ currentRainfallPresentation.purpose }}</p><RouterLink to="/data?tab=inputs">查看或选用计算资料 →</RouterLink></div>
+          <details v-if="usesModelInputs" class="domain-note"><summary>资料编号与提取时段</summary><code>{{ app.selectedInputBundleVersionId }}</code><p>{{ currentRainfallPresentation.range }}</p></details>
+          <p v-if="app.basinId === 'nananxi-xufan'" class="time-hint">地图高程按当前产流网格显示。30 m 地形及汇流分区见<RouterLink to="/diagnostics">汇流与拓扑</RouterLink>。</p>
           <div v-if="projectStatus.missingInputs.length" class="form-group-title">后续仍需补充</div>
           <ul v-if="projectStatus.missingInputs.length" class="readiness-list">
             <li v-for="item in projectStatus.missingInputs" :key="item">{{ item }}</li>
           </ul>
           <p class="time-hint">{{ hasNananxiObservation
-            ? usesModelInputs ? '站点为库内逐时实测；网格为当前选用的计算降雨。' : '离线原始资料可按时段或场次回放；地图插值仅作展示，不是模型计算资料。'
+            ? usesModelInputs ? '历史资料回放：站点读取实测资料库，降雨场读取当前计算资料；未接入实时更新。' : '离线原始资料可按时段或场次回放；地图插值仅作展示，不是模型计算资料。'
             : '当前项目仅有空间资料。' }}</p>
         </div>
       </div>
@@ -152,7 +154,7 @@
         </div>
         <div v-else-if="hasNananxiObservation || usesModelInputs" class="forcing-strip project-forcing">
           <span class="forcing-status" :class="{ loading: rainGridLoading || monitor.historicalLoading, error: Boolean(rainGridError || monitor.historicalError) }">{{ rainGridLoading || monitor.historicalLoading ? '正在读取降雨栅格' : rainGridError || monitor.historicalError || rainGridSourceLabel }}</span>
-          <div><span>当前降雨资料</span><b>{{ usesModelInputs ? hydrologyText(app.selectedInputProduct?.name) || '整编逐时网格降雨' : '离线降雨展示预览' }} · {{ app.activeScaleMeta.label }}</b></div>
+          <div><span>当前计算降雨</span><b>{{ usesModelInputs ? currentRainfallPresentation.name : '离线降雨展示预览' }} · {{ app.activeScaleMeta.label }}</b></div>
           <div><span>图面时次</span><b>{{ usesModelInputs && !hasNananxiObservation ? '选择回放时段' : `${monitor.currentTimeLabel} · 第 ${monitor.timeIndex + 1}/${monitor.timeMax + 1} 时次` }}</b></div>
           <div><span>有效格点</span><b>{{ currentPrecipCells.length }} 个</b></div>
           <span class="forcing-note">{{ rainDisplayNote }}</span>
@@ -185,12 +187,12 @@ import StationDetail from '@/components/monitor/StationDetail.vue'
 import SelincoStationDetail from '@/components/monitor/SelincoStationDetail.vue'
 import TimelineBar from '@/components/monitor/TimelineBar.vue'
 import ContextStatusMetric from '@/components/common/ContextStatusMetric.vue'
+import { inputProductPresentation } from '@/services/inputProductPresentation.js'
 import { gridCellsAt, gridCellsAtTime, loadNananxiRainfallGrid } from '@/services/rainfallGridService'
 import { projectDataForContext } from '@/services/caseAvailabilityService'
 import { usesModelInputService, finiteInputValue } from '@/services/modelInputService'
 import { modelInputDisplayStatus } from '@/services/modelInputPresentation'
 import { modelApi } from '@/services/modelBackendService'
-import { hydrologyText } from '@/services/hydrologyPresentation'
 
 const monitor = useMonitorStore()
 const app = useAppStore()
@@ -215,6 +217,10 @@ onBeforeUnmount(() => { databaseRevision++; clearTimeout(databaseTimer) })
 const product = computed(() => app.latestForecastProduct)
 const caseData = computed(() => projectDataForContext(app.activeContext, app.projectData, { loading: app.projectDataLoading, error: app.projectDataError }))
 const usesModelInputs = computed(() => usesModelInputService(app.activeContext))
+const currentRainfallPresentation = computed(() => inputProductPresentation(
+  app.selectedInputProduct || { bundleVersionId: app.selectedInputBundleVersionId },
+  { catalog: app.selectedInputCatalog, parameterVersions: app.projectData?.backendParameterVersions }
+))
 watch([usesModelInputs, () => monitor.currentTimeLabel, () => app.basinId], () => {
   const current = ++databaseRevision
   clearTimeout(databaseTimer)
@@ -386,9 +392,9 @@ const xajLayerItems = [
   { key: 'water', label: '水位站' },
   { key: 'section', label: '控制断面' },
   { key: 'river', label: '河网' },
-  { key: 'subbasin', label: '子流域' },
-  { key: 'dem', label: 'DEM 高程' },
-  { key: 'grid', label: 'DEM 栅格线' },
+  { key: 'subbasin', label: '流域边界' },
+  { key: 'dem', label: '网格高程' },
+  { key: 'grid', label: '产流网格线' },
   { key: 'qpfGrid', label: '1公里实测降雨栅格' },
   { key: 'smoothRain', label: '平滑雨量场（站点插值）' }
 ]
@@ -405,7 +411,7 @@ const selincoLayerItems = [
   { key: 'dem', label: 'DEM' }
 ]
 const layerItems = computed(() => app.hasLakeBalance ? selincoLayerItems : usesModelInputs.value
-  ? xajLayerItems.filter((item) => item.key !== 'smoothRain').map((item) => item.key === 'qpfGrid' ? { key: 'rainDisplay', label: app.modelScale === '1km' ? '降雨场' : '降雨场（该尺度未接入）' } : item)
+  ? xajLayerItems.filter((item) => item.key !== 'smoothRain').map((item) => item.key === 'qpfGrid' ? { key: 'rainDisplay', label: app.modelScale === '1km' ? '降雨场' : '降雨场（该尺度未接入）' } : item.key === 'dem' ? { ...item, label: `${app.activeScaleMeta.label} 网格高程` } : item)
   : xajLayerItems)
 
 async function loadPrecipitation() {

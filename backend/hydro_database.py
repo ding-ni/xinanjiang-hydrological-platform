@@ -19,6 +19,7 @@ PROJECT = "nananxi-xufan"
 PUBLIC = SETTINGS['projects'] / PROJECT
 EPOCH = datetime(1970, 1, 1)
 VARIABLES = {"rain": ("降雨量", "mm"), "level": ("水位", "m"), "flow": ("流量", "m3/s")}
+DISPLAY_LIMIT_HOURS = 8784
 
 
 def hour(value):
@@ -32,7 +33,12 @@ def hour(value):
 
 
 def timestamp(value):
-    return (EPOCH + timedelta(hours=value)).isoformat(timespec="minutes") if value is not None else None
+    if value is None:
+        return None
+    try:
+        return (EPOCH + timedelta(hours=value)).isoformat(timespec="minutes")
+    except (OverflowError, ValueError) as exc:
+        raise ValueError("资料时刻超出可表示的整小时时间范围") from exc
 
 
 def encoded(value):
@@ -149,33 +155,82 @@ class HydroDatabase:
                 FROM stations s JOIN observation_coverage c ON s.project_id=c.project_id AND s.station_id=c.station_id
                 WHERE s.project_id=? GROUP BY s.station_id,c.variable ORDER BY s.station_id,c.variable""", (PROJECT,))]
 
-    def window(self, station, variable, start, end):
+    @staticmethod
+    def _window_bounds(variable, start, end):
         if variable not in VARIABLES:
             raise ValueError("要素须为 rain、level 或 flow")
         first, last = hour(start), hour(end)
-        if not 0 <= last - first < 8784:
-            raise ValueError("查询时段须为 1 至 8784 小时")
+        if last < first:
+            raise ValueError("查询结束时刻不能早于起始时刻")
+        return first, last
+
+    @staticmethod
+    def _window_summary(db, station, variable, first, last):
+        site = db.execute("SELECT station_id AS id,name,lon,lat FROM stations WHERE project_id=? AND station_id=?", (PROJECT, station)).fetchone()
+        if not site:
+            raise KeyError("站点不在本流域资料库中")
+        arguments = (PROJECT, station, variable, first, last)
+        conflict = db.execute("""SELECT time_hour FROM observations
+            WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ?
+            GROUP BY time_hour HAVING count(*)>1 LIMIT 1""", arguments).fetchone()
+        if conflict:
+            raise RuntimeError("同一小时存在多个来源，须明确资料版本后查询")
+        statistics = db.execute("""SELECT count(*) AS records,count(value) AS valid,
+            coalesce(sum(CASE WHEN value=0 THEN 1 ELSE 0 END),0) AS zeros,
+            sum(value) AS total,min(value) AS minimum,max(value) AS maximum
+            FROM observations WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ?""", arguments).fetchone()
+        sources = [row[0] for row in db.execute("""SELECT DISTINCT source_id FROM observations
+            WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ? ORDER BY source_id""", arguments)]
+        expected = last - first + 1
+        return {"projectId": PROJECT, "station": dict(site), "variable": variable, "unit": VARIABLES[variable][1],
+                "sources": sources, "expected": expected, "records": statistics["records"], "valid": statistics["valid"],
+                "missing": expected - statistics["valid"], "zeros": statistics["zeros"],
+                "total": statistics["total"] if variable == "rain" else None,
+                "maximum": statistics["maximum"], "minimum": statistics["minimum"],
+                "range": {"start": timestamp(first), "end": timestamp(last)}}
+
+    @staticmethod
+    def _series_rows(records, first, last):
+        records = iter(records)
+        current = next(records, None)
+        for time_hour in range(first, last + 1):
+            recorded = current is not None and current[0] == time_hour
+            yield {"time": timestamp(time_hour), "value": current[1] if recorded else None,
+                   "recorded": recorded, "sourceId": current[2] if recorded else None}
+            if recorded:
+                current = next(records, None)
+
+    def window(self, station, variable, start, end, offsetHours=0):
+        first, last = self._window_bounds(variable, start, end)
+        expected = last - first + 1
+        if type(offsetHours) is not int or not 0 <= offsetHours < expected:
+            raise ValueError("显示起点须为查询时段内的非负整数小时")
+        display_first = first + offsetHours
+        display_last = min(last, display_first + DISPLAY_LIMIT_HOURS - 1)
         with self.connect() as db:
-            site = db.execute("SELECT station_id AS id,name,lon,lat FROM stations WHERE project_id=? AND station_id=?", (PROJECT, station)).fetchone()
-            if not site:
-                raise KeyError("站点不在本流域资料库中")
+            # Statistics and the displayed segment share one read snapshot.
+            db.execute("BEGIN")
+            summary = self._window_summary(db, station, variable, first, last)
             records = db.execute("""SELECT time_hour,value,source_id FROM observations
                 WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ? ORDER BY time_hour""",
-                                 (PROJECT, station, variable, first, last)).fetchall()
-        by_time = {}
-        for row in records:
-            if row[0] in by_time:
-                raise RuntimeError("同一小时存在多个来源，须明确资料版本后查询")
-            by_time[row[0]] = row
-        sources = sorted({r[2] for r in records})
-        series = [{"time": timestamp(t), "value": by_time[t][1] if t in by_time else None,
-                   "recorded": t in by_time, "sourceId": by_time[t][2] if t in by_time else None} for t in range(first, last + 1)]
-        valid = [r["value"] for r in series if r["value"] is not None]
-        return {"projectId": PROJECT, "station": dict(site), "variable": variable, "unit": VARIABLES[variable][1],
-                "series": series, "sources": sources, "expected": len(series), "records": len(records), "valid": len(valid),
-                "missing": len(series) - len(valid), "zeros": sum(v == 0 for v in valid),
-                "total": sum(valid) if variable == "rain" and valid else None,
-                "maximum": max(valid) if valid else None, "minimum": min(valid) if valid else None}
+                                 (PROJECT, station, variable, display_first, display_last))
+            series = list(self._series_rows(records, display_first, display_last))
+        return {**summary, "series": series,
+                "display": {"start": timestamp(display_first), "end": timestamp(display_last),
+                            "hours": len(series), "offsetHours": offsetHours, "totalHours": expected,
+                            "limitHours": DISPLAY_LIMIT_HOURS, "hasPrevious": offsetHours > 0, "hasNext": display_last < last}}
+
+    @contextmanager
+    def export_window(self, station, variable, start, end):
+        """Validate before HTTP headers, then iterate a complete hourly range."""
+        first, last = self._window_bounds(variable, start, end)
+        with self.connect() as db:
+            db.execute("BEGIN")
+            summary = self._window_summary(db, station, variable, first, last)
+            records = db.execute("""SELECT time_hour,value,source_id FROM observations
+                WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ? ORDER BY time_hour""",
+                                 (PROJECT, station, variable, first, last))
+            yield summary, self._series_rows(records, first, last)
 
     def monitor(self, end):
         last = hour(end)
@@ -227,9 +282,13 @@ class HydroDatabase:
         ids = body["stationIds"]
         if not isinstance(ids, list) or not 1 <= len(ids) <= 32 or any(not isinstance(s, str) for s in ids) or len(set(ids)) != len(ids):
             raise ValueError("请选择 1 至 32 个不重复雨量站")
-        windows = [self.window(s, "rain", body["start"], body["end"]) for s in ids]
-        if len(windows) * windows[0]["expected"] > 200000:
+        # Processing keeps its separate yearly/value bounds even though raw
+        # observation queries and exports can span the entire local archive.
+        from input_products import MAX_VALUES, processing_window
+        _, _, hours = processing_window(body["start"], body["end"])
+        if len(ids) * hours > MAX_VALUES:
             raise ValueError("站点时序超过加工容量，请缩短时段")
+        windows = [self.window(s, "rain", body["start"], body["end"]) for s in ids]
         if any(w["valid"] == 0 for w in windows):
             raise ValueError("选定站点在此时段没有有效雨量，请调整站点或时段")
         if any(w["station"]["lon"] is None or w["station"]["lat"] is None for w in windows):

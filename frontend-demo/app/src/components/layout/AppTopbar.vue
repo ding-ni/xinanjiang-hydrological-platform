@@ -26,7 +26,7 @@
         </select>
       </div>
       <div class="chip project-chip" :title="app.activeContext.projectName"><span>模型</span><b>{{ app.activeContext.projectName }}</b></div>
-      <div class="chip clock-chip" title="当前选择的回放或起报时刻，资料覆盖范围见资料页。"><span>工作时刻</span><b>{{ app.dataTime || '—' }}</b></div>
+      <div class="chip clock-chip" :title="route.name === 'realtime' ? '当前历史资料回放时刻；实时资料更新尚未接入。' : '当前选择的回放或起报时刻，资料覆盖范围见资料页。'"><span>{{ route.name === 'realtime' ? '回放时刻' : route.name === 'forecast' ? '起报时刻' : '工作时刻' }}</span><b>{{ clockValue }}</b></div>
       <div class="chip status" :class="`status-${inputStatus.status}`">
         <span>资料状态</span>
         <b>{{ inputStatus.label }}</b>
@@ -42,6 +42,7 @@ import { Pouring } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useMonitorStore } from '@/stores/monitor'
+import { useForecastStore } from '@/stores/forecast'
 import { listBasinConfigs } from '@/data/domainContext'
 import { usesModelInputService } from '@/services/modelInputService'
 import { modelInputDisplayStatus } from '@/services/modelInputPresentation'
@@ -49,6 +50,10 @@ import { modelInputDisplayStatus } from '@/services/modelInputPresentation'
 const route = useRoute()
 const app = useAppStore()
 const monitor = useMonitorStore()
+const forecast = useForecastStore()
+const clockValue = computed(() => route.name === 'realtime'
+  ? usesModelInputService(app.activeContext) && !monitor.hasHistoricalObservations ? '—' : monitor.currentTimeLabel || '—'
+  : route.name === 'forecast' ? forecast.startTime || '—' : app.dataTime || '—')
 const basins = computed(() => app.availableBasins)
 const modelConfigs = computed(() => listBasinConfigs(app.basinId, app.projectId))
 const inputStatus = computed(() => usesModelInputService(app.activeContext)

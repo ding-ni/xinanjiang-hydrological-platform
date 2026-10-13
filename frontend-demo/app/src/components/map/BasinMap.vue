@@ -3,7 +3,7 @@
     <div class="map-canvas" ref="mapEl" />
     <div v-if="!hasSpatialResources" class="spatial-pending">{{ spatialPendingText }}</div>
     <div v-if="terrainBadge" class="terrain-badge">
-      <b>{{ terrainBadge.label }} DEM</b>
+      <b>{{ terrainBadge.label }}</b>
       <span v-if="terrainBadge.cellCount">{{ terrainBadge.cellCount.toLocaleString() }} 有效网格</span>
       <span>{{ terrainBadge.elevationMin }}–{{ terrainBadge.elevationMax }} m</span>
     </div>
@@ -74,6 +74,7 @@ import {
 import { buildSmoothRainfallDataURL, geoJSONBounds } from '@/services/rainfallInterpolationService'
 import { buildSmoothGridRainfallDataURL, gridRainfallDisplaySignature, hasGridRainfall, gridRainfallColorExpression } from '@/services/gridRainfallDisplayService'
 import { modelBackendEnabled } from '@/services/modelBackendService'
+import { actualSubbasinGeometry, applyBasinBoundaryVisibility, SUBBASIN_FILL_COLOR } from '@/services/basinBoundaryDisplayService'
 
 const props = defineProps({
   stations: { type: Array, default: () => [] },
@@ -247,10 +248,10 @@ const stateLegend = computed(() => {
 })
 
 const terrainBadge = computed(() => {
-  if (!hasSpatialResources.value) return null
+  if (!hasSpatialResources.value || props.layers.dem === false) return null
   if (app.isSelinco) {
     return {
-      label: app.activeScaleMeta.label,
+      label: `${app.activeScaleMeta.label} DEM`,
       cellCount: app.activeScaleMeta.cellCount,
       elevationMin: app.activeScaleMeta.terrain.elevationMin,
       elevationMax: app.activeScaleMeta.terrain.elevationMax
@@ -259,7 +260,7 @@ const terrainBadge = computed(() => {
   const terrain = caseData.value?.spatial?.terrain
   if (!terrain) return null
   return {
-    label: app.activeModelScheme.label,
+    label: `${app.activeScaleMeta.label} 网格高程`,
     cellCount: terrain.cellCount,
     elevationMin: Math.round(terrain.basinElevationMin ?? terrain.elevationMin),
     elevationMax: Math.round(terrain.basinElevationMax ?? terrain.elevationMax)
@@ -374,7 +375,7 @@ async function loadExternalProfile() {
   }
   externalProfile.value = {
     basin: assets.basin,
-    subbasins: assets.basin,
+    subbasins: actualSubbasinGeometry(assets.subbasins),
     rivers: assets.rivers,
     bounds: metadata?.bounds || geoJSONBounds(assets.basin),
     displayBounds: metadata?.bounds || geoJSONBounds(assets.basin),
@@ -485,14 +486,7 @@ function ensureLayers(map) {
       type: 'fill',
       source: 'subbasins',
       paint: {
-        'fill-color': [
-          'match', ['get', 'basinIndex'],
-          1, 'rgba(218,181,90,0.20)',
-          2, 'rgba(82,157,190,0.20)',
-          3, 'rgba(122,172,118,0.22)',
-          4, 'rgba(181,126,173,0.20)',
-          'rgba(170,190,198,0.15)'
-        ],
+        'fill-color': SUBBASIN_FILL_COLOR,
         'fill-opacity': 1
       }
     },
@@ -762,10 +756,11 @@ function ensureLayers(map) {
 function applyLayerVisibility(map) {
   if (!map) return
   const vis = (on) => (on ? 'visible' : 'none')
-  if (map.getLayer('subbasin-fill')) {
-    map.setLayoutProperty('subbasin-fill', 'visibility', vis(props.layers.subbasin))
-    map.setLayoutProperty('subbasin-line', 'visibility', vis(props.layers.subbasin))
-  }
+  applyBasinBoundaryVisibility(map, {
+    isSelinco: app.isSelinco,
+    subbasins: activeProfile()?.subbasins,
+    enabled: props.layers.subbasin
+  })
   if (map.getLayer('rivers')) {
     map.setLayoutProperty('rivers', 'visibility', vis(props.layers.river))
   }
@@ -799,7 +794,6 @@ function applyLayerVisibility(map) {
     map.setLayoutProperty('real-grid-line', 'visibility', vis(
       app.isSelinco ? props.layers.realGrid !== false : props.layers.grid !== false
     ))
-    map.setLayoutProperty('subbasin-label', 'visibility', vis(app.isSelinco && props.layers.subbasin !== false))
   }
   // 站点按类型过滤：通过 filter
   if (map.getLayer('stations-circle')) {
@@ -912,22 +906,13 @@ function updateBasinProfile(map, fit = true) {
   updateSmoothRainfall(map)
 
   const show = app.isSelinco ? 'visible' : 'none'
-  for (const id of ['outside-mask-fill', 'lake-fill', 'lake-line', 'lake-label', 'glacier-fill', 'subbasin-label']) {
+  for (const id of ['outside-mask-fill', 'lake-fill', 'lake-line', 'lake-label', 'glacier-fill']) {
     if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', show)
   }
   if (map.getLayer('real-grid-line')) {
     map.setLayoutProperty('real-grid-line', 'visibility', app.isSelinco
       ? (props.layers.realGrid === false ? 'none' : 'visible')
       : (props.layers.grid === false ? 'none' : 'visible'))
-  }
-  if (map.getLayer('subbasin-fill')) {
-    map.setPaintProperty('subbasin-fill', 'fill-color', app.isSelinco ? [
-      'match', ['get', 'basinIndex'], 1, 'rgba(218,181,90,0.20)', 2, 'rgba(82,157,190,0.20)', 3, 'rgba(122,172,118,0.22)', 4, 'rgba(181,126,173,0.20)', 'rgba(170,190,198,0.15)'
-    ] : [
-      'interpolate', ['linear'], ['get', 'wetness'],
-      0.3, 'rgba(200,214,226,0.35)', 0.5, 'rgba(160,190,210,0.40)',
-      0.7, 'rgba(110,170,200,0.48)', 0.9, 'rgba(70,140,190,0.55)'
-    ])
   }
   if (map.getLayer('real-grid-line')) {
     map.setLayerZoomRange('real-grid-line', app.modelScale === '1km' ? 8 : 5, 24)

@@ -46,16 +46,16 @@ export function parseSourceJson(text) {
 
 export function buildInputProcessingRequest(form = {}, source = {}) {
   const operation = form.operation || 'qcWindow'
-  if (!['qcWindow', 'stationIdw'].includes(operation)) throw new Error('不支持的资料加工类型。')
-  if (!form.name?.trim()) throw new Error('请填写独立产品版本名称。')
-  if (!form.start || !form.end) throw new Error('请填写加工窗口开始与结束整点。')
+  if (!['qcWindow', 'stationIdw'].includes(operation)) throw new Error('不支持的降雨整编方式。')
+  if (!form.name?.trim()) throw new Error('请填写新资料版本名称。')
+  if (!form.start || !form.end) throw new Error('请填写整编时段的开始与结束整点。')
   const request = {
     requestId: uniqueRequestId('DATA'), operation, projectId: 'nananxi-xufan', resolutionId: '1km',
     name: form.name.trim(), start: form.start, end: form.end,
     parentBundleVersionId: selectedInputBundleVersionId(source)
   }
   if (operation === 'stationIdw') {
-    if (!form.sourceId) throw new Error('请先登记并选择真实站点 JSON 来源。')
+    if (!form.sourceId) throw new Error('请先登记并选择站点雨量资料。')
     Object.assign(request, {
       sourceId: form.sourceId, idwPower: Number(form.idwPower), minimumStations: Number(form.minimumStations),
       zeroOnlyPolicy: form.zeroOnlyPolicy || 'KEEP'

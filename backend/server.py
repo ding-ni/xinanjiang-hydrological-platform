@@ -370,23 +370,35 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                     payload = {"stations": database.stations()}
                 elif self.command == "GET" and operation == "monitor":
                     payload = database.monitor(argument("end"))
-                elif self.command == "GET" and operation in {"window", "export"}:
-                    payload = database.window(argument("stationId"), argument("variable"), argument("start"), argument("end"))
-                    if operation == "export":
+                elif self.command == "GET" and operation == "window":
+                    offset = argument("offsetHours", "0")
+                    if not offset.isascii() or not offset.isdecimal():
+                        raise ValueError("显示起点须为查询时段内的非负整数小时")
+                    payload = database.window(argument("stationId"), argument("variable"), argument("start"), argument("end"), offsetHours=int(offset))
+                elif self.command == "GET" and operation == "export":
+                    with database.export_window(argument("stationId"), argument("variable"), argument("start"), argument("end")) as (payload, rows):
+                        # A bounded CSV buffer keeps decades of observations
+                        # out of memory. Closing the connection frames the body.
                         stream = io.StringIO(newline="")
                         writer = csv.writer(stream)
                         writer.writerow(["time", "station_id", "variable", "value", "unit", "recorded", "source_id"])
-                        for row in payload["series"]:
-                            writer.writerow([row["time"], payload["station"]["id"], payload["variable"], row["value"], payload["unit"], row["recorded"], row["sourceId"]])
-                        data = stream.getvalue().encode("utf-8-sig")
                         self.send_response(200)
                         self.send_header("Content-Type", "text/csv; charset=utf-8")
                         self.send_header("Content-Disposition", 'attachment; filename="observations.csv"')
-                        self.send_header("Content-Length", str(len(data)))
                         self.send_header("Cache-Control", "no-store")
+                        self.send_header("Connection", "close")
+                        self.close_connection = True
                         self.end_headers()
-                        self.wfile.write(data)
-                        return
+                        self.wfile.write(b"\xef\xbb\xbf")
+                        for index, row in enumerate(rows, 1):
+                            writer.writerow([row["time"], payload["station"]["id"], payload["variable"], row["value"], payload["unit"], row["recorded"], row["sourceId"]])
+                            if index % 512 == 0:
+                                self.wfile.write(stream.getvalue().encode("utf-8"))
+                                stream.seek(0)
+                                stream.truncate(0)
+                        if stream.tell():
+                            self.wfile.write(stream.getvalue().encode("utf-8"))
+                    return
                 elif self.command == "GET" and operation == "events":
                     payload = {"events": database.events(argument("search", ""))}
                 elif self.command == "POST" and operation == "rain-source":

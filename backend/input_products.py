@@ -182,7 +182,7 @@ class InputProducts:
                 "productionEligible", "timeConvention", "coverage", "qualityNotes", "summary", "createdAt",
                 "sourceId", "sourceOrigin", "parentBundleVersionId", "sourceTaskId",
                 "targetCoordinatePolicy", "forcingValueDtype", "sourceReplayOnly", "sourceQcPolicy",
-                "eventQualityConfigurationSHA256", "sourceQcOrigin")
+                "eventQualityConfigurationSHA256", "sourceQcOrigin", "recordQueryScope")
         result = {key: copy.deepcopy(manifest[key]) for key in keys if key in manifest}
         result.update(manifestSHA256=digest, registered=True, default=manifest["bundleVersionId"] == DEFAULT_BUNDLE_VERSION_ID)
         if registration:

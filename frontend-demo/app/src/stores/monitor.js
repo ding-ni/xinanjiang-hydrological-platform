@@ -197,7 +197,7 @@ export const useMonitorStore = defineStore('monitor', {
       water: true,
       section: true,
       river: true,
-      subbasin: false,
+      subbasin: true,
       rainField: true,
       smoothRain: false,
       qpfGrid: true,

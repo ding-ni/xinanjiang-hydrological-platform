@@ -207,15 +207,18 @@ def main():
             def choose_input(text):
                 navigate('config')
                 page.get_by_role('button', name='水雨情资料', exact=True).click()
-                table = page.get_by_role('table', name='已登记输入版本', exact=True)
+                table = page.get_by_role('table', name='已登记计算资料', exact=True)
                 expect(table).to_be_visible(timeout=60000)
-                row = table.locator('tbody tr').filter(has_text=text).first
+                versions = api('input-products')['versions']
+                version = next(record['bundleVersionId'] for record in versions
+                               if (bool(text.search(record.get('name', ''))) if isinstance(text, re.Pattern)
+                                   else text == record['bundleVersionId'] or text in record.get('name', '')))
+                row = table.locator(f'tbody tr[data-input-version="{version}"]')
                 expect(row).to_be_visible(timeout=60000)
-                version = row.locator('td').first.locator('code').first.inner_text()
-                button = row.get_by_role('button', name='选用此版本', exact=True)
+                button = row.get_by_role('button', name='选用此资料', exact=True)
                 if button.count():
                     button.click()
-                expect(row.get_by_role('button', name='当前选用', exact=True)).to_be_visible(timeout=60000)
+                expect(row.get_by_role('button', name='当前使用', exact=True)).to_be_visible(timeout=60000)
                 navigate('realtime')
                 wait_grid()
                 assert state()['selectedVersion'] == version

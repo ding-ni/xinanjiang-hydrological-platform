@@ -204,6 +204,7 @@ export const useMonitorStore = defineStore('monitor', {
       dem: true,
       grid: true
     },
+    rainDisplayMode: 'grid',
     selectedStationId: null,
     detailOpen: false,
     mapCenter: [...BASIN_CENTER],
@@ -622,6 +623,11 @@ export const useMonitorStore = defineStore('monitor', {
     },
     setLayer(key, value) {
       if (key in this.layers) this.layers[key] = value
+    },
+    setRainDisplayMode(mode) {
+      if (!['grid', 'smooth'].includes(mode)) return
+      this.rainDisplayMode = mode
+      this.layers.qpfGrid = true
     },
     setRainWindow(h) {
       this.rainWindow = h

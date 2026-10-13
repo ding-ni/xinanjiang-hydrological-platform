@@ -24,9 +24,10 @@
         <div><i class="sym water" />水位站</div>
         <div><i class="sym section" />控制断面</div>
       </div>
-      <div v-if="!app.isSelinco && props.layers.smoothRain && !forbidsStationInterpolation" class="smooth-rain-legend">
+      <div v-if="!app.isSelinco && smoothRainEnabled" class="smooth-rain-legend">
         <span class="smooth-rain-gradient" /><div><span>0</span><span>10</span><span>25</span><span>50+</span></div>
-        <small>离线站点插值示意（mm/h，非模型输入）</small>
+        <small>{{ usesGridRainSmoothing ? '网格雨量平滑显示（mm/h）' : '离线站点插值示意（mm/h）' }}</small>
+        <small v-if="usesGridRainSmoothing">零雨透明，缺测留空；计算采用原网格。</small>
       </div>
       <div v-if="!app.isSelinco && props.layers.qpfGrid" class="smooth-rain-legend">
         <span class="smooth-rain-gradient" /><div><span>0</span><span>10</span><span>25</span><span>50+</span></div>
@@ -71,6 +72,7 @@ import {
   gridToGeoJSON
 } from '@/data/basin'
 import { buildSmoothRainfallDataURL, geoJSONBounds } from '@/services/rainfallInterpolationService'
+import { buildSmoothGridRainfallDataURL, gridRainfallDisplaySignature, hasGridRainfall, gridRainfallColorExpression } from '@/services/gridRainfallDisplayService'
 import { modelBackendEnabled } from '@/services/modelBackendService'
 
 const props = defineProps({
@@ -96,8 +98,9 @@ const props = defineProps({
   interactiveGrid: { type: Boolean, default: false },
   /** 外部栅格单元（参数/状态联动时传入） */
   gridCells: { type: Array, default: null },
-  /** 降尺度前的数值预报降雨原始网格（通常 0.1°） */
+  /** 当前时次的降雨网格；仅用于地图显示。 */
   qpfGridCells: { type: Array, default: null },
+  smoothRainSource: { type: String, default: 'station-idw' },
   /** 栅格填色字段：runoff | soil | wu | wl | wd | freeWater | surface | snowWater | snowDepth | snowLiquid | frozenIndex | glacierMelt */
   gridPaintField: { type: String, default: 'runoff' },
   center: { type: Array, default: () => [0, 0] },
@@ -116,6 +119,8 @@ const emit = defineEmits([
 
 const app = useAppStore()
 const forbidsStationInterpolation = computed(() => modelBackendEnabled() && app.basinId !== 'selinco')
+const usesGridRainSmoothing = computed(() => props.smoothRainSource === 'model-grid' && app.basinId === 'nananxi-xufan' && app.modelScale === '1km')
+const smoothRainEnabled = computed(() => Boolean(props.layers.smoothRain) && (usesGridRainSmoothing.value || !forbidsStationInterpolation.value))
 const EMPTY_GEOJSON = { type: 'FeatureCollection', features: [] }
 // Keep the placeholder image valid because MapLibre decodes every image source,
 // even when the corresponding layer is hidden.
@@ -139,6 +144,10 @@ let smoothRainFrameKind = 'timeout'
 let smoothRainPending = null
 let smoothRainThrottleTimer = null
 let smoothRainLastRenderAt = 0
+let smoothRainContextKey = ''
+let smoothImageUpdateTimer = null
+let smoothImageUpdatePending = null
+let smoothRainHasImage = false
 let qpfGridFrame = null
 let qpfGridPending = null
 let qpfGridSignature = ''
@@ -165,7 +174,7 @@ function cancelSmoothRain() {
 function scheduleSmoothRainThrottle(map) {
   if (smoothRainThrottleTimer != null) return
   const elapsed = Date.now() - smoothRainLastRenderAt
-  const delay = Math.max(0, 760 - elapsed)
+  const delay = Math.max(0, (usesGridRainSmoothing.value ? 160 : 760) - elapsed)
   smoothRainThrottleTimer = setTimeout(() => {
     smoothRainThrottleTimer = null
     updateSmoothRainfall(map, { force: true })
@@ -603,16 +612,7 @@ function ensureLayers(map) {
       source: 'qpf-grid',
       layout: { visibility: 'none' },
       paint: {
-        'fill-color': [
-          'interpolate', ['linear'], ['coalesce', ['get', 'qpf'], 0],
-          0, 'rgba(255,255,255,0)',
-          1, 'rgba(190,222,252,0.34)',
-          5, 'rgba(88,166,232,0.50)',
-          10, 'rgba(38,119,196,0.56)',
-          25, 'rgba(240,201,64,0.62)',
-          50, 'rgba(238,132,39,0.68)',
-          80, 'rgba(211,64,51,0.74)'
-        ]
+        'fill-color': gridRainfallColorExpression()
       }
     },
     {
@@ -773,7 +773,8 @@ function applyLayerVisibility(map) {
     map.setLayoutProperty('rain-heat', 'visibility', vis(app.isSelinco && props.layers.rainField))
   }
   if (map.getLayer('smooth-rain-fill')) {
-    map.setLayoutProperty('smooth-rain-fill', 'visibility', vis(props.layers.smoothRain && !forbidsStationInterpolation.value))
+    map.setLayoutProperty('smooth-rain-fill', 'visibility', vis(smoothRainEnabled.value && smoothRainHasImage))
+    map.setPaintProperty('smooth-rain-fill', 'raster-opacity', usesGridRainSmoothing.value ? 1 : 0.78)
   }
   if (map.getLayer('grid-fill')) {
     map.setLayoutProperty('grid-fill', 'visibility', vis(props.layers.grid || props.interactiveGrid))
@@ -1046,7 +1047,7 @@ function updateQpfGrid() {
   const map = mapRef.value
   if (!map?.getSource('qpf-grid')) return
   const cells = hasSpatialResources.value ? props.qpfGridCells || [] : []
-  const signature = cells.map((cell) => `${cell.id}:${cell.qpf == null ? '' : Number(cell.qpf).toFixed(3)}`).join('|')
+  const signature = gridRainfallDisplaySignature(cells)
   if (signature === qpfGridSignature) return
   qpfGridSignature = signature
   qpfGridPending = { map, cells }
@@ -1062,44 +1063,92 @@ function updateQpfGrid() {
   })
 }
 
+function updateSmoothImage(map, url, coordinates) {
+  smoothImageUpdatePending = { map, url, coordinates }
+  if (smoothImageUpdateTimer != null) return
+  const flush = () => {
+    smoothImageUpdateTimer = null
+    const pending = smoothImageUpdatePending
+    const source = pending?.map === mapRef.value ? pending.map.getSource('smooth-rain') : null
+    if (!source || mapDestroyed) { smoothImageUpdatePending = null; return }
+    if (!source.loaded()) { smoothImageUpdateTimer = setTimeout(flush, 16); return }
+    const current = source.serialize()
+    if (current.url === pending.url) {
+      smoothImageUpdatePending = null
+      if (JSON.stringify(source.coordinates) !== JSON.stringify(pending.coordinates)) source.setCoordinates(pending.coordinates)
+      smoothRainHasImage = pending.url !== TRANSPARENT_PIXEL
+      applyLayerVisibility(pending.map)
+      return
+    }
+    // ImageSource.updateImage aborts an unfinished decode. Keep only the latest
+    // requested image and wait for the current image to finish instead.
+    source.updateImage({ url: pending.url, coordinates: pending.coordinates })
+    smoothRainHasImage = false
+    applyLayerVisibility(pending.map)
+    smoothImageUpdateTimer = setTimeout(flush, 16)
+  }
+  flush()
+}
+
+function clearSmoothRainfall(map = mapRef.value) {
+  smoothRainPending = null
+  cancelSmoothRain()
+  clearTimeout(smoothRainThrottleTimer)
+  smoothRainThrottleTimer = null
+  smoothRainLastRenderAt = 0
+  smoothRainHasImage = false
+  if (map?.getSource('smooth-rain')) updateSmoothImage(map, TRANSPARENT_PIXEL, smoothRainCoordinates())
+  applyLayerVisibility(map)
+}
+
 function updateSmoothRainfall(map = mapRef.value, { force = false } = {}) {
   if (!map?.getSource('smooth-rain')) return
   if (force && smoothRainThrottleTimer != null) {
     clearTimeout(smoothRainThrottleTimer)
     smoothRainThrottleTimer = null
   }
-  if (props.layers.smoothRain === false || forbidsStationInterpolation.value) {
-    smoothRainPending = null
-    cancelSmoothRain()
-    clearTimeout(smoothRainThrottleTimer)
-    smoothRainThrottleTimer = null
-    applyLayerVisibility(map)
+  if (!smoothRainEnabled.value) {
+    clearSmoothRainfall(map)
     return
   }
   const geometry = smoothRainGeometry()
   const bounds = smoothRainBounds()
-  if (!bounds || !hasSpatialResources.value) {
-    const source = map.getSource('smooth-rain')
-    if (typeof source.updateImage === 'function') source.updateImage({ url: TRANSPARENT_PIXEL, coordinates: smoothRainCoordinates() })
+  const gridSource = usesGridRainSmoothing.value
+  if (!bounds || !hasSpatialResources.value || (gridSource && !hasGridRainfall(props.qpfGridCells || []))) {
+    clearSmoothRainfall(map)
     return
   }
   const coordinates = smoothRainCoordinates()
-  const signature = `${bounds.flat().map((value) => Number(value).toFixed(6)).join(',')}|${smoothRainStationSignature(props.stations)}`
-  if (props.playing && !force && Date.now() - smoothRainLastRenderAt < 760) {
-    smoothRainPending = { map, geometry, bounds, coordinates, signature }
+  const contextKey = `${app.activeContext.contextKey}|${gridSource ? app.inputSelectionKey : ''}|${props.smoothRainSource}|${JSON.stringify(geometry)}`
+  if (smoothRainContextKey !== contextKey) {
+    clearSmoothRainfall(map)
+    smoothRainCache.clear()
+    smoothRainContextKey = contextKey
+  }
+  const cells = gridSource ? (props.qpfGridCells || []).map(cell => ({ ...cell, bounds: cell.bounds?.map(point => [...point]) })) : []
+  const stations = gridSource ? [] : props.stations.map(station => ({ ...station }))
+  const signature = `${contextKey}|${gridSource ? gridRainfallDisplaySignature(cells) : smoothRainStationSignature(stations)}`
+  const pending = { map, geometry, bounds, coordinates, signature, gridSource, cells, stations }
+  if (props.playing && !force && Date.now() - smoothRainLastRenderAt < (gridSource ? 160 : 760)) {
+    smoothRainPending = pending
+    cancelSmoothRain()
     scheduleSmoothRainThrottle(map)
     return
   }
   const source = map.getSource('smooth-rain')
   const cached = smoothRainCache.get(signature)
   if (cached && typeof source.updateImage === 'function') {
-    source.updateImage({ url: cached, coordinates })
+    smoothRainPending = null
+    cancelSmoothRain()
+    clearTimeout(smoothRainThrottleTimer)
+    smoothRainThrottleTimer = null
+    updateSmoothImage(map, cached, coordinates)
     smoothRainLastRenderAt = Date.now()
     applyLayerVisibility(map)
     return
   }
   applyLayerVisibility(map)
-  smoothRainPending = { map, geometry, bounds, coordinates, signature }
+  smoothRainPending = pending
   if (smoothRainFrame != null) return
   smoothRainFrame = scheduleSmoothRain(() => {
     smoothRainFrame = null
@@ -1107,16 +1156,15 @@ function updateSmoothRainfall(map = mapRef.value, { force = false } = {}) {
     smoothRainPending = null
     if (!pending || mapRef.value !== pending.map || !pending.map.getSource('smooth-rain')) return
     // 这是展示层，不是模型输入；降低显示分辨率并在空闲时生成，避免回放抢占地图重绘。
-    const url = buildSmoothRainfallDataURL({
-      stations: props.stations,
-      basin: pending.geometry,
-      bounds: pending.bounds,
-      size: app.isSelinco ? 256 : 128
-    }) || TRANSPARENT_PIXEL
+    const url = (pending.gridSource ? buildSmoothGridRainfallDataURL({
+      cells: pending.cells, basin: pending.geometry, bounds: pending.bounds, size: 192
+    }) : buildSmoothRainfallDataURL({
+      stations: pending.stations, basin: pending.geometry, bounds: pending.bounds, size: 128
+    })) || TRANSPARENT_PIXEL
     smoothRainCache.set(pending.signature, url)
     while (smoothRainCache.size > 12) smoothRainCache.delete(smoothRainCache.keys().next().value)
     const pendingSource = pending.map.getSource('smooth-rain')
-    if (typeof pendingSource.updateImage === 'function') pendingSource.updateImage({ url, coordinates: pending.coordinates })
+    if (typeof pendingSource.updateImage === 'function') updateSmoothImage(pending.map, url, pending.coordinates)
     smoothRainLastRenderAt = Date.now()
     applyLayerVisibility(pending.map)
   })
@@ -1224,10 +1272,15 @@ onBeforeUnmount(() => {
   }
   smoothRainFrame = null
   smoothRainPending = null
+  clearTimeout(smoothImageUpdateTimer)
+  smoothImageUpdateTimer = null
+  smoothImageUpdatePending = null
+  smoothRainHasImage = false
   qpfGridFrame = null
   qpfGridPending = null
   qpfGridSignature = ''
   smoothRainCache.clear()
+  smoothRainContextKey = ''
   terrainImageSignatures.clear()
   popup?.remove()
   mapRef.value?.remove()
@@ -1245,7 +1298,7 @@ watch(
   () => props.layers,
   () => {
     applyLayerVisibility(mapRef.value)
-    if (props.layers.smoothRain) updateSmoothRainfall(mapRef.value)
+    updateSmoothRainfall(mapRef.value)
   },
   { deep: true }
 )
@@ -1285,8 +1338,8 @@ watch(
 
 
 watch(
-  () => props.qpfGridCells,
-  () => updateQpfGrid(),
+  () => [props.qpfGridCells, props.smoothRainSource],
+  () => { updateQpfGrid(); updateSmoothRainfall(mapRef.value) },
   { deep: true }
 )
 

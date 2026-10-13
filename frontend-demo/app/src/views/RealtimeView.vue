@@ -70,6 +70,14 @@
               {{ item.label }}
             </label>
           </div>
+          <template v-if="usesModelInputs && app.modelScale === '1km'">
+            <div class="form-group-title">降雨显示</div>
+            <div class="seg" role="group" aria-label="降雨显示方式">
+              <button type="button" :class="{ on: monitor.rainDisplayMode !== 'smooth' }" :aria-pressed="monitor.rainDisplayMode !== 'smooth'" @click="monitor.setRainDisplayMode('grid')">网格</button>
+              <button type="button" :class="{ on: monitor.rainDisplayMode === 'smooth' }" :aria-pressed="monitor.rainDisplayMode === 'smooth'" @click="monitor.setRainDisplayMode('smooth')">平滑</button>
+            </div>
+            <p class="time-hint">同一时次的网格雨量；平滑仅用于显示。</p>
+          </template>
           <div v-if="app.hasLakeBalance" class="form-group-title">累计雨量时段</div>
           <div v-if="app.hasLakeBalance" class="seg">
             <button
@@ -131,6 +139,7 @@
             :zoom="activeZoom"
             :playing="monitor.playing"
             :qpf-grid-cells="currentPrecipCells"
+            :smooth-rain-source="usesModelInputs ? 'model-grid' : 'station-idw'"
             legend-mode="rain"
             @select-station="onSelect"
           />
@@ -146,7 +155,7 @@
           <div><span>当前降雨资料</span><b>{{ usesModelInputs ? hydrologyText(app.selectedInputProduct?.name) || '整编逐时网格降雨' : '离线降雨展示预览' }} · {{ app.activeScaleMeta.label }}</b></div>
           <div><span>图面时次</span><b>{{ usesModelInputs && !hasNananxiObservation ? '选择回放时段' : `${monitor.currentTimeLabel} · 第 ${monitor.timeIndex + 1}/${monitor.timeMax + 1} 时次` }}</b></div>
           <div><span>有效格点</span><b>{{ currentPrecipCells.length }} 个</b></div>
-          <span class="forcing-note">{{ usesModelInputs ? '模型计算网格降雨' : `${smoothRainStatus} · 离线图层仅用于展示` }}</span>
+          <span class="forcing-note">{{ rainDisplayNote }}</span>
         </div>
       </article>
 
@@ -301,7 +310,13 @@ const selectedProjectStation = computed(() => projectStations.value.find((statio
 const activeCenter = computed(() => caseData.value ? app.hasLakeBalance ? selincoProfile.center : caseData.value.spatialMetadata?.center || [0, 0] : [0, 0])
 const activeZoom = computed(() => app.hasLakeBalance ? selincoProfile.zoom : (app.basinId === 'llpq' ? 8 : 10))
 const selincoLayers = reactive({ rain: true, hydro: false, water: true, section: true, river: true, subbasin: true, rainField: false, smoothRain: false, qpfGrid: true, lake: true, glacier: true, realGrid: false, dem: true })
-const activeLayers = computed(() => app.hasLakeBalance ? selincoLayers : usesModelInputs.value ? { ...monitor.layers, smoothRain: false, rainField: false } : monitor.layers)
+const activeLayers = computed(() => app.hasLakeBalance ? selincoLayers : usesModelInputs.value ? {
+  ...monitor.layers,
+  rainDisplay: monitor.layers.qpfGrid,
+  qpfGrid: monitor.layers.qpfGrid && monitor.rainDisplayMode !== 'smooth',
+  smoothRain: monitor.layers.qpfGrid && monitor.rainDisplayMode === 'smooth' && app.modelScale === '1km',
+  rainField: false
+} : monitor.layers)
 const selectedSelincoStation = computed(() => selincoStations.find((station) => station.id === selectedSelincoId.value) || null)
 const detailOpen = computed(() => app.hasLakeBalance
   ? Boolean(selectedSelincoStation.value)
@@ -356,6 +371,9 @@ const smoothRainStatus = computed(() => {
     ? `站点雨量平滑显示 · ${smoothRainStationCount.value}站`
     : '当前时次暂无可用站点'
 })
+const rainDisplayNote = computed(() => usesModelInputs.value
+  ? app.modelScale !== '1km' ? '当前尺度未接入计算降雨' : monitor.rainDisplayMode === 'smooth' ? '网格雨量平滑显示 · 面雨量按原网格统计' : '模型计算网格降雨'
+  : `${smoothRainStatus.value} · 离线图层仅用于展示`)
 
 function metricValue(value, unit) {
   if (value == null || value === '') return '—'
@@ -387,7 +405,7 @@ const selincoLayerItems = [
   { key: 'dem', label: 'DEM' }
 ]
 const layerItems = computed(() => app.hasLakeBalance ? selincoLayerItems : usesModelInputs.value
-  ? xajLayerItems.filter((item) => item.key !== 'smoothRain').map((item) => item.key === 'qpfGrid' ? { ...item, label: app.modelScale === '1km' ? '模型整编降雨栅格' : '降雨栅格（该尺度未接入）' } : item)
+  ? xajLayerItems.filter((item) => item.key !== 'smoothRain').map((item) => item.key === 'qpfGrid' ? { key: 'rainDisplay', label: app.modelScale === '1km' ? '降雨场' : '降雨场（该尺度未接入）' } : item)
   : xajLayerItems)
 
 async function loadPrecipitation() {
@@ -528,7 +546,7 @@ watch(() => app.backendError, (message, previous) => {
 
 function setActiveLayer(key, value) {
   if (app.hasLakeBalance) selincoLayers[key] = value
-  else monitor.setLayer(key, value)
+  else monitor.setLayer(usesModelInputs.value && key === 'rainDisplay' ? 'qpfGrid' : key, value)
 }
 
 function onSelect(id) {

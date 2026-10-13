@@ -99,6 +99,10 @@ def package(destination):
                      '统一入口网页验收/browser-dispatch.json', '统一入口网页验收/main-pages/acceptance.json'):
         if (startup_acceptance / relative).is_file():
             sources.append((startup_acceptance / relative, Path('验收证据/1.11.2') / relative))
+    rain_acceptance = ROOT / '开发产物/平滑降雨显示验收_20261013'
+    for relative in ('平滑降雨显示验收.json', '最终实际启动服务/server-receipt.json', '最终浏览器验收/acceptance.json'):
+        if (rain_acceptance / relative).is_file():
+            sources.append((rain_acceptance / relative, Path('验收证据/1.11.3') / relative))
     records = []
     destination.mkdir(parents=True)
     for source, relative in sources:

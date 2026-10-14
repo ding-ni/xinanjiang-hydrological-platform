@@ -1,5 +1,17 @@
 <template>
   <section class="view-archive">
+    <header class="archive-heading"><h2>计算成果</h2><button class="btn" type="button" :disabled="operationLoading" @click="refreshOperations">刷新</button></header>
+    <section class="panel panel-pad daily-ledger">
+      <div class="daily-filters"><select v-model="dailySchemeFilter" class="input" aria-label="计算方案"><option value="">全部方案</option><option v-for="row in schemes" :key="row.id" :value="row.id">{{ row.name }}</option><option value="daily">模拟与回算</option></select><select v-model="operationType" class="input" aria-label="计算类型"><option value="">全部计算</option><option v-for="(label,type) in dailyTypes" :key="type" :value="type">{{ label }}</option></select><input v-model="operationSearch" class="input" aria-label="查找计算" placeholder="查找计算名称或时间" /><span>{{ visibleOperations.length }} 次计算</span></div>
+      <p v-if="operationError" class="warn-text" role="alert">{{ operationError }}</p>
+      <div class="table-wrap"><table class="table daily-table"><thead><tr><th>计算</th><th>参数</th><th>状态</th><th>时间</th><th></th></tr></thead><tbody><tr v-for="row in visibleOperations" :key="operationId(row)" :class="{active:operationId(row)===operationId(activeDailyOperation)}"><td>{{ operationName(row) }}</td><td>{{ row.runConfig?.parameterSnapshot?.name || row.parameterSchemeName || savedParameters.find(item=>item.id===(row.runConfig?.parameterSchemeId||row.request?.parameterSchemeId||row.parameterSchemeId))?.name || '—' }}</td><td>{{ operationStatuses[row.status] || row.status }}</td><td>{{ formatCreated(row.createdAt) }}</td><td><button class="btn mini" type="button" @click="inspectOperation(row)">查看</button><button v-if="completedOperation(row)" class="btn mini" type="button" @click="restoreOperation(row)">打开条件</button></td></tr><tr v-if="!visibleOperations.length"><td colspan="5" class="empty-cell">{{ operationLoading ? '正在读取计算…' : '暂无计算成果' }}</td></tr></tbody></table></div>
+      <DailyOperationProgress v-if="activeDailyOperation" :operation="activeDailyOperation" @cancel="cancelDailyOperation" />
+      <p v-if="dailyResultError" class="warn-text" role="alert">{{ dailyResultError }}</p>
+      <div v-if="dailyResult?.bestParameters" class="btn-row named-parameter"><button class="btn" type="button" @click="saveNamedParameter(activeDailyOperation)">保存参数</button><button class="btn" type="button" @click="openBestSimulation(activeDailyOperation,dailyResult)">采用此参数模拟</button></div>
+      <DailyResultPanel v-if="dailyResult" :operation="activeDailyOperation" :result="dailyResult" :task-id="dailyResult.primaryTaskId || dailyResult.sourceTaskId" :comparison-options="dailyComparisonOptions" :title="operationName(activeDailyOperation)" />
+      <details v-if="dailyResult?.primaryTaskId" class="daily-notes"><summary>名称与备注</summary><form @submit.prevent="saveDailyMetadata"><label>名称<input v-model="dailyMetadataDraft.name" class="input" maxlength="80" aria-label="计算成果名称" /></label><label>备注<textarea v-model="dailyMetadataDraft.notes" class="input" rows="3" maxlength="2000" aria-label="计算成果备注" /></label><button class="btn" :disabled="savingDailyMetadata">保存</button></form></details>
+    </section>
+    <details class="legacy-computations" :open="Boolean(route.query.task || selectedTaskId)"><summary>率定成果与历史计算 · {{ contextTasks.length }} 项</summary>
     <div class="metric-strip" aria-label="当前成果摘要">
       <div class="metric"><span>当前流域作业</span><b>{{ contextTasks.length }} 项</b></div>
       <div class="metric"><span>运行中</span><b>{{ runningTaskCount }}</b></div>
@@ -10,8 +22,7 @@
 
     <section class="panel panel-pad task-ledger">
       <h3 class="panel-title">
-        <span>成果工作台</span>
-        <span class="sub">模拟 · 率定 · 预报 · 状态 · 综合检验</span>
+        <span>历次计算</span>
       </h3>
       <div class="task-filters">
         <select class="input" v-model="schemeFilter" aria-label="按方案查看成果"><option value="">全部方案与历史计算</option><option v-for="row in schemes" :key="row.id" :value="row.id">{{ row.name }}</option><option value="historical">历史计算（未关联方案）</option></select>
@@ -59,13 +70,14 @@
       <section v-if="selectedTask?.resultSource === 'model-backend'" class="backend-result-inspector">
         <p v-if="taskResultError" class="warn-text">{{ taskResultError }}</p>
         <template v-if="taskResult">
-          <div class="btn-row"><button v-if="taskResult.stateCalculationTaskId || taskResult.endStateVersionId" class="btn" @click="openStates">查看模拟状态</button><button v-if="taskResult.stateCalculationTaskId || taskResult.endStateVersionId" class="btn" @click="router.push({ path: '/diagnostics', query: { source: taskResult.stateCalculationTaskId || selectedTask.taskId } })">查询河道断面流量</button></div>
+          <div class="btn-row"><button v-if="taskResult.stateCalculationTaskId || taskResult.endStateVersionId || taskResult.eventStates?.length" class="btn" @click="openStates">模拟状态</button><button v-if="taskResult.stateCalculationTaskId || taskResult.endStateVersionId" class="btn" @click="router.push({ path: '/diagnostics', query: { source: taskResult.stateCalculationTaskId || selectedTask.taskId } })">河道流量</button><button v-if="taskResult.bestParameters || taskResult.parameters" class="btn" @click="saveNamedParameter()">保存参数</button></div>
           <p v-if="taskResult.stateCalculationError" class="warn-text">最佳参数状态保存失败：{{ taskResult.stateCalculationError }}。可按最佳参数独立模拟后查看状态。</p>
           <ResultWorkbench :key="selectedTask.taskId" :task="selectedTask" :result="taskResult" :tasks="contextTasks" :metadata="resultMetadata" :definitions="app.backendCase?.parameterDefinitions || []" @saved="saveResultMetadata" @open="openTask" @simulate="openBestSimulation" />
         </template>
         <p v-else-if="!taskResultError && ['completed','archived'].includes(selectedTask.status)" class="loading-result">正在读取计算成果…</p>
       </section>
     </section>
+    </details>
 
     <details v-if="legacyConditions.length" class="panel panel-pad"><summary>历史保存条件 · {{ legacyConditions.length }} 条</summary><div v-for="row in legacyConditions" :key="row.id" class="task-filters"><span>{{ row.name }}</span><button class="btn mini" @click="restoreLegacy(row)">打开条件草稿</button></div></details>
     <div v-if="archive.contextRows.length" class="body">
@@ -243,26 +255,56 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { simulationDraft } from '@/services/resultSimulationService'
+import { useRoute, useRouter } from 'vue-router'
 import { useArchiveStore } from '@/stores/archive'
 import { useForecastStore } from '@/stores/forecast'
-import { useCalibrationStore } from '@/stores/calibration'
 import { useAppStore } from '@/stores/app'
 import { useTasksStore } from '@/stores/tasks'
 import HydrographChart from '@/components/charts/HydrographChart.vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import ContextStatusMetric from '@/components/common/ContextStatusMetric.vue'
 import ResultWorkbench from '@/components/model/ResultWorkbench.vue'
 import { modelApi, modelBackendEnabled, normalizeBackendTask } from '@/services/modelBackendService'
 import { csv, downloadText, summaryRows, SUMMARY_HEADER } from '@/services/resultPresentation'
+import { dailyClient, operationId, operationLabels, operationStatuses, completedOperation } from '@/services/dailyOperationService'
+import { useDailyOperation } from '@/composables/useDailyOperation'
+import DailyResultPanel from '@/components/model/DailyResultPanel.vue'
+import DailyOperationProgress from '@/components/model/DailyOperationProgress.vue'
 
 const archive = useArchiveStore()
 const forecast = useForecastStore()
-const calibration = useCalibrationStore()
 const app = useAppStore()
 const tasks = useTasksStore()
 const router = useRouter()
+const route = useRoute()
+const operationRows=ref([]), operationSearch=ref(''), operationType=ref(''), dailySchemeFilter=ref(''), operationLoading=ref(false), operationError=ref(''), savedParameters=ref([])
+const dailyTypes={eventSimulation:'洪水模拟',continuousSimulation:'连续模拟',continuation:'续算',hindcast:'单次回算',rollingHindcast:'滚动回算',calibration:'参数率定',manualTrial:'人工试调'}
+const {operation:activeDailyOperation,result:dailyResult,error:dailyResultError,inspect:inspectDailyOperation,cancel:cancelDailyOperation,clear:clearDailyOperation}=useDailyOperation({contextKey:()=>app.contextKey,onChange:row=>{const id=operationId(row);operationRows.value=operationRows.value.map(item=>operationId(item)===id?row:item)}})
+const operationName=row=>resultMetadata.value[row?.primaryTaskId]?.name||[row?.lineage?.schemeName || row?.name || operationLabels[row?.operation||row?.runType]||row?.runTypeLabel||'计算',row?.createdAt?.replace('T',' ').slice(0,16)].filter(Boolean).join(' · ')
+const visibleOperations=computed(()=>operationRows.value.filter(row=>(!dailySchemeFilter.value||(dailySchemeFilter.value==='daily'?!row.lineage?.schemeId:row.lineage?.schemeId===dailySchemeFilter.value))&&(!operationType.value||(row.operation||row.runType)===operationType.value)&&(!operationSearch.value||`${operationName(row)} ${row.createdAt} ${row.parameterSchemeName||''}`.includes(operationSearch.value))))
+const dailyComparisonOptions=computed(()=>operationRows.value.filter(completedOperation).map(row=>({id:operationId(row),name:operationName(row)})))
+let operationRevision=0
+async function refreshOperations(){
+  const token=++operationRevision,key=app.contextKey;operationLoading.value=true;operationError.value=''
+  try{const [rows,named]=await Promise.all([dailyClient.list(key),dailyClient.parameters()]);if(token!==operationRevision)return;operationRows.value=rows.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));savedParameters.value=named;if(route.query.operation&&operationId(activeDailyOperation.value)!==route.query.operation)await inspectDailyOperation(route.query.operation)}
+  catch(failure){if(token===operationRevision)operationError.value=failure.message}
+  finally{if(token===operationRevision)operationLoading.value=false}
+}
+function inspectOperation(row){selectedTaskId.value=null;inspectDailyOperation(operationId(row))}
+async function restoreOperation(row){
+  const id=operationId(row),kind=row.operation||row.runType
+  if(['calibration','manualTrial'].includes(kind)){
+    try{const payload=await dailyClient.result(id),scheme=row.runConfig?.request?.scheme;router.push({path:'/calibration',query:{schemeId:scheme?.id,taskId:payload.primaryTaskId}})}catch(failure){operationError.value=failure.message}
+    return
+  }
+  if(kind==='continuation'){
+    router.push({path:'/simulation',query:{source:row.runConfig?.sourceTaskId,continue:'1',operation:id,restore:'1',label:operationName(row)}})
+    return
+  }
+  router.push({path:['hindcast','rollingHindcast'].includes(kind)?'/forecast':'/simulation',query:{operation:id,restore:'1'}})
+}
+onMounted(refreshOperations)
+watch(()=>[app.contextKey,route.query.operation],()=>{clearDailyOperation();operationRows.value=[];refreshOperations();refreshMetadata()})
 const compareId = ref(null)
 const taskTypeFilter = ref('')
 const taskStateFilter = ref('')
@@ -272,13 +314,24 @@ const selectedTaskId = ref(null)
 const taskResult = ref(null)
 const taskResultError = ref('')
 const resultMetadata = ref({}), collectionFilter = ref(''), favoriteFilter = ref(false), catalogError = ref(''), exporting = ref(false)
+const dailyMetadataDraft=ref({name:'',notes:''}),savingDailyMetadata=ref(false)
+watch(()=>dailyResult.value?.primaryTaskId,id=>{const saved=resultMetadata.value[id]||{};dailyMetadataDraft.value={name:saved.name||'',notes:saved.notes||''}})
+async function saveDailyMetadata(){
+  const id=dailyResult.value?.primaryTaskId;if(!id||savingDailyMetadata.value)return
+  savingDailyMetadata.value=true;operationError.value=''
+  try{const saved=resultMetadata.value[id]||{},row=await modelApi(`result-metadata/${encodeURIComponent(id)}`,{method:'POST',body:{name:dailyMetadataDraft.value.name,notes:dailyMetadataDraft.value.notes,collection:saved.collection||'',favorite:saved.favorite||false,revision:saved.revision||0}});resultMetadata.value={...resultMetadata.value,[id]:row}}
+  catch(failure){operationError.value=failure.message}
+  finally{savingDailyMetadata.value=false}
+}
 const collections = computed(() => [...new Set(contextTasks.value.map(row => resultMetadata.value[row.taskId]?.collection).filter(Boolean))].sort())
 const successfulFiltered = computed(() => filteredTasks.value.filter(row => row.resultSource === 'model-backend' && ['completed', 'archived'].includes(row.status)))
 async function refreshMetadata() {
   if (!modelBackendEnabled()) return
   catalogError.value = ''
+  const key=app.contextKey
   try {
     const [catalog, named, legacy] = await Promise.all([modelApi('result-catalog'), modelApi('model-schemes'), modelApi('database/schemes')])
+    if(key!==app.contextKey)return
     resultMetadata.value = catalog.metadata; schemes.value = named.schemes; legacyConditions.value = legacy.schemes
   }
   catch (failure) { catalogError.value = failure.message }
@@ -310,7 +363,7 @@ watch([selectedTaskId, () => tasks.taskById(selectedTaskId.value)?.status, () =>
     if (revision === resultRequest) taskResultError.value = error.message
   }
 })
-const contextTasks = computed(() => tasks.tasksForContext(app.contextKey))
+const contextTasks = computed(() => { const childIds=new Set(operationRows.value.flatMap(row=>row.childTaskIds||[]));return tasks.tasksForContext(app.contextKey).filter(row=>!childIds.has(row.taskId)) })
 const taskTypeOptions = computed(() => [...new Set(contextTasks.value.map((task) => task.runType))])
 const taskStateOptions = computed(() => [...new Set(contextTasks.value.map((task) => task.status))])
 const filteredTasks = computed(() => {
@@ -328,6 +381,7 @@ const filteredTasks = computed(() => {
   })
 })
 const selectedTask = computed(() => contextTasks.value.find((task) => task.taskId === selectedTaskId.value) || null)
+watch(()=>[route.query.task,contextTasks.value.length],()=>{if(route.query.task&&contextTasks.value.some(row=>row.taskId===route.query.task))selectedTaskId.value=route.query.task},{immediate:true})
 const selectedTaskLineage = computed(() => {
   if (!selectedTask.value) return {}
   const task = selectedTask.value
@@ -365,88 +419,54 @@ function taskStatusTag(status) {
 }
 async function openTask(task) {
   const config = task.runConfig || {}
-  const sourceBundle = config.inputs?.sourceBundleVersionId || config.inputs?.bundleVersionId
-  if (task.runType === 'stateImport') {
-    app.prepareHandoff('state', { sourcePage: 'archive', sourceLabel: '导入状态', stateVersionId: `STATE-${task.taskId}`, issueTime: config.period?.endTime })
-    router.push('/state')
+  if (['continuousSimulation','eventSimulation'].includes(task.runType)) {
+    router.push({path:'/simulation',query:{task:task.taskId}})
     return
   }
-  if (calibration.running) { ElMessage.error('率定工作区有正在执行的任务，请完成或停止后恢复条件。'); return }
-  app.setBasin(config.domainId || app.basinId)
-  if (config.modelConfigId) app.setModelConfig(config.modelConfigId)
-  if (task.resultSource === 'model-backend' && sourceBundle && sourceBundle !== app.selectedInputBundleVersionId) {
-    try { await app.selectInputBundleVersion(sourceBundle) }
-    catch (error) { ElMessage.error(`无法恢复原任务输入：${error.message}`); return }
+  if(['continuousCalibration','eventCalibration'].includes(task.runType)){
+    router.push({path:'/calibration',query:{schemeId:config.scheme?.id,taskId:task.taskId}})
+    return
   }
-  if (config.routing?.versionId) app.updateWorkContext({ selectedRoutingVersionId: config.routing.versionId })
+  if (task.runType === 'stateImport') {
+    router.push({path:'/state',query:{source:task.taskId,label:resultMetadata.value[task.taskId]?.name||'导入状态'}})
+    return
+  }
   if (['pointQuery', 'diagnosticExperiment', 'productionWorkflow', 'spatialExport'].includes(task.runType)) {
     router.push({ path: '/diagnostics', query: { task: task.taskId } })
     return
   }
-  const common = {
-    sourcePage: 'archive',
-    sourceLabel: `成果记录 ${task.taskId}`,
-    issueTime: config.issueTime || config.targetTime || config.startTime || app.workContext.issueTime,
-    inputBundleVersionId: config.inputs?.bundleVersionId || config.inputBundleVersionId || config.observationDataId || null,
-    parameterVersionId: config.parameterVersionId || app.paramVersion,
-    stateVersionId: config.stateVersionId || config.sourceStateVersionId || app.stateVersion,
-    eventSetVersionId: config.eventSetVersionId || config.lineage?.eventSetVersionId || null,
-    resultVersionId: config.resultVersionId || config.lineage?.resultVersionId || task.resultVersionId || null,
-    modelConfigVersionId: config.modelConfigVersionId || config.modelConfigId || null,
-    sectionId: config.sectionId || null,
-    sourceTaskId: task.taskId
-  }
-
-  if (['continuousSimulation', 'continuousCalibration', 'eventCalibration', 'eventSimulation'].includes(task.runType)) {
-    calibration.setContext(app.basinId, app.modelScale, app.modelConfigId)
-    calibration.loadFromTaskConfig(task.runType, config)
-    calibration.schemeWindows = (config.period?.events || config.events || []).filter(row => !calibration.events.some(event => event.id === row.id && event.start === row.start && event.end === row.end && event.runtimeRegistered)).map(row => ({ ...row, sourceBundleVersionId: sourceBundle, runtimeRegistered: false, status: 'active' }))
-    calibration.modelSchemeId = config.scheme?.id || null
-    calibration.modelSchemeRevision = config.scheme?.revision || 0
-    calibration.modelSchemeLatestRevision = config.scheme?.id ? (await modelApi(`model-schemes/${config.scheme.id}`)).latestRevision : 0
-    calibration.modelSchemeName = config.lineage?.schemeName || task.lineage?.schemeName || ''
-    calibration.requiredInputBundleVersionId = sourceBundle
-    calibration.rainfallMethod = config.inputs?.rainfallMethod || 'reuse'
-    calibration.stationSourceId = config.inputs?.stationSourceId || null
-    calibration.idwPower = config.inputs?.idwPower ?? 2; calibration.minimumStations = config.inputs?.minimumStations ?? 1
-    app.prepareHandoff('calibration', common)
-    router.push('/calibration')
-  } else if (['stateInitialization', 'stateContinuation'].includes(task.runType)) {
-    app.prepareHandoff('state', common)
-    router.push('/state')
+  if (['stateInitialization', 'stateContinuation'].includes(task.runType)) {
+    router.push({path:'/state',query:{source:task.taskId,label:resultMetadata.value[task.taskId]?.name||task.runTypeLabel}})
   } else if (task.runType === 'forecast') {
-    app.prepareHandoff('forecast', common)
     router.push({ path: '/forecast', query: { task: task.taskId } })
   }
-  ElMessage.success('已打开计算草稿')
 }
 async function restoreLegacy(row) {
   try {
     const request = await modelApi(`database/schemes/${row.id}`)
-    const type = request.runType === 'simulation' ? 'continuousSimulation' : request.runType === 'calibration' ? request.period.mode === 'continuous' ? 'continuousCalibration' : 'eventCalibration' : request.runType
-    await openTask({ ...normalizeBackendTask({ taskId: row.sourceTaskId, runConfig: request, runType: type, resultSource: 'model-backend' }), runType: type })
+    if(request.runType==='calibration')router.push({path:'/calibration',query:{legacyConditionId:row.id}})
+    else if(request.runType==='simulation')router.push({path:'/simulation',query:{legacyConditionId:row.id,sourceTask:row.sourceTaskId}})
+    else if(row.sourceTaskId)await openTask({...normalizeBackendTask({taskId:row.sourceTaskId,runConfig:request,runType:request.runType,resultSource:'model-backend'}),runType:request.runType})
   } catch (failure) { ElMessage.error(failure.message) }
 }
 async function openStates() {
   try {
-    const id = taskResult.value.stateCalculationTaskId || selectedTask.value.taskId
-    const result = id === selectedTask.value.taskId ? taskResult.value : await tasks.getResult(id)
-    if (!result.endStateVersionId) throw new Error('状态保存计算尚未完成，请查看对应模拟任务进度。')
-    app.prepareHandoff('state', { sourcePage: 'archive', sourceLabel: '计算成果状态', stateVersionId: result.endStateVersionId, sourceTaskId: id })
-    router.push('/state')
+    router.push({path:'/state',query:{source:selectedTask.value.taskId,label:resultMetadata.value[selectedTask.value.taskId]?.name||selectedTask.value.lineage?.schemeName||selectedTask.value.runTypeLabel}})
   } catch (failure) { ElMessage.warning(failure.message) }
 }
 
+async function saveNamedParameter(task=selectedTask.value){
+  if(!task)return null
+  try{
+    const {value}=await ElMessageBox.prompt('参数名称','保存参数',{inputPlaceholder:'填写参数名称',confirmButtonText:'保存',cancelButtonText:'取消',inputValidator:value=>Boolean(value?.trim())||'请填写名称'})
+    const row=await dailyClient.saveParameter({name:value.trim(),sourceTaskId:task.taskId});savedParameters.value=[row,...savedParameters.value.filter(item=>item.id!==row.id)]
+    ElMessage.success('参数已保存');return row
+  }catch(failure){if(failure!=='cancel'&&failure!=='close')ElMessage.error(failure.message);return null}
+}
 async function openBestSimulation(task, result) {
   try {
-    const child = result.stateCalculationTaskId ? tasks.taskById(result.stateCalculationTaskId) : null
-    const request = simulationDraft(task.request || task.runConfig, result, child?.request || child?.runConfig)
-    const draft = normalizeBackendTask({ ...task, runConfig: request })
-    draft.runType = request.runType === 'simulation' ? 'continuousSimulation' : 'eventSimulation'
-    // Preserve the parent scheme identity while opening a new calculation draft.
-    draft.runConfig.scheme = task.runConfig.scheme
-    await openTask(draft)
-    ElMessage.success('最佳参数已带入模拟草稿')
+    const named=savedParameters.value.find(row=>row.sourceTaskId===task.taskId)||await saveNamedParameter(task)
+    if(named)router.push({path:'/simulation',query:{parameter:named.id,task:result?.primaryTaskId||task.taskId}})
   } catch (failure) { ElMessage.error(failure.message) }
 }
 
@@ -532,6 +552,8 @@ function reload() {
 </script>
 
 <style scoped>
+.daily-notes{border-top:1px solid #e1e8e0;padding-top:15px;font-size:12px;color:#5d7865}.daily-notes summary{cursor:pointer}.daily-notes form{display:grid;grid-template-columns:1fr 2fr auto;gap:12px;align-items:end;margin-top:12px}.daily-notes label{display:grid;gap:7px}.daily-notes .input{width:100%;min-width:0}.daily-notes textarea{resize:vertical}.named-parameter{margin-top:15px}@media(max-width:700px){.daily-notes form{grid-template-columns:1fr}}
+.archive-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}.archive-heading h2{margin:0;font-size:23px;color:#2b5141;font-family:'Noto Serif CJK SC','SimSun',serif}.daily-filters{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}.daily-filters select{width:150px}.daily-filters input{flex:1;min-width:180px}.daily-filters span{font-size:12px;color:#75867a}.daily-table{min-width:700px}.daily-table td{font-size:12px}.daily-ledger>.table-wrap{max-height:350px;overflow:auto}.daily-ledger>.daily-result{border-top:1px solid #e0e7df;margin-top:18px;padding-top:24px}.legacy-computations{margin-top:10px}.legacy-computations>summary{cursor:pointer;font-size:13px;color:#54705e;padding:12px 0}.legacy-computations>.metric-strip{margin:8px 0}
 .view-archive {
   display: flex;
   flex-direction: column;

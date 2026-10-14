@@ -5,7 +5,7 @@
       <span v-if="hydrograph.obs?.some(row => row.value != null)"><i class="line observed" />实测流量</span>
       <span><i class="line forecast" />{{ modelName }}</span>
       <span v-if="showPrev && hydrograph.prev?.length && mode !== 'archive'"><i class="line previous" />上一份预报</span>
-      <span v-if="overlay?.forecast?.length"><i class="line overlay" />对比档案</span>
+      <span v-if="overlay?.forecast?.length"><i class="line overlay" />{{ overlayLabel }}</span>
     </div>
     <BaseChart class="hydrograph-chart" :option="option" />
   </div>
@@ -21,6 +21,7 @@ const props = defineProps({
   showPrev: { type: Boolean, default: true },
   mode: { type: String, default: 'forecast' },
   overlay: { type: Object, default: null },
+  overlayLabel: { type: String, default: '对比档案' },
   showThresholds: { type: Boolean, default: false },
   warnFlow: { type: Number, default: null },
   ensureFlow: { type: Number, default: null },
@@ -29,7 +30,7 @@ const props = defineProps({
 })
 
 const hasData = computed(() => Boolean(props.hydrograph?.forecast?.length))
-const modelName = computed(() => props.mode === 'calibration' ? '模拟流量' : '预报流量')
+const modelName = computed(() => ['calibration','simulation'].includes(props.mode) ? '模拟流量' : props.mode==='hindcast' ? '回算流量' : '预报流量')
 
 function finiteValue(value) {
   return value != null && value !== '' && Number.isFinite(Number(value)) ? Number(value) : null
@@ -50,6 +51,8 @@ const option = computed(() => {
 
   const times = h.forecast.map((item) => item.time)
   const isCal = props.mode === 'calibration'
+  const isSimulation = props.mode === 'simulation'
+  const isHindcast = props.mode === 'hindcast'
   const isArchive = props.mode === 'archive'
   const flowOnly = props.displayMode === 'flow'
   const flowAxis = flowOnly ? 0 : 1
@@ -68,7 +71,7 @@ const option = computed(() => {
     markLineData.push({
       xAxis: startMark,
       lineStyle: { type: 'solid', color: '#16877D', width: 1.4 },
-      label: { formatter: isCal ? '率定起点' : '起报时刻', color: '#126a64', fontWeight: 700, fontSize: 10, position: 'insideEndTop' }
+      label: { formatter: isCal ? '率定起点' : isSimulation ? '模拟起点' : '起报时刻', color: '#126a64', fontWeight: 700, fontSize: 10, position: 'insideEndTop' }
     })
   }
   if (props.showThresholds && props.warnFlow != null) {
@@ -93,12 +96,12 @@ const option = computed(() => {
       lineStyle: { width: 2.5, type: isCal ? 'dashed' : 'solid', color: '#D55E00' }, emphasis: { focus: 'series' }, z: 7,
       markPoint: {
         symbol: 'circle', symbolSize: 13,
-        data: peakX && peakVal != null ? [{ name: isCal ? '模拟峰' : '预报洪峰', coord: [peakX, peakVal], value: Number(peakVal.toFixed(2)) }] : [],
+        data: peakX && peakVal != null ? [{ name: isCal || isSimulation ? '模拟峰' : isHindcast ? '回算洪峰' : '预报洪峰', coord: [peakX, peakVal], value: Number(peakVal.toFixed(2)) }] : [],
         itemStyle: { color: '#D55E00', borderColor: '#fff', borderWidth: 2 },
         label: { show: true, formatter: ({ value }) => `${value} m³/s`, position: 'top', distance: 8, color: '#9d3d00', fontWeight: 700, fontSize: 11 }
       },
       markLine: { symbol: 'none', silent: true, data: markLineData },
-      markArea: !isCal && !isArchive && times.includes(startMark) ? { silent: true, data: [[{ xAxis: times[0], itemStyle: { color: 'rgba(22,135,125,0.035)' } }, { xAxis: startMark }], [{ xAxis: startMark, itemStyle: { color: 'rgba(213,94,0,0.025)' } }, { xAxis: times[times.length - 1] }]] } : undefined
+      markArea: !isCal && !isSimulation && !isArchive && times.includes(startMark) ? { silent: true, data: [[{ xAxis: times[0], itemStyle: { color: 'rgba(22,135,125,0.035)' } }, { xAxis: startMark }], [{ xAxis: startMark, itemStyle: { color: 'rgba(213,94,0,0.025)' } }, { xAxis: times[times.length - 1] }]] } : undefined
     }
   )
 
@@ -108,7 +111,7 @@ const option = computed(() => {
   }
   if (props.overlay?.forecast?.length) {
     const overlayMap = new Map(props.overlay.forecast.map((item) => [item.time, finiteValue(item.value)]))
-    series.push({ name: '对比档案', type: 'line', xAxisIndex: flowAxis, yAxisIndex: flowAxis, data: times.map((time) => overlayMap.get(time) ?? null), connectNulls: false, showSymbol: false, lineStyle: { width: 1.8, type: 'dotted', color: '#7B61A8' }, z: 4 })
+    series.push({ name: props.overlayLabel || '对比档案', type: 'line', xAxisIndex: flowAxis, yAxisIndex: flowAxis, data: times.map((time) => overlayMap.get(time) ?? null), connectNulls: false, showSymbol: false, lineStyle: { width: 1.8, type: 'dotted', color: '#7B61A8' }, z: 4 })
   }
 
   return {

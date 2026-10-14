@@ -1,6 +1,6 @@
 <template>
   <nav class="sidebar">
-    <div class="group-label">业务流程</div>
+    <div class="group-label">日常作业</div>
     <RouterLink
       v-for="item in mainNav"
       :key="item.path"
@@ -11,25 +11,29 @@
       <component :is="item.icon" class="icon" aria-hidden="true" />
       <span class="label">{{ item.label }}</span>
     </RouterLink>
+    <div class="group-label model-label">模型整定</div>
+    <RouterLink v-for="item in modelNav" :key="item.path" :to="item.path" class="nav-item" :class="{active:route.path === item.path}"><component :is="item.icon" class="icon" aria-hidden="true" /><span class="label">{{ item.label }}</span></RouterLink>
+    <RouterLink to="/system" class="nav-item system-item" :class="{active:route.path === '/system'}"><SetUp class="icon" aria-hidden="true" /><span class="label">工作区与系统</span></RouterLink>
   </nav>
 </template>
 
 <script setup>
 import { useRoute } from 'vue-router'
-import { DataAnalysis, FolderOpened, TrendCharts, Timer, SetUp, Operation, Coin } from '@element-plus/icons-vue'
+import { DataAnalysis, FolderOpened, TrendCharts, SetUp, Operation, Coin } from '@element-plus/icons-vue'
 
 const route = useRoute()
 
 const mainNav = [
   { path: '/realtime', name: 'realtime', label: '雨水情', icon: DataAnalysis },
   { path: '/data', name: 'data', label: '水文资料库', icon: Coin },
-  { path: '/calibration', name: 'calibration', label: '率定与模拟', icon: TrendCharts },
-  { path: '/state', name: 'state', label: '模拟状态', icon: Timer },
+  { path: '/simulation', name: 'simulation', label: '洪水模拟', icon: TrendCharts },
   { path: '/forecast', name: 'forecast', label: '洪水预报', icon: TrendCharts },
-  { path: '/diagnostics', name: 'diagnostics', label: '模型诊断', icon: Operation },
-  { path: '/archive', name: 'archive', label: '成果管理', icon: FolderOpened },
-  { path: '/config', name: 'config', label: '模型与资料', icon: SetUp },
-  { path: '/system', name: 'system', label: '工作区与系统', icon: SetUp }
+  { path: '/archive', name: 'archive', label: '计算成果', icon: FolderOpened }
+]
+const modelNav = [
+  {path:'/calibration',label:'参数率定',icon:TrendCharts},
+  {path:'/config',label:'模型与资料',icon:SetUp},
+  {path:'/diagnostics',label:'进阶诊断',icon:Operation}
 ]
 </script>
 
@@ -53,6 +57,8 @@ const mainNav = [
 .group-label:first-child {
   margin-top: 2px;
 }
+.model-label {margin-top:26px;}
+.system-item {margin-top:auto;}
 .nav-item {
   display: flex;
   align-items: center;

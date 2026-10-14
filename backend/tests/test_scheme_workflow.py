@@ -59,6 +59,62 @@ class SchemeTests(unittest.TestCase):
             after = local_observations_digest(InputProducts(runtime_root=root / 'runtime'), '2017-01-01T00:00', '2017-01-01T03:00')
             self.assertNotEqual(before, after)
 
+    def test_local_digest_preserves_original_order_sources_and_station_metadata(self):
+        import hashlib
+        import json
+        from hydro_database import hour
+        from test_hydro_database import observations, conflicting_rain
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            public = observations(root / 'public')
+            database = HydroDatabase(root / 'runtime')
+            database.import_existing(public, public / 'events.json')
+            products = InputProducts(runtime_root=root / 'runtime')
+            first, last = '2017-01-01T00:00', '2017-01-01T03:00'
+
+            def legacy_digest():
+                digest = hashlib.sha256()
+                with database.connect() as db:
+                    for row in db.execute('''SELECT station_id,variable,time_hour,value,source_id
+                            FROM observations WHERE time_hour BETWEEN ? AND ?
+                            ORDER BY station_id,variable,time_hour,source_id''', (hour(first), hour(last))):
+                        digest.update(json.dumps(list(row), separators=(',', ':')).encode())
+                    for row in db.execute('SELECT * FROM stations ORDER BY station_id'):
+                        digest.update(json.dumps(list(row), separators=(',', ':')).encode())
+                return digest.hexdigest()
+
+            original = local_observations_digest(products, first, last)
+            self.assertEqual(original, legacy_digest())
+            conflicting_rain(database, first)
+            with database.connect() as db:
+                db.execute('INSERT INTO source_files VALUES (?,?,?,?,?,?,?)',
+                           ('ALT-river', 'nananxi-xufan', 'river', 'observations/river/alternate.json', '1' * 64, 2, 'test'))
+                db.executemany('INSERT INTO observations VALUES (?,?,?,?,?,?)', [
+                    ('ALT-river', 'nananxi-xufan', '70115800', 'flow', hour(first), 7.5),
+                    ('ALT-river', 'nananxi-xufan', '70115800', 'level', hour(first), None),
+                ])
+            conflicted = local_observations_digest(products, first, last)
+            self.assertEqual(conflicted, legacy_digest())
+            self.assertNotEqual(conflicted, original)
+
+            # Unrelated hours do not change the selected-period identity.
+            with database.connect() as db:
+                db.executemany('INSERT INTO observations VALUES (?,?,?,?,?,?)', [
+                    ('ALT-rain', 'nananxi-xufan', '70115800', 'rain', hour(first) - 1, 50.),
+                    ('ALT-river', 'nananxi-xufan', '70115800', 'flow', hour(last) + 1, 99.),
+                ])
+            self.assertEqual(local_observations_digest(products, first, last), conflicted)
+            self.assertEqual(local_observations_digest(products, first, last), legacy_digest())
+
+            # Station coordinates still belong to the same source identity.
+            with database.connect() as db:
+                db.execute('UPDATE stations SET lon=lon+0.01 WHERE project_id=? AND station_id=?',
+                           ('nananxi-xufan', '70149600'))
+            relocated = local_observations_digest(products, first, last)
+            self.assertEqual(relocated, legacy_digest())
+            self.assertNotEqual(relocated, conflicted)
+
 
 class PreparationTests(unittest.TestCase):
     def setUp(self):
@@ -152,6 +208,83 @@ class PreparationTests(unittest.TestCase):
         self.assertTrue(actual.equals(times))
         np.testing.assert_array_equal(rain, np.full((6, 3), 2.))
 
+    def test_independent_floods_prepare_only_selected_warmup_intervals(self):
+        import numpy as np
+        import pandas as pd
+        import xarray as xr
+        from strict_forcing import load_hourly_forcing
+        calls = []
+        def observations(products, parent, first, last, folder):
+            calls.append((first, last))
+            block = pd.date_range(first, last, freq='h')
+            return block, ['rain-A'], [(119., 30.)], np.full((len(block), 1), 2.), [1.] * len(block), 'LOCAL_OBSERVATIONS', 'LOCAL_OBSERVATIONS'
+        period = {'mode': 'event', 'warmupDays': 2/24, 'events': [
+            {'id': 'EARLY', 'start': '1964-07-01T00:00', 'end': '1964-07-01T03:00', 'purpose': '率定'},
+            {'id': 'LATE', 'start': '2024-07-01T00:00', 'end': '2024-07-01T03:00', 'purpose': '验证'},
+            {'id': 'OVERLAP', 'start': '2024-07-01T03:00', 'end': '2024-07-01T05:00', 'purpose': '验证'},
+        ]}
+        with patch('scheme_inputs.station_block', observations):
+            result = self.prepare(period, rainfallMethod='stationIdw', operationPurpose='simulation')
+        self.assertEqual(result['issues'], [])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([(first.isoformat(), last.isoformat()) for first, last in calls], [
+            ('1964-06-30T22:00:00', '1964-07-01T03:00:00'),
+            ('2024-06-30T22:00:00', '2024-07-01T05:00:00')])
+        manifest = read_json(self.products.products_root / result['productVersionId'] / 'manifest.json')
+        self.assertEqual(manifest['coverage']['hours'], 14)
+        self.assertEqual(manifest['coverage']['years'], [1964, 2024])
+        self.assertEqual(len(manifest['coverage']['intervals']), 2)
+        directory = self.products._path(manifest['precipitationDirectory'])
+        self.assertEqual(len(list(directory.glob('*.nc'))), 2)
+        with xr.open_dataset(directory / 'nananxi_precip_hourly_1km_2024.nc', engine='h5netcdf') as dataset:
+            self.assertEqual(len(dataset.time), 8)
+
+    def test_disjoint_intervals_in_one_year_share_a_sparse_file(self):
+        import numpy as np
+        import pandas as pd
+        import xarray as xr
+        calls = []
+        def observations(products, parent, first, last, folder):
+            calls.append((first, last))
+            block = pd.date_range(first, last, freq='h')
+            return block, ['rain-A'], [(119., 30.)], np.full((len(block), 1), 2.), [1.] * len(block), 'LOCAL_OBSERVATIONS', 'LOCAL_OBSERVATIONS'
+        period = {'mode': 'event', 'warmupDays': 0, 'events': [
+            {'id': 'FIRST', 'start': '2024-01-01T00:00', 'end': '2024-01-01T03:00', 'purpose': '率定'},
+            {'id': 'SECOND', 'start': '2024-12-01T00:00', 'end': '2024-12-01T03:00', 'purpose': '验证'}]}
+        with patch('scheme_inputs.station_block', observations):
+            result = self.prepare(period, rainfallMethod='stationIdw', operationPurpose='simulation')
+        self.assertEqual(len(calls), 2)
+        manifest = read_json(self.products.products_root / result['productVersionId'] / 'manifest.json')
+        directory = self.products._path(manifest['precipitationDirectory'])
+        self.assertEqual(len(list(directory.glob('*.nc'))), 1)
+        with xr.open_dataset(directory / 'nananxi_precip_hourly_1km_2024.nc', engine='h5netcdf') as dataset:
+            self.assertEqual(len(dataset.time), 8)
+            self.assertEqual(len(set(dataset.time.values)), 8)
+
+    def test_continuous_origin_keeps_full_drive_between_evaluation_windows(self):
+        from scheme_inputs import required_drive_intervals
+        body = {'period': {'mode': 'event'}, 'statePolicy': 'continuous-origin',
+                'start': '2023-12-31T00:00:00', 'end': '2025-01-01T00:00:00', 'warmupHours': 168,
+                'windows': [{'start': '2024-01-01T00:00:00', 'end': '2024-01-02T00:00:00'},
+                            {'start': '2025-01-01T00:00:00', 'end': '2025-01-01T00:00:00'}]}
+        self.assertEqual(required_drive_intervals(body), [{'start': body['start'], 'end': body['end']}])
+
+    def test_sparse_source_digest_ignores_unselected_gap_but_tracks_selected_rain(self):
+        from test_hydro_database import observations, conflicting_rain
+        from hydro_database import hour
+        database = HydroDatabase(self.products.runtime_root)
+        public = observations(self.root / 'public-sparse')
+        database.import_existing(public, public / 'events.json')
+        ranges = [{'start': '2017-01-01T00:00', 'end': '2017-01-01T00:00'},
+                  {'start': '2017-01-01T03:00', 'end': '2017-01-01T03:00'}]
+        first = local_observations_digest(self.products, ranges[0]['start'], ranges[-1]['end'], ranges)
+        conflicting_rain(database, '2017-01-01T01:00')
+        self.assertEqual(local_observations_digest(self.products, ranges[0]['start'], ranges[-1]['end'], ranges), first)
+        with database.connect() as db:
+            db.execute('INSERT INTO observations VALUES (?,?,?,?,?,?)',
+                ('ALT-rain', 'nananxi-xufan', '70115800', 'rain', hour(ranges[0]['start']), 12.))
+        self.assertNotEqual(local_observations_digest(self.products, ranges[0]['start'], ranges[-1]['end'], ranges), first)
+
     def test_configured_sql_stations_prepare_rain_and_flow_without_mocking(self):
         import numpy as np
         from hydro_database import hour
@@ -207,6 +340,34 @@ class PreparationTests(unittest.TestCase):
         result = self.prepare({'startTime': '2018-01-01T00:00', 'endTime': '2018-01-01T03:00', 'warmupDays': 2/24})
         self.assertEqual(result['issues'], [])
         self.assertTrue(result['reused'])
+
+    def test_event_simulation_separates_driving_gaps_from_missing_observations(self):
+        self.fixture.flows = [None] * 6
+        self.fixture.write_flow()
+        self.products = InputProducts(self.fixture.root, self.root / 'event-missing-flow-runtime')
+        period = {'mode': 'event', 'warmupDays': 2/24,
+                  'events': [{'id': 'USER-SIMULATION', 'start': '2018-01-01T00:00',
+                              'end': '2018-01-01T03:00', 'purpose': '模拟'}]}
+        result = self.prepare(period, operationPurpose='simulation')
+        self.assertEqual(result['issues'], [])
+        manifest = read_json(self.products.products_root / result['productVersionId'] / 'manifest.json')
+        record = read_json(self.products._path(manifest['paths']['events']))['packages'][0]
+        self.assertEqual(record['status'], 'ready')
+        self.assertEqual(record['observationCoverage']['valid_hours'], 0)
+        self.assertEqual(record['observedInputs']['riverCompleteness'], 0)
+        period['events'][0]['end'] = '2018-01-01T05:00'
+        missing = self.prepare(period, operationPurpose='simulation')
+        self.assertEqual(missing['issues'][0]['missingIntervals'][0]['hours'], 2)
+        self.assertNotIn('评价期实测流量不足', missing['issues'][0]['reasons'])
+
+    def test_preparation_quality_is_not_reused_between_calibration_and_simulation(self):
+        body = {'requestId': 'PREP-PURPOSE', 'operation': 'schemeInput', 'projectId': 'nananxi-xufan',
+                'resolutionId': '1km', 'period': {'mode': 'event', 'warmupDays': 0,
+                    'events': [{'id': 'xf-31180101', 'start': '2018-01-01T00:00',
+                                'end': '2018-01-01T03:00', 'purpose': '率定'}]}}
+        calibration_request = normalize_preparation({**body, 'operationPurpose': 'calibration'}, self.products)
+        simulation_request = normalize_preparation({**body, 'operationPurpose': 'simulation'}, self.products)
+        self.assertNotEqual(calibration_request['preparationKey'], simulation_request['preparationKey'])
 
     def test_fixed_simulation_does_not_apply_calibration_policy_to_saved_science(self):
         from science_context import ScienceVersions

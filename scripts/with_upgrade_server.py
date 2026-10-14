@@ -37,10 +37,14 @@ def main():
                         help='Use the 20261012 CMD entry at its fixed workspace and port 18890')
     parser.add_argument('--exercise-browser-launch', action='store_true',
                         help='Keep the CMD launcher browser dispatch enabled for a configured test browser')
+    parser.add_argument('--staff-existing', action='store_true',
+                        help='Open saved staff acceptance work without importing additional observations')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.exercise_browser_launch and not (args.windows_launcher or args.upgrade_launcher):
         parser.error('Browser dispatch verification requires an actual CMD launcher')
+    if args.staff_existing and (args.windows_launcher or args.upgrade_launcher):
+        parser.error('Saved staff acceptance uses its own isolated service')
     if listening(args.port):
         raise RuntimeError('Test port already in use; existing process is never replaced')
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
@@ -51,6 +55,10 @@ def main():
     environment = {**os.environ, 'XAJ_RUNTIME_DIR': str(Path(args.runtime).resolve()),
                    'PYTHONUTF8': '1', 'PYTHONDONTWRITEBYTECODE': '1'}
     server_command = [str(ROOT / 'backend/.venv/Scripts/python.exe'), '-B', '-u', str(ROOT / 'backend/server.py'), '--port', str(args.port)]
+    if args.staff_existing:
+        server_command = [str(ROOT / 'backend/.venv/Scripts/python.exe'), '-B', '-u',
+                          str(ROOT / 'scripts/staff_acceptance_server.py'),
+                          '--workspace', environment['XAJ_RUNTIME_DIR'], '--port', str(args.port), '--existing']
     if args.windows_launcher or args.upgrade_launcher:
         if os.name != 'nt':
             raise ValueError('The CMD launcher verification requires Windows')

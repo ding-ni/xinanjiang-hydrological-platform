@@ -15,14 +15,23 @@ from common import MODEL, now, read_json, write_json, clean
 from input_products import hourly_time, manifest_digest
 
 
-def local_observations_digest(products, start, end):
+def local_observations_digest(products, start, end, intervals=None):
     import hashlib
     import json
     from hydro_database import HydroDatabase, hour
     digest = hashlib.sha256()
+    intervals = intervals or [{'start': start, 'end': end}]
     with HydroDatabase(products.runtime_root).connect() as db:
-        for row in db.execute('SELECT station_id,variable,time_hour,value,source_id FROM observations WHERE time_hour BETWEEN ? AND ? ORDER BY station_id,variable,time_hour,source_id', (hour(start), hour(end))):
-            digest.update(json.dumps(list(row), separators=(',', ':')).encode())
+        db.execute('BEGIN')
+        # Seek the selected hours through the existing station/variable key;
+        # reading a short period must not scan the entire historical archive.
+        for interval in intervals:
+            for row in db.execute('''SELECT o.station_id,o.variable,o.time_hour,o.value,o.source_id
+                    FROM stations AS s CROSS JOIN observations AS o
+                    WHERE o.project_id=s.project_id AND o.station_id=s.station_id
+                      AND o.variable IN ('rain','level','flow') AND o.time_hour BETWEEN ? AND ?
+                    ORDER BY o.station_id,o.variable,o.time_hour,o.source_id''', (hour(interval['start']), hour(interval['end']))):
+                digest.update(json.dumps(list(row), separators=(',', ':')).encode())
         for row in db.execute('SELECT * FROM stations ORDER BY station_id'):
             digest.update(json.dumps(list(row), separators=(',', ':')).encode())
     return digest.hexdigest()
@@ -31,7 +40,8 @@ def local_observations_digest(products, start, end):
 def normalize_preparation(payload, products):
     allowed = {'operation', 'requestId', 'name', 'projectId', 'resolutionId',
                'parentBundleVersionId', 'period', 'statePolicy', 'continuousOrigin',
-               'rainfallMethod', 'idwPower', 'minimumStations', 'science', 'evaporation', 'stationSourceId'}
+               'rainfallMethod', 'idwPower', 'minimumStations', 'science', 'evaporation', 'stationSourceId',
+               'operationPurpose'}
     if set(payload) - allowed:
         raise ValueError('自动资料准备字段无效')
     if payload.get('projectId') != 'nananxi-xufan' or payload.get('resolutionId') != '1km':
@@ -39,6 +49,9 @@ def normalize_preparation(payload, products):
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{2,100}', str(payload.get('requestId'))):
         raise ValueError('资料准备请求编号无效')
     parent = products.resolve(payload.get('parentBundleVersionId'))
+    purpose = payload.get('operationPurpose', 'calibration')
+    if purpose not in {'calibration', 'simulation'}:
+        raise ValueError('资料准备用途无效')
     period = copy.deepcopy(payload.get('period', {}))
     warmup = period.get('warmupDays', 7)
     if isinstance(warmup, bool) or not isinstance(warmup, (int, float)) or not 0 <= warmup <= 365:
@@ -47,7 +60,7 @@ def normalize_preparation(payload, products):
         from contracts import continuous_windows
         windows = continuous_windows({k: v for k, v in period.items() if k != 'windows'})
     elif period.get('mode') == 'event':
-        windows = [row for row in period.get('events', []) if row.get('purpose') in {'率定', '验证', '独立检验'} and row.get('status') != 'inactive']
+        windows = [row for row in period.get('events', []) if row.get('purpose') in {'率定', '验证', '独立检验', '模拟'} and row.get('status') != 'inactive']
         if not windows or len(windows) > 500:
             raise ValueError('请选择1至500场洪水')
         if len({row.get('id') for row in windows}) != len(windows):
@@ -84,6 +97,10 @@ def normalize_preparation(payload, products):
                   'windows': windows, 'start': start.isoformat(), 'end': end.isoformat(),
                   'warmupHours': round(warmup * 24), 'statePolicy': policy, 'rainfallMethod': method,
                   'idwPower': float(power), 'minimumStations': minimum}
+    # The same driving arrays may be shared, but observation acceptance belongs
+    # to the work being performed and must not reuse a calibration rejection.
+    if 'operationPurpose' in payload:
+        definition['operationPurpose'] = purpose
     if method == 'stationIdw':
         from station_network import station_network, observation_adapter
         selection = payload.get('stationSourceId')
@@ -98,15 +115,17 @@ def normalize_preparation(payload, products):
             definition['stationSourceId'] = selection
         definition['stationNetwork'] = station_network(products, adapter)
     from science_context import ScienceVersions
-    science_request = {'runType': 'calibration' if period.get('mode') in {'event', 'continuous'} else 'simulation',
+    is_calibration = period.get('mode') in {'event', 'continuous'} and purpose != 'simulation'
+    science_request = {'runType': 'calibration' if is_calibration else 'simulation',
                        'period': period,
-                       **({'calibration': {'statePolicy': policy}} if period.get('mode') in {'event', 'continuous'} else {}),
+                       **({'calibration': {'statePolicy': policy}} if is_calibration else {}),
                        'science': payload.get('science', {}), 'inputs': {'evaporation': payload.get('evaporation', {})}}
     scientific = ScienceVersions(products.runtime_root).for_request(science_request)
     definition['science'] = {'versionId': scientific['scienceVersionId']}
     definition['petConfigurationSHA256'] = scientific['petConfigurationSHA256']
     if method == 'stationIdw' and (payload.get('stationSourceId') == 'LOCAL_OBSERVATIONS' or not payload.get('stationSourceId') and not parent['manifest'].get('sourceId')):
-        definition['localObservationSHA256'] = local_observations_digest(products, start, end)
+        intervals = required_drive_intervals({**definition, 'period': period})
+        definition['localObservationSHA256'] = local_observations_digest(products, start, end, intervals)
     return {**payload, **definition, 'name': str(payload.get('name') or '方案计算资料')[:200],
             'preparationKey': manifest_digest(definition), 'productionEligible': False}
 
@@ -121,6 +140,21 @@ def reuse_preparation(manager, request):
                     manager.products.resolve(task['registeredBundleVersionId'])
                 return task
         return manager.submit(request)
+
+
+def required_drive_intervals(request):
+    """Independent floods need only their selected windows and warm-up hours."""
+    if request['period'].get('mode') != 'event' or request['statePolicy'] == 'continuous-origin':
+        return [{'start': request['start'], 'end': request['end']}]
+    warmup = timedelta(hours=0 if request['period'].get('initialStateVersionId') else request['warmupHours'])
+    ranges = sorted((hourly_time(row['start']) - warmup, hourly_time(row['end'])) for row in request['windows'])
+    merged = []
+    for start, end in ranges:
+        if merged and start <= merged[-1][1] + timedelta(hours=1):
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return [{'start': start.isoformat(), 'end': end.isoformat()} for start, end in merged]
 
 
 def station_block(products, parent, start, end, folder):
@@ -194,17 +228,19 @@ def build_prepared(folder, products):
     from xaj_routing.control_area import contributing_grid_areas
     from xaj_routing.io import read_topology_json
     request = read_json(folder / 'request.json')
-    original_fields = {'operation', 'requestId', 'name', 'projectId', 'resolutionId', 'parentBundleVersionId', 'period', 'statePolicy', 'continuousOrigin', 'rainfallMethod', 'idwPower', 'minimumStations', 'science', 'evaporation', 'stationSourceId'}
+    original_fields = {'operation', 'requestId', 'name', 'projectId', 'resolutionId', 'parentBundleVersionId', 'period', 'statePolicy', 'continuousOrigin', 'rainfallMethod', 'idwPower', 'minimumStations', 'science', 'evaporation', 'stationSourceId', 'operationPurpose'}
     if normalize_preparation({key: value for key, value in request.items() if key in original_fields}, products) != request:
         raise ValueError('资料准备请求已偏离冻结条件，请重新准备')
     parent = products.resolve(request['parentBundleVersionId'])
     parent['_stationNetwork'] = request.get('stationNetwork')
     if parent['manifestSHA256'] != request['parentManifestSHA256']:
         raise ValueError('资料来源已偏离准备时保存的摘要')
-    if request.get('localObservationSHA256') and request['localObservationSHA256'] != local_observations_digest(products, request['start'], request['end']):
+    intervals = required_drive_intervals(request)
+    if request.get('localObservationSHA256') and request['localObservationSHA256'] != local_observations_digest(products, request['start'], request['end'], intervals):
         raise ValueError('实测资料已更新，请重新准备方案资料')
     start, end = pd.Timestamp(request['start']), pd.Timestamp(request['end'])
-    times = pd.date_range(start, end, freq='h')
+    times = pd.DatetimeIndex(np.concatenate([
+        pd.date_range(row['start'], row['end'], freq='h').values for row in intervals]))
     from science_context import ScienceVersions
     from runoff_platform.data.pet_forcing import PetProvider
     scientific = ScienceVersions(products.runtime_root).resolve(request['science']['versionId'])
@@ -223,7 +259,10 @@ def build_prepared(folder, products):
     output = products.products_root / product_id
     method = request['rainfallMethod']
     if method == 'reuse':
-        _, values, counts, _ = load_hourly_forcing(parent, grids, start, end, require_complete=False)
+        for interval in intervals:
+            block, rain, stations, _ = load_hourly_forcing(parent, grids, interval['start'], interval['end'], require_complete=False)
+            loc = times.get_indexer(block)
+            values[loc], counts[loc] = rain, stations
         rain_directory = parent['precipitationDir']
     else:
         output.mkdir(parents=True)
@@ -236,17 +275,30 @@ def build_prepared(folder, products):
         col_ids = np.array([int(row['array_col']) for row in grids])
         transformer = Transformer.from_crs('EPSG:4326', 'EPSG:32650', always_xy=True)
         tx, ty = transformer.transform(lon[col_ids], lat[row_ids])
-        chunks = []
-        for year in range(start.year, end.year + 1):
-            first, last = max(start, pd.Timestamp(year=year, month=1, day=1)), min(end, pd.Timestamp(year=year, month=12, day=31, hour=23))
+        chunks, blocks_by_year = [], {}
+        for interval in intervals:
+            lo, hi = pd.Timestamp(interval['start']), pd.Timestamp(interval['end'])
+            for year in range(lo.year, hi.year + 1):
+                first = max(lo, pd.Timestamp(year=year, month=1, day=1))
+                last = min(hi, pd.Timestamp(year=year, month=12, day=31, hour=23))
+                blocks_by_year.setdefault(year, []).append((first, last))
+        for year_index, (year, year_blocks) in enumerate(sorted(blocks_by_year.items())):
+            year_times, year_values, year_counts = [], [], []
             from station_network import observation_adapter
             adapter = observation_adapter(products, parent, request.get('stationSourceId'))
-            block, ids, coordinates, rain, observed, source_id, flow_source = station_block(products, adapter, first, last, folder / 'queries')
-            rain[(~np.isfinite(rain)) | (rain < 0)] = np.nan
-            sx, sy = transformer.transform(*zip(*coordinates))
-            interpolated, n = idw_interpolate_hourly(rain, np.asarray(sx), np.asarray(sy), np.asarray(tx), np.asarray(ty), power=request['idwPower'], minimum_stations=request['minimumStations'])
-            loc = times.get_indexer(block)
-            values[loc], counts[loc] = interpolated, n
+            for first, last in year_blocks:
+                block, ids, coordinates, rain, observed, source_id, flow_source = station_block(products, adapter, first, last, folder / 'queries')
+                rain[(~np.isfinite(rain)) | (rain < 0)] = np.nan
+                sx, sy = transformer.transform(*zip(*coordinates))
+                interpolated, n = idw_interpolate_hourly(rain, np.asarray(sx), np.asarray(sy), np.asarray(tx), np.asarray(ty), power=request['idwPower'], minimum_stations=request['minimumStations'])
+                loc = times.get_indexer(block)
+                values[loc], counts[loc] = interpolated, n
+                year_times.extend(block)
+                year_values.append(interpolated)
+                year_counts.append(n)
+                chunks.extend(zip(block, observed))
+            block = pd.DatetimeIndex(year_times)
+            interpolated, n = np.concatenate(year_values), np.concatenate(year_counts)
             array = np.full((len(block), len(lat), len(lon)), np.nan, dtype=np.float32)
             array[:, row_ids, col_ids] = interpolated
             dataset = xr.Dataset({'precipitation': (('time', 'lat', 'lon'), array), 'source_station_count': (('time',), n)}, coords={'time': block, 'lat': lat, 'lon': lon})
@@ -255,8 +307,7 @@ def build_prepared(folder, products):
             dataset.to_netcdf(path, engine='h5netcdf', encoding={'precipitation': {'zlib': True, 'dtype': 'float32'}})
             dataset.close()
             generated.append(path)
-            chunks.extend(zip(block, observed))
-            write_json(folder / 'progress.json', {'progress': 10 + round(50 * (year - start.year + 1) / (end.year - start.year + 1)), 'stageLabel': f'已自动处理{year}年站点降雨'})
+            write_json(folder / 'progress.json', {'progress': 10 + round(50 * (year_index + 1) / len(blocks_by_year)), 'stageLabel': f'已自动处理{year}年站点降雨'})
         flow = pd.Series([value for _, value in chunks], index=pd.DatetimeIndex([time for time, _ in chunks]), name='flow_m3_s')
         flow_path = output / 'observed-flow.csv'
         flow.rename_axis('time').to_csv(flow_path)
@@ -268,6 +319,7 @@ def build_prepared(folder, products):
     original = {row['eventId']: row for row in original_catalog['packages']}
     event_mode = request['period'].get('mode') == 'event'
     windows = request['windows']
+    is_simulation = request.get('operationPurpose') == 'simulation'
     for window in windows:
         first, last = pd.Timestamp(window['start']), pd.Timestamp(window['end'])
         audit_start = start if request['statePolicy'] == 'continuous-origin' else first - pd.Timedelta(hours=request['warmupHours'])
@@ -284,10 +336,10 @@ def build_prepared(folder, products):
         if pet_missing:
             reasons.append('冻结蒸散发配置未覆盖连续驱动或预热时段')
         coverage = evaluate_observation_coverage(score_times, scored_flow.to_numpy(), quality)
-        if window['purpose'] != '模拟' and (not scored_flow.notna().all() if not event_mode else not coverage['accepted']):
+        if not is_simulation and window['purpose'] != '模拟' and (not scored_flow.notna().all() if not event_mode else not coverage['accepted']):
             reasons.append('评价期实测流量不足')
         event_quality = None
-        if event_mode:
+        if event_mode and not is_simulation:
             event_quality = evaluate_event_quality(event_id=window['id'], start=first, end=last, times=times[mask], grid_precipitation_mm=values[mask][:, indexes], grid_areas_km2=areas[indexes], observed_flow_cms=flow, source_station_count=counts[mask], config=quality)
             if not event_quality['accepted']:
                 reasons.extend(event_quality['exclusion_reasons'])
@@ -298,6 +350,7 @@ def build_prepared(folder, products):
             record.update(eventId=window['id'], start=first.isoformat(), end=last.isoformat(), floodCode=record.get('floodCode', window['id']), status='review' if reasons else 'ready')
             record['observedInputs'] = {**record.get('observedInputs', {}), 'rainCompleteness': float(valid[(times >= first) & (times <= last)].mean()), 'riverCompleteness': float(scored_flow.notna().mean()), 'observedPeakFlowM3s': float(scored_flow.max()) if scored_flow.notna().any() else None, 'observedPeakTime': scored_flow.idxmax().isoformat() if scored_flow.notna().any() else None}
             record['quality'] = event_quality
+            record['observationCoverage'] = coverage
             packages.append(record)
     # Identical registered windows and rain need no new scientific input identity.
     same_windows = event_mode and all(row['id'] in original and hourly_time(row['start']) == hourly_time(original[row['id']]['start']) and hourly_time(row['end']) == hourly_time(original[row['id']]['end']) for row in windows)
@@ -318,9 +371,12 @@ def build_prepared(folder, products):
                 'forcingVersion': parent['forcingVersion'] if method == 'reuse' else 'scheme-rain-' + product_id,
                 'observationVersion': parent['observationVersion'] if method == 'reuse' else 'scheme-flow-' + product_id,
                 'forcingPolicy': parent['manifest'].get('forcingPolicy', 'STRICT_MISSING') if method == 'reuse' else 'STRICT_MISSING',
-                'coverage': {'years': list(range(start.year, end.year + 1)), 'start': start.isoformat(), 'end': end.isoformat()}, 'recordQueryScope': {'start': start.isoformat(), 'end': end.isoformat()},
+                'coverage': {'years': sorted(set(times.year)), 'start': start.isoformat(), 'end': end.isoformat(),
+                             'intervals': intervals, 'hours': len(times)}, 'recordQueryScope': {'start': start.isoformat(), 'end': end.isoformat()},
                 'summary': {'eventCount': len(packages) if event_mode else original_catalog.get('count', len(original_catalog['packages'])), 'acceptedEventCount': sum(row['status'] == 'ready' for row in packages) if event_mode else None, 'gridCount': len(grids)}}
     manifest['processing'] = {'rainfallMethod': method, 'idwPower': request['idwPower'], 'minimumStations': request['minimumStations'], 'preparationKey': request['preparationKey']}
+    if method == 'stationIdw':
+        manifest['processing']['stationNetwork'] = copy.deepcopy(request['stationNetwork'])
     if method == 'stationIdw':
         manifest['sourceLabel'] = '方案站点雨量自动插值'
         # The prepared rain must carry its own station source, not inherit the
@@ -330,8 +386,11 @@ def build_prepared(folder, products):
         else:
             manifest['sourceId'] = source_id
         manifest['sourceOrigin'] = {'sourceId': source_id, 'localObservationSHA256': request.get('localObservationSHA256'), 'method': 'HOURLY_VALID_STATION_IDW', 'flowSource': flow_source}
-        if request.get('localObservationSHA256') != (local_observations_digest(products, start, end) if source_id == 'LOCAL_OBSERVATIONS' else None):
+        if request.get('localObservationSHA256') != (local_observations_digest(products, start, end, intervals) if source_id == 'LOCAL_OBSERVATIONS' else None):
             raise ValueError('处理过程中实测资料已更新，请重新准备')
+    from state_integrity import forcing_definition
+    manifest['forcingDefinition'] = forcing_definition(
+        parent if method == 'reuse' else {'manifest': manifest}, products)
     path = output / 'manifest.json'
     write_json(path, clean(manifest))
     from input_products import file_sha256

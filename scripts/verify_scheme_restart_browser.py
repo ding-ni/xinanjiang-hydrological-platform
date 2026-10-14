@@ -35,9 +35,15 @@ with sync_playwright() as playwright:
                 return api('tasks/' + task['taskId'] + '/result')
             page.wait_for_timeout(500)
         raise AssertionError('Calculation timeout')
+    def select_operation(operation, period):
+        page.locator('.operation-tabs').get_by_role('button', name=operation, exact=True).click()
+        page.locator('.setting-panel .mode-tabs').get_by_role('button', name=period, exact=True).click()
     try:
         assert original['status'] == 'passed'
-        for key in ['calibrationTaskId', 'eventTaskId', 'fixedSimulationTaskId', 'secondSearchTaskId', 'stationSimulationTaskId']:
+        task_keys = ['calibrationTaskId', 'eventTaskId', 'fixedSimulationTaskId', 'secondSearchTaskId', 'stationSimulationTaskId']
+        if original.get('automaticNameSimulationTaskId'):
+            task_keys.append('automaticNameSimulationTaskId')
+        for key in task_keys:
             task = api('tasks/' + original[key])
             assert task['status'] == 'completed'
             scheme = api('model-schemes/' + task['lineage']['schemeId'] + '?revision=' + str(task['lineage']['schemeRevision']))
@@ -50,8 +56,7 @@ with sync_playwright() as playwright:
         check('Restart preserves schemes, revisions, calculations and best-state links')
         page.goto(args.url + '/#/calibration')
         page.wait_for_load_state('networkidle')
-        expect(page.locator('.scheme-bar input[placeholder="请为本次水文方案命名"]')).to_have_value('浏览器站点自动模拟验收')
-        page.locator('.workflow-steps button').filter(has_text='计算条件').click()
+        expect(page.locator('.scheme-bar input[placeholder="方案名称（可选）"]')).to_have_value('浏览器站点自动模拟验收')
         expect(page.locator('#simulation-parameters')).to_be_visible()
         parameter = page.locator('#parameter-SM')
         expect(parameter).to_be_visible()
@@ -61,8 +66,7 @@ with sync_playwright() as playwright:
         assert abs(float(parameter.input_value()) - (float(original_value) + .1)) < 1e-7
         parameter.fill(original_value)
         parameter.press('Tab')
-        page.locator('.workflow-steps button').filter(has_text='计算结果').click()
-        expect(page.locator('#simulation-start')).not_to_be_visible()
+        expect(page.locator('#simulation-start')).to_be_visible()
         expect(page.get_by_role('button', name='查看模拟状态', exact=True)).to_be_visible()
         count = len(api('tasks')['tasks'])
         page.screenshot(path=str(output / 'restored-calculation.png'), full_page=True)
@@ -134,21 +138,19 @@ with sync_playwright() as playwright:
         check('Workspace backup includes calculations and SQL scheme/network records')
         page.goto(args.url + '/#/calibration')
         page.wait_for_load_state('networkidle')
-        page.get_by_role('button', name='新建方案', exact=True).click()
-        expect(page.locator('.workflow-steps button.active')).to_contain_text('方案与时段')
+        page.get_by_role('button', name='重新选洪水', exact=True).click()
+        assert page.locator('.workflow-steps').count() == 0
         page.goto(args.url + '/#/data')
         page.wait_for_load_state('networkidle')
         page.goto(args.url + '/#/calibration')
         page.wait_for_load_state('networkidle')
-        expect(page.locator('.scheme-bar input[placeholder="请为本次水文方案命名"]')).to_have_value('')
-        page.locator('.workflow-steps button').filter(has_text='计算结果').click()
+        expect(page.locator('.scheme-bar input[placeholder="方案名称（可选）"]')).to_have_value('')
         expect(page.locator('.simulation-result-card')).not_to_be_visible()
         expect(page.locator('.task-status')).not_to_be_visible()
-        page.locator('.operation-tabs button').filter(has_text='场次模拟').click()
-        page.locator('.workflow-steps button').filter(has_text='计算条件').click()
+        select_operation('模型模拟', '洪水场次')
         expect(page.locator('.evaluation-settings')).not_to_have_attribute('open', '')
         expect(page.locator('#algorithm')).not_to_be_visible()
-        check('New scheme returns without old results; fixed simulation keeps search settings out of the main form')
+        check('Reselecting floods clears old results; fixed simulation keeps search settings out of the main form')
         assert not report['pageErrors'], report['pageErrors']
         report.update(status='passed', continuationTaskId=continuation['taskId'], backup=backup)
         page.screenshot(path=str(output / 'river-query.png'), full_page=True)

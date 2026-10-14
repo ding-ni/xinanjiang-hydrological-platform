@@ -92,7 +92,7 @@ class JointContractTests(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get('XAJ_TEST_REAL_MODEL') == '1', 'real model acceptance')
 class JointRealModelTests(unittest.TestCase):
-    def test_implicit_continuous_origin_has_bounded_span_and_explicit_origin_replays(self):
+    def test_continuous_origin_uses_data_coverage_and_explicit_origin_replays(self):
         import worker
         from worker import ModelJob
         from test_unified_backend import simulation
@@ -102,8 +102,10 @@ class JointRealModelTests(unittest.TestCase):
             folder = Path(temp) / 'tasks/JOB-origin'
             write_json(folder / 'request.json', normalize_request(request, case_catalog()))
             write_json(folder / 'status.json', {'taskId': 'JOB-origin'})
-            with self.assertRaisesRegex(ValueError, '十年'):
-                ModelJob(folder, publish_parameters=False)
+            # Long trajectories are checked against actual driving data, never
+            # rejected by an arbitrary calendar span in the worker constructor.
+            implicit = ModelJob(folder, publish_parameters=False)
+            self.assertLess(implicit.continuous_origin.year, 2017)
             request['calibration']['continuousOrigin'] = '2017-06-18T00:00:00'
             write_json(folder / 'request.json', normalize_request(request, case_catalog()))
             job = ModelJob(folder, publish_parameters=False)
@@ -129,7 +131,7 @@ class JointRealModelTests(unittest.TestCase):
                 folder = Path(temp) / 'tasks' / identifier
                 write_json(folder / 'request.json', normalize_request(request, case_catalog()))
                 write_json(folder / 'status.json', {'taskId': identifier})
-                return ModelJob(folder)
+                return ModelJob(folder, publish_parameters=True)
             job = make(request_for_joint(), 'JOB-joint')
             job.run()
             result = read_json(job.folder / 'result.json')

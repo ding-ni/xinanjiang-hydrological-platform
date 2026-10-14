@@ -1,5 +1,16 @@
 # Unified model API / schema 2.0
 
+## 日常水文作业（2026-10-14）
+
+- `GET /flood-catalog` 返回流域完整目录 `events/count`，独立于当前处理产品。
+- `POST /model-schemes {name,context,editor?}` 先建立命名方案；`POST /model-schemes/{id}/draft {editor}` 保存不完整编辑。完整计算定义仍由已有保存接口产生修订，旧修订不覆盖。
+- `GET/POST /parameter-schemes` 读取或命名保存参数；保存请求为 `{name,sourceTaskId}`，来源可以是成功数值任务或完整作业。`GET /parameter-schemes/{id}` 返回完整产汇流参数、科学条件和起算规则。未命名的率定候选仅保留于计算任务。
+- `POST /operations` 提交一次作业。`operation` 为 `calibration/manualTrial/eventSimulation/continuousSimulation/continuation/hindcast/rollingHindcast`。率定传完整 `request/rainfallMethod`；模拟传 `parameterSchemeId` 和 `events` 或 `period`；续算传 `sourceTaskId/period.endTime`；回算传 `parameterSchemeId/issueTime/endTime`，滚动传 `issueTime/lastIssueTime/leadHours`。
+- `GET /operations`、`GET /operations/{id}`、`GET /operations/{id}/result`、`POST /operations/{id}/cancel {}` 读取列表、进度、成果或停止。资料检查问题集中返回 `issues`，搜索进度为 `searchProgress`。后台衔接资料准备、起算和数值任务，不依赖浏览器继续轮询。
+- 作业成果含 `primaryTaskId`、场次 `eventStates` 或回算 `issues`，沿用原状态回放与河道查询接口。滚动成果中 `issueStateVersionId` 与分支 `endStateVersionId` 分开，下一小时只承接实况推进状态。历史回算使用真实逐格降雨，不适用旧人工降雨产品72小时上限。
+- `preparation-defaults` 增加 `rainfallMethod/stationSourceId/sourceBundleVersionId`；日常采用工作区规则，旧方案保持冻结来源。模拟驱动检查与实测评价分开；新同源资料包续算时核验父状态完整实际驱动，不仅比较包编号。
+- 备份新增 `operations/parameter-schemes`，方案编辑和修订保存在SQL。以下原接口保留历史兼容。
+
 ## 命名方案与自动资料准备（1.12.0）
 
 - `GET /model-schemes` 返回工作区方案。`POST /model-schemes` 保存 `name/definition/calculationDraft`，已有方案附带 `id/revision` 做并发校验。输入定义改变产生修订；仅计算草稿改变更新当前草稿。

@@ -1,8 +1,10 @@
 """Exercise the actual named continuous-calibration workflow in an isolated server."""
 import argparse
 import json
+import math
 import time
 from pathlib import Path
+from urllib.parse import unquote
 from playwright.sync_api import sync_playwright, expect
 
 parser = argparse.ArgumentParser()
@@ -27,36 +29,59 @@ with sync_playwright() as playwright:
     def fill(selector, value):
         page.locator(selector).fill(value)
         page.locator(selector).press('Tab')
+    def select_operation(operation, period):
+        page.locator('.operation-tabs').get_by_role('button', name=operation, exact=True).click()
+        page.locator('.setting-panel .mode-tabs').get_by_role('button', name=period, exact=True).click()
+    def open_scheme(scheme_id):
+        page.get_by_role('button', name='打开方案', exact=True).click()
+        modal = page.locator('#scheme-selector-modal')
+        expect(modal).to_be_visible()
+        modal.locator(f'.scheme-choice[data-scheme-id="{scheme_id}"]').click()
+        expect(modal).not_to_be_visible()
+    def show_initial_conditions():
+        details = page.locator('.setting-panel details').filter(has=page.locator('summary').filter(has_text='起算条件'))
+        if details.get_attribute('open') is None:
+            details.locator('summary').click()
+        return details
     try:
         page.goto(args.url + '/#/calibration')
         page.wait_for_load_state('networkidle')
         expect(page.locator('.scheme-bar')).to_be_visible()
         output.joinpath('initial-ui.txt').write_text(page.locator('.view-cal').inner_text(), encoding='utf-8')
         page.screenshot(path=str(output / 'initial.png'), full_page=True)
-        check('Rendered workflow inspected before interaction')
+        expect(page.locator('.operation-tabs button')).to_have_count(2)
+        expect(page.locator('.setting-panel .mode-tabs button')).to_have_count(2)
+        assert page.locator('.workflow-steps').count() == 0
+        assert page.locator('.source-settings').count() == 0
+        check('One-page workbench keeps flood selection, calculation settings and results together')
         schemes = api('model-schemes')['schemes']
-        assert all(row['name'].startswith('浏览器') for row in schemes)
+        assert all(row['name'].startswith(('浏览器', '南安溪-徐畈 · 连续')) for row in schemes)
         check('Workspace contains no pre-generated colleague scheme')
-        page.locator('.scheme-bar input[placeholder="请为本次水文方案命名"]').fill('浏览器连续率定验收')
-        page.locator('.operation-tabs button').filter(has_text='连续自动率定').click()
-        page.locator('.workflow-steps button').filter(has_text='方案与时段').click()
+        page.goto(args.url + '/#/config')
+        page.wait_for_load_state('networkidle')
+        page.locator('summary').filter(has_text='资料设置').click()
+        page.locator('#workspace-rainfall-method').select_option('reuse')
+        page.goto(args.url + '/#/calibration')
+        page.wait_for_load_state('networkidle')
+        page.get_by_role('button', name='重新选洪水', exact=True).click()
+        page.locator('.scheme-bar input[placeholder="方案名称（可选）"]').fill('浏览器连续率定验收')
+        select_operation('参数率定', '连续时段')
+        initial_conditions = show_initial_conditions()
         page.locator('#science-version').select_option('')
-        if not page.locator('#continuous-origin').count():
-            page.get_by_text('起算与状态方式', exact=True).click()
-            page.locator('#cal-state-policy').select_option('continuous-origin')
+        page.locator('#cal-state-policy').select_option('continuous-origin')
+        initial_conditions.locator('summary').click()
         expect(page.locator('#continuous-origin')).to_be_visible()
         for selector, value in [('#cal-start', '2017-06-19T00:00'), ('#cal-end', '2017-06-19T23:00'),
                                 ('#val-start', '2017-06-20T00:00'), ('#val-end', '2017-06-20T23:00'),
                                 ('#ind-start', '2017-06-21T00:00'), ('#ind-end', '2017-06-21T23:00'),
                                 ('#continuous-origin', '2017-06-18T00:00')]:
             fill(selector, value)
-        page.locator('.workflow-steps button').filter(has_text='计算条件').click()
         page.locator('#algorithm').select_option('DIFFERENTIAL_EVOLUTION')
         page.locator('#search-strategy').select_option('joint')
         fill('#max-evals', '4')
         fill('#population-size', '4')
         prior_tasks = {row['taskId'] for row in api('tasks')['tasks']}
-        page.get_by_role('button', name='开始连续自动率定', exact=True).click()
+        page.get_by_role('button', name='开始自动调参', exact=True).click()
         deadline = time.monotonic() + 300
         result = None
         while time.monotonic() < deadline:
@@ -106,12 +131,12 @@ with sync_playwright() as playwright:
         check('Reference-parameter tab renders')
         page.goto(args.url + '/#/calibration')
         page.wait_for_load_state('networkidle')
-        page.get_by_role('button', name='新建方案', exact=True).click()
-        page.locator('.scheme-bar input[placeholder="请为本次水文方案命名"]').fill('浏览器场次率定验收')
-        page.locator('.operation-tabs button').filter(has_text='场次自动率定').click()
-        page.locator('.workflow-steps button').filter(has_text='方案与时段').click()
-        page.get_by_text('起算与状态方式', exact=True).click()
+        page.get_by_role('button', name='重新选洪水', exact=True).click()
+        page.locator('.scheme-bar input[placeholder="方案名称（可选）"]').fill('浏览器场次率定验收')
+        select_operation('参数率定', '洪水场次')
+        initial_conditions = show_initial_conditions()
         page.locator('#cal-state-policy').select_option('independent-warmup')
+        initial_conditions.locator('summary').click()
         fill('input[aria-label="预热期天数"]', '1')
         events = [row for row in api('catalog')['cases']['nananxi-xufan:1km']['events'] if row['start'].startswith('2017')]
         page.locator('.event-window-editor summary').click()
@@ -128,9 +153,22 @@ with sync_playwright() as playwright:
             row.locator('select').select_option(label=purpose)
         page.locator('.event-search input').fill('BrowserWindow_')
         check('User flood windows remain selectable before automatic registration')
-        page.locator('.workflow-steps button').filter(has_text='计算条件').click()
+        first_window = page.locator('.event-table-row[role="row"]').filter(has_text='BrowserWindow_0')
+        with page.expect_response(lambda response: '/api/model/inputs/window?' in response.url
+                                 and ('start=' + events[0]['start'][:16]) in unquote(response.url)) as preview_response:
+            first_window.locator('.event-code').click()
+        assert preview_response.value.ok, preview_response.value.text()
+        preview = preview_response.value.json()
+        preview_times = preview['product']['times']
+        preview_flow = preview['observationPreview']['river']['flows']
+        assert len(preview_flow) == len(preview_times) and any(value is not None and math.isfinite(value) for value in preview_flow)
+        assert any(value is not None and math.isfinite(value) for value in preview['summary']['arealRainfallMm'])
+        expect(page.locator('.hydrology-chart canvas').first).to_be_visible()
+        expect(page.locator('.input-quality-note')).not_to_be_visible()
+        expect(page.locator('.view-cal')).not_to_contain_text('此场次尚未登记到计算资料目录')
+        check('A newly selected flood previews actual rain and observed flow before input preparation')
         prior_tasks = {row['taskId'] for row in api('tasks')['tasks']}
-        page.get_by_role('button', name='开始场次自动率定', exact=True).click()
+        page.get_by_role('button', name='开始自动调参', exact=True).click()
         deadline = time.monotonic() + 180
         event_task = None
         while time.monotonic() < deadline:
@@ -144,7 +182,7 @@ with sync_playwright() as playwright:
         event_result = api('tasks/' + event_task['taskId'] + '/result')
         assert event_result['optimizer']['evaluations'] == 4
         assert set(event_result['hydrographs']) == {'BrowserWindow_0', 'BrowserWindow_1', 'BrowserWindow_2'}
-        expect(page.get_by_role('button', name='新建方案', exact=True)).to_be_enabled(timeout=20000)
+        expect(page.get_by_role('button', name='重新选洪水', exact=True)).to_be_enabled(timeout=20000)
         page.screenshot(path=str(output / 'event-result.png'), full_page=True)
         check('Named event scheme automatically registers custom windows and performs real search')
         saved_ids = {row['taskId'] for row in api('tasks')['tasks']}
@@ -164,12 +202,12 @@ with sync_playwright() as playwright:
         row.get_by_role('button', name='查看成果', exact=True).click()
         page.get_by_role('button', name='采用最佳参数进行模拟', exact=True).click()
         expect(page.locator('.view-cal')).to_be_visible()
-        expect(page.locator('.operation-tabs button.active')).to_contain_text('场次模拟')
+        expect(page.locator('.operation-tabs button.active')).to_contain_text('模型模拟')
+        expect(page.locator('.setting-panel .mode-tabs button.active')).to_contain_text('洪水场次')
         assert {row['taskId'] for row in api('tasks')['tasks']} == saved_ids
         check('Best-parameter action opens a fixed simulation draft without starting a search')
         page.get_by_role('button', name='保存方案', exact=True).click()
         scheme_id = event_task['lineage']['schemeId']
-        expect(page.locator('.scheme-bar')).to_contain_text('修订 1')
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             fixed_draft = api('model-schemes/' + scheme_id)
@@ -177,10 +215,11 @@ with sync_playwright() as playwright:
                 break
             page.wait_for_timeout(200)
         assert fixed_draft['calculationDraft']['calibration']['simulationOnly']
-        page.locator('.scheme-bar select').first.select_option(scheme_id)
-        expect(page.locator('.operation-tabs button.active')).to_contain_text('场次模拟')
-        page.locator('.workflow-steps button').filter(has_text='计算条件').click()
-        page.get_by_role('button', name='开始场次模拟', exact=True).click()
+        assert fixed_draft['revision'] == event_task['lineage']['schemeRevision']
+        open_scheme(scheme_id)
+        expect(page.locator('.operation-tabs button.active')).to_contain_text('模型模拟')
+        expect(page.locator('.setting-panel .mode-tabs button.active')).to_contain_text('洪水场次')
+        page.get_by_role('button', name='开始模拟', exact=True).click()
         deadline = time.monotonic() + 180
         fixed_task = None
         while time.monotonic() < deadline:
@@ -201,10 +240,9 @@ with sync_playwright() as playwright:
 
         # A second search stays within the scheme; the first calculation remains frozen.
         before_second = {row['taskId'] for row in api('tasks')['tasks']}
-        page.locator('.operation-tabs button').filter(has_text='场次自动率定').click()
-        page.locator('.workflow-steps button').filter(has_text='计算条件').click()
+        select_operation('参数率定', '洪水场次')
         page.locator('#algorithm').select_option('RANDOM_SEARCH')
-        page.get_by_role('button', name='开始场次自动率定', exact=True).click()
+        page.get_by_role('button', name='开始自动调参', exact=True).click()
         deadline = time.monotonic() + 180
         second_task = None
         while time.monotonic() < deadline:
@@ -240,26 +278,54 @@ with sync_playwright() as playwright:
         page.locator('.diagnostic-view input[type="datetime-local"]').first.press('Tab')
         expect(page.get_by_role('button', name='模拟所选时段', exact=True)).to_be_visible()
         page.get_by_role('button', name='模拟所选时段', exact=True).click()
-        expect(page.locator('.operation-tabs button.active')).to_contain_text('连续模拟')
+        expect(page.locator('.operation-tabs button.active')).to_contain_text('模型模拟')
+        expect(page.locator('.setting-panel .mode-tabs button.active')).to_contain_text('连续时段')
         check('Continuous optimum opens river query and uncovered times open an independent simulation draft')
+        # A worker can begin directly with a chosen period, without naming first.
+        page.get_by_role('button', name='重新选洪水', exact=True).click()
+        select_operation('模型模拟', '连续时段')
+        expect(page.locator('.scheme-bar input[placeholder="方案名称（可选）"]')).to_have_value('')
+        fill('#simulation-start', '2017-06-19T00:00')
+        fill('#simulation-end', '2017-06-19T01:00')
+        before_unnamed = {row['taskId'] for row in api('tasks')['tasks']}
+        page.get_by_role('button', name='开始模拟', exact=True).click()
+        deadline = time.monotonic() + 180
+        unnamed_task = None
+        while time.monotonic() < deadline:
+            unnamed_task = next((row for row in api('tasks')['tasks'] if row['taskId'] not in before_unnamed and row['runType'] == 'continuousSimulation'), None)
+            if unnamed_task and unnamed_task['status'] in {'failed', 'cancelled'}:
+                raise AssertionError(unnamed_task.get('errorMessage'))
+            if unnamed_task and unnamed_task['status'] == 'completed':
+                break
+            page.wait_for_timeout(500)
+        assert unnamed_task and unnamed_task['status'] == 'completed', page.locator('.view-cal').inner_text()
+        assert unnamed_task['lineage']['schemeName'].strip()
+        expect(page.locator('.scheme-bar input[placeholder="方案名称（可选）"]')).to_have_value(unnamed_task['lineage']['schemeName'])
+        unnamed_result = api('tasks/' + unnamed_task['taskId'] + '/result')
+        assert len(unnamed_result['hydrograph']['forecast']) == 2
+        expect(page.get_by_role('button', name='重新选洪水', exact=True)).to_be_enabled(timeout=20000)
+        check('An unnamed two-hour simulation automatically saves a scheme and runs directly')
         # Real local observations, automatic station selection and IDW through the UI.
-        page.get_by_role('button', name='新建方案', exact=True).click()
-        page.locator('.scheme-bar input[placeholder="请为本次水文方案命名"]').fill('浏览器站点自动模拟验收')
-        page.locator('.operation-tabs button').filter(has_text='连续模拟').click()
-        page.locator('.workflow-steps button').filter(has_text='方案与时段').click()
-        page.locator('.source-settings > summary').click()
-        page.locator('.source-settings select').nth(1).select_option('stationIdw')
-        page.locator('.source-settings select').nth(2).select_option('LOCAL_OBSERVATIONS')
+        page.goto(args.url + '/#/config')
+        page.wait_for_load_state('networkidle')
+        page.get_by_role('button', name='流域与站网', exact=True).click()
+        page.locator('summary').filter(has_text='资料设置').click()
+        page.locator('#workspace-rainfall-method').select_option('stationIdw')
+        page.locator('#workspace-station-source').select_option('LOCAL_OBSERVATIONS')
+        page.goto(args.url + '/#/calibration')
+        page.wait_for_load_state('networkidle')
+        page.get_by_role('button', name='重新选洪水', exact=True).click()
+        page.locator('.scheme-bar input[placeholder="方案名称（可选）"]').fill('浏览器站点自动模拟验收')
+        select_operation('模型模拟', '连续时段')
         # Select a period covered by the actual station archive, including warmup.
         page.locator('#simulation-start').fill('2017-06-19T00:00')
         page.locator('#simulation-start').press('Tab')
         page.locator('#simulation-end').fill('2017-06-19T23:00')
         page.locator('#simulation-end').press('Tab')
-        page.locator('.workflow-steps button').filter(has_text='计算条件').click()
         prior_station = {row['taskId'] for row in api('tasks')['tasks']}
         expect(page.locator('#simulation-parameters')).to_be_visible()
         expect(page.locator('.parameter-panel')).to_contain_text('模拟参数')
-        page.get_by_role('button', name='开始连续模拟', exact=True).click()
+        page.get_by_role('button', name='开始模拟', exact=True).click()
         deadline = time.monotonic() + 180
         station_task = None
         while time.monotonic() < deadline:
@@ -273,8 +339,22 @@ with sync_playwright() as playwright:
         assert station_task['runConfig']['inputs']['stationSourceId'] == 'LOCAL_OBSERVATIONS'
         assert station_task['runConfig']['inputs']['stationNetwork']['stations']
         check('Actual local station archive automatically prepares IDW rain and completes simulation')
+        page.goto(args.url + '/#/realtime')
+        page.wait_for_load_state('networkidle')
+        expect(page.locator('.view-realtime .map-body canvas').first).to_be_visible(timeout=30000)
+        text = page.locator('.view-realtime').inner_text()
+        for removed in ['当前计算降雨', '资料编号与提取时段', '地图高程按当前产流网格显示', '未接入实时更新']:
+            assert removed not in text, removed
+        page.get_by_role('button', name='平滑', exact=True).click()
+        expect(page.get_by_role('button', name='平滑', exact=True)).to_have_attribute('aria-pressed', 'true')
+        page.get_by_role('button', name='网格', exact=True).click()
+        expect(page.get_by_role('button', name='网格', exact=True)).to_have_attribute('aria-pressed', 'true')
+        page.screenshot(path=str(output / 'realtime.png'), full_page=True)
+        check('Rainfall map keeps grid and smooth controls without repeated source explanations')
+        page.goto(args.url + '/#/calibration')
+        page.wait_for_load_state('networkidle')
         assert report['pageErrors'] == [], report['pageErrors']
-        report.update(status='passed', calibrationTaskId=calibration['taskId'], stateTaskId=child['taskId'], eventTaskId=event_task['taskId'], fixedSimulationTaskId=fixed_task['taskId'], secondSearchTaskId=second_task['taskId'], stationSimulationTaskId=station_task['taskId'])
+        report.update(status='passed', calibrationTaskId=calibration['taskId'], stateTaskId=child['taskId'], eventTaskId=event_task['taskId'], fixedSimulationTaskId=fixed_task['taskId'], secondSearchTaskId=second_task['taskId'], automaticNameSimulationTaskId=unnamed_task['taskId'], stationSimulationTaskId=station_task['taskId'])
     except Exception:
         page.screenshot(path=str(output / 'failure.png'), full_page=True)
         output.joinpath('failure-ui.txt').write_text(page.locator('body').inner_text(), encoding='utf-8')

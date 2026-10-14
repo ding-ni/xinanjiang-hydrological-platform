@@ -1,23 +1,22 @@
 <template>
   <div class="diagnostic-view">
-    <header class="heading"><div><span class="eyebrow">南安溪 · 徐畈断面</span><h2>模型诊断</h2></div><button class="btn" :disabled="loading || busy || !supported" @click="refresh"><Refresh class="tool-icon" />刷新</button></header>
+    <header class="heading"><div><span class="eyebrow">{{ route.query.label || app.basinName }}</span><h2>{{ resultContext ? '河道流量' : '进阶诊断' }}</h2></div><div class="actions"><RouterLink v-if="resultContext" to="/archive" class="btn">计算成果</RouterLink><button class="btn" :disabled="loading || busy || !supported" @click="refresh"><Refresh class="tool-icon" />刷新</button></div></header>
     <p v-if="!supported" class="notice">模型诊断：南安溪 · 1 km。</p>
     <template v-else>
-      <div class="identity"><span>计算汇流 <b>{{ selectedVersionName }}</b></span><details><summary>资料与版本来源</summary><div>输入 <code>{{ app.selectedInputBundleVersionId }}</code></div><div>汇流 <code>{{ app.selectedRoutingVersionId }}</code></div></details></div>
+      <div v-if="!resultContext" class="identity"><span>计算汇流 <b>{{ selectedVersionName }}</b></span><details><summary>资料与版本来源</summary><div>输入 <code>{{ app.selectedInputBundleVersionId }}</code></div><div>汇流 <code>{{ app.selectedRoutingVersionId }}</code></div></details></div>
       <p v-if="error" role="alert" class="error">{{ error }}</p><p v-if="message" role="status" class="message">{{ message }}</p>
-      <nav class="tabs" role="tablist" aria-label="诊断分区"><button v-for="item in tabs" :key="item.id" role="tab" :aria-selected="tab === item.id" :class="{ selected: tab === item.id }" @click="tab = item.id">{{ item.label }}</button></nav>
+      <nav v-if="!resultContext" class="tabs" role="tablist" aria-label="诊断分区"><button v-for="item in tabs" :key="item.id" role="tab" :aria-selected="tab === item.id" :class="{ selected: tab === item.id }" @click="tab = item.id">{{ item.label }}</button></nav>
       <section v-show="tab === 'routing'" class="section">
         <RoutingWorkbench :spatial="spatial" :parameters="parameters" :versions="versions" :edit-version="editVersion" :selected-version-id="app.selectedRoutingVersionId" :visible="tab === 'routing'" v-model:name="versionName" :disabled="busy || loading || calibration.running" @version="changeRouting" @select="selectRouting" @register="registerRouting" @reset="loadRouting" @point="choosePoint" @export="download('routing-parameters', $event)" @spatial-export="download('spatial-products', spatial)" />
         <div class="spatial-toolbar"><div><h3>空间成果</h3><span>30 m 地形 · 河网 · 汇流分区</span></div><button class="btn primary" :disabled="busy || loading || spatialRunning" @click="submitSpatial">{{ spatialRunning ? '正在制作空间成果…' : '生成空间成果' }}</button><button v-if="latestSpatial" class="btn" :disabled="busy" @click="inspect(latestSpatial)">查看最近成果</button></div>
       </section>
       <section v-if="tab === 'point'" class="section">
         <form class="form" @submit.prevent="submitPoint"><label class="wide">计算成果<select v-model="pointSource" class="input" required><option value="">请选择已完成模拟</option><option v-for="row in simulations" :key="row.taskId" :value="row.taskId">{{ sourceName(row) }}</option></select></label>
-          <label>开始<input v-model="pointStart" class="input" type="datetime-local" step="3600" required /></label><label>结束<input v-model="pointEnd" class="input" type="datetime-local" step="3600" required /></label><button class="btn primary" :disabled="busy || !pointSource || point.lon == null || requiresIndependent">查询河道流量</button>
+          <label>开始<input v-model="pointStart" class="input" type="datetime-local" step="3600" required /></label><label>结束<input v-model="pointEnd" class="input" type="datetime-local" step="3600" required /></label><button class="btn primary" :disabled="busy || !pointSource || point.lon == null">查询河道流量</button>
         </form><details v-if="selectedSource"><summary>来源资料与汇流版本</summary><p class="identity">输入 {{ selectedSource.runConfig.inputs.bundleVersionId }} · 汇流 {{ selectedSource.runConfig.routing?.versionId || 'control-split-v2' }}</p></details>
         <RoutingWorkbench v-if="querySpatial || spatial" :spatial="querySpatial || spatial" query-only :queried-point="point.lon == null || point.lat == null ? null : [point.lon, point.lat]" :visible="tab === 'point'" @point="choosePoint" />
-        <p v-if="requiresIndependent" class="notice">该成果采用续算状态。查询中间断面需独立复算。</p>
-        <button v-if="selectedSource && (requiresIndependent || outsidePeriod)" class="btn" :disabled="busy" @click="openIndependentSimulation">{{ requiresIndependent ? '按此条件独立复算' : '模拟所选时段' }}</button>
-        <p v-if="!simulations.length" class="notice">暂无可查询成果 <RouterLink to="/calibration">建立独立连续模拟</RouterLink></p>
+        <button v-if="selectedSource && (independentRequired || outsidePeriod)" class="btn" :disabled="busy" @click="openIndependentSimulation">{{ independentRequired ? '按此条件独立复算' : '模拟所选时段' }}</button>
+        <p v-if="!simulations.length" class="notice">暂无可查询成果 <RouterLink to="/simulation">开始模拟</RouterLink></p>
         <details><summary>进阶：坡面估算与位置设置</summary><div class="form"><label>经度<input v-model.number="point.lon" class="input" type="number" step="any" /></label><label>纬度<input v-model.number="point.lat" class="input" type="number" step="any" /></label><label>分类河宽（m）<input v-model.number="point.channelWidthM" class="input" type="number" min="1" max="1000" /></label><button class="btn" :disabled="busy || !pointSource || point.lon == null" @click="submitPoint(false)">查询坡面或河道估算</button></div></details>
       </section>
       <section v-if="tab === 'experiment'" class="section">
@@ -68,11 +67,14 @@ import { hydrologyText } from '@/services/hydrologyPresentation'
 import { diagnosticValue, diagnosticThreshold } from '@/services/diagnosticPresentation'
 import { filterTasks, taskStatusLabels } from '@/services/taskPresentation'
 import { isEditableDiagnosticSource } from '@/services/diagnosticSourceService'
+import { dailyClient } from '@/services/dailyOperationService'
+import { ElMessageBox } from 'element-plus'
 
 const app = useAppStore()
 const calibration = useCalibrationStore()
 const route = useRoute()
 const router = useRouter()
+const resultContext = computed(() => Boolean(route.query.source))
 const resultMetadata = ref({})
 const sourceName = row => calculationName(row, resultMetadata.value)
 const supported = computed(() => app.usesModelBackend && app.basinId === 'nananxi-xufan' && app.modelScale === '1km')
@@ -94,7 +96,7 @@ const diagnostics = computed(() => tasks.value.filter(row => ['pointQuery', 'dia
 const spatialTasks = computed(() => tasks.value.filter(row => row.runType === 'spatialExport' && row.runConfig?.inputs?.bundleVersionId === app.selectedInputBundleVersionId))
 const spatialRunning = computed(() => spatialTasks.value.some(active))
 const latestSpatial = computed(() => spatialTasks.value.find(row => ['completed', 'archived'].includes(row.status)))
-const filteredDiagnostics = computed(() => filterTasks(diagnostics.value, { query: taskQuery.value, status: taskStatus.value }))
+const filteredDiagnostics = computed(() => filterTasks(resultContext.value ? diagnostics.value.filter(row=>row.runConfig?.runType==='pointQuery'&&row.runConfig.sourceTaskId===pointSource.value) : diagnostics.value, { query: taskQuery.value, status: taskStatus.value }))
 const simulations = computed(() => tasks.value.filter(row => ['completed','archived'].includes(row.status) && ['simulation','stateInitialization','stateContinuation'].includes(row.runConfig?.runType)))
 const calibrations = computed(() => tasks.value.filter(isEditableDiagnosticSource))
 const customSearchSource = computed(() => calibrations.value.find(row => row.taskId === experimentSource.value)?.runConfig.calibration?.searchParameters != null)
@@ -105,7 +107,8 @@ const minimumBudget = computed(() => {
 watch(minimumBudget, value => { budget.value = Math.max(budget.value, value) })
 const selectedVersionName = computed(() => versions.value.find(row => row.routingVersionId === app.selectedRoutingVersionId)?.name || '控制切分 v2 参考汇流')
 const selectedSource = computed(() => simulations.value.find(row => row.taskId === pointSource.value))
-const requiresIndependent = computed(() => Boolean(selectedSource.value?.runConfig.period?.initialStateVersionId))
+const independentRequired = ref(false)
+watch(()=>[pointSource.value,point.lon,point.lat],()=>{independentRequired.value=false})
 const outsidePeriod = computed(() => Boolean(selectedSource.value && (pointStart.value < selectedSource.value.runConfig.period.startTime.slice(0,16) || pointEnd.value > selectedSource.value.runConfig.period.endTime.slice(0,16))))
 watch(selectedSource, async (source, previous) => { if (!source || source.taskId === previous?.taskId) return; inspected.value = null; result.value = null; querySpatial.value = null; point.lon = null; point.lat = null; pointStart.value = source.runConfig.period.startTime.slice(0,16); pointEnd.value = source.runConfig.period.endTime.slice(0,16); const id = source.taskId; try { const product = await modelApi(`spatial-products?bundleVersionId=${encodeURIComponent(source.runConfig.inputs.bundleVersionId)}`); if (selectedSource.value?.taskId === id) querySpatial.value = product } catch (failure) { error.value = failure.message } })
 const reportUrl = computed(() => `${String(import.meta.env.VITE_MODEL_API_BASE).replace(/\/$/, '')}/tasks/${inspected.value?.taskId}/report-package`)
@@ -121,7 +124,7 @@ function changeRouting(version) {
   loadRouting()
 }
 function selectRouting() { if (busy.value || calibration.running) return; app.updateWorkContext({ selectedRoutingVersionId: editVersion.value }); calibration.markNeedsRun('汇流版本已改变，请重新计算。'); message.value = '已选用汇流版本；历史任务不变，跨版本续算须重新初始化。' }
-function choosePoint(coordinates) { [point.lon, point.lat] = coordinates; tab.value = 'point' }
+function choosePoint(coordinates) { [point.lon, point.lat] = coordinates; independentRequired.value=false; error.value='';tab.value = 'point' }
 function resetValues() { values.value = experimentMode.value === 'multiSeed' ? [42, 101, 2026] : [80, 120, 160] }
 function download(name, payload) { const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })); const link = document.createElement('a'); link.href = url; link.download = `${name}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000) }
 async function refresh(propagateError = false) {
@@ -130,7 +133,7 @@ async function refresh(propagateError = false) {
   loading.value = true
   try {
     const [catalog, listing, metadata] = await Promise.all([modelApi('routing-versions'), modelApi('tasks'), modelApi('result-catalog')])
-    const product = spatial.value?.bundleVersionId === input ? spatial.value : await modelApi(`spatial-products?bundleVersionId=${encodeURIComponent(input)}`, { timeoutMs: 30000 })
+    const product = resultContext.value ? null : spatial.value?.bundleVersionId === input ? spatial.value : await modelApi(`spatial-products?bundleVersionId=${encodeURIComponent(input)}`, { timeoutMs: 30000 })
     if (disposed || token !== revision || key !== app.contextKey || input !== app.selectedInputBundleVersionId) return
     versions.value = catalog.versions.filter(row => !row.searchReferenceOnly); tasks.value = listing.tasks.filter(row => row.contextKey === key)
     resultMetadata.value = metadata.metadata
@@ -152,36 +155,28 @@ async function submitSpatial() {
   if (row) { await inspect(row); message.value = '空间成果制作已提交。' }
 }
 async function submitPoint(riverOnly = true) {
-  if (requiresIndependent.value) { error.value = '请选择独立复算'; return }
+  independentRequired.value=false;error.value='';message.value=''
   if (pointStart.value > pointEnd.value || pointStart.value < selectedSource.value?.runConfig.period.startTime.slice(0,16) || pointEnd.value > selectedSource.value?.runConfig.period.endTime.slice(0,16)) { error.value = '查询时段须落在来源模拟覆盖内；请调整时段或建立对应模拟。'; return }
   const cached = diagnostics.value.find(row => ['completed','archived'].includes(row.status) && row.runConfig?.runType === 'pointQuery' && row.runConfig.sourceTaskId === pointSource.value && row.runConfig.riverOnly === (riverOnly !== false) && ['lon', 'lat', 'channelWidthM'].every(key => row.runConfig.point?.[key] === point[key]))
   if (cached) { await inspect(cached); message.value = '已读取同一成果的点位流量。'; return }
   const row = await mutate(() => modelApi('tasks', { method: 'POST', body: { requestId: uniqueRequestId('POINT'), runType: 'pointQuery', sourceTaskId: pointSource.value, riverOnly: riverOnly !== false, point: { ...point } } }))
+  if(error.value.includes('河道中间断面需独立复算'))independentRequired.value=true
   if (row) { await inspect(row); message.value = '已提交河道定位与流量查询。' }
 }
 async function openIndependentSimulation() {
-  if (calibration.running) { error.value = '当前计算尚未完成'; return }
-  try {
-    const source = selectedSource.value
-    const request = JSON.parse(JSON.stringify(source.runConfig))
-    const input = request.inputs.sourceBundleVersionId || request.inputs.bundleVersionId
-    await app.selectInputBundleVersion(input)
-    request.runType = 'simulation'; delete request.sourcePlan
-    const sourceResult = await modelApi(`tasks/${source.taskId}/result`)
-    const origin = source.runConfig.period.continuousOrigin || sourceResult.continuousOrigin || sourceResult.initialization?.continuousOrigin
-    const first = pointStart.value + ':00'
-    const warmupDays = request.period.warmupDays ?? 7
-    const startOrigin = origin && origin <= first ? origin : new Date(Date.parse(`${first}Z`) - warmupDays * 86400000).toISOString().slice(0,19)
-    request.period = { startTime: first, endTime: pointEnd.value + ':00', warmupDays,
-      ...(sourceResult.statePolicy === 'continuous-origin' || origin ? { continuousOrigin: startOrigin } : {}) }
-    request.inputs.bundleVersionId = input
-    calibration.loadFromTaskConfig('continuousSimulation', normalizeBackendTask({ runConfig: request }).runConfig)
-    calibration.modelSchemeId = null; calibration.modelSchemeRevision = 0; calibration.modelSchemeLatestRevision = 0
-    calibration.modelSchemeName = `${sourceName(source).slice(0,60)} · 独立复算`
-    if (request.routing?.versionId) app.updateWorkContext({ selectedRoutingVersionId: request.routing.versionId })
-    calibration.saveCurrentWorkspace()
-    router.push('/calibration')
-  } catch (failure) { error.value = failure.message }
+  const source=selectedSource.value
+  if(!source)return
+  const identifier=source.runConfig.lineage?.parameterSchemeId || source.runConfig.lineage?.parameterVersionId
+  busy.value=true;error.value=''
+  try{
+    let named=(await dailyClient.parameters()).find(row=>row.id===identifier||row.sourceTaskId===source.taskId)
+    if(!named){
+      const {value}=await ElMessageBox.prompt('参数名称','保存原计算参数',{inputPlaceholder:'填写参数名称',confirmButtonText:'保存并打开',cancelButtonText:'取消',inputValidator:value=>Boolean(value?.trim())||'请填写名称'})
+      named=await dailyClient.saveParameter({name:value.trim(),sourceTaskId:source.taskId})
+    }
+    if(named)router.push({path:'/simulation',query:{task:source.taskId,start:pointStart.value,end:pointEnd.value,parameter:named.id}})
+  }catch(failure){if(failure!=='cancel'&&failure!=='close')error.value=failure.message}
+  finally{busy.value=false}
 }
 async function submitExperiment() { const row = await mutate(() => { const source = calibrations.value.find(item => item.taskId === experimentSource.value); if (!source) throw new Error('来源率定任务已不可用，请重新选择。'); const base = JSON.parse(JSON.stringify(source.runConfig)); base.calibration.optimizer.maxEvaluations = budget.value; return modelApi('tasks', { method: 'POST', body: { requestId: uniqueRequestId('EXPERIMENT'), runType: 'diagnosticExperiment', mode: experimentMode.value, values: values.value, baseRequest: base } }) }); if (row) { await inspect(row); message.value = '参数稳定性检验已提交。' } }
 function parseList(value) { const fields = value.split(/[,，]/).map(item => item.trim()); if (fields.some(item => !item || !Number.isFinite(Number(item)))) throw new Error('请填写以逗号分隔的有限数值。'); return fields.map(Number) }

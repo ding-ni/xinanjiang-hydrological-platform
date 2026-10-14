@@ -1,50 +1,156 @@
 <template>
-  <section class="scheme-bar" aria-label="计算方案">
-    <div class="scheme-fields">
-      <label>已保存方案<select class="input" :disabled="cal.running || busy" :value="cal.modelSchemeId || ''" @change="load($event.target.value)"><option value="">新方案草稿</option><option v-for="row in rows" :key="row.id" :value="row.id">{{ row.name }} · 修订 {{ row.revision }}</option></select></label>
-      <label>方案名称<input class="input" v-model.trim="cal.modelSchemeName" :disabled="cal.running" maxlength="80" placeholder="请为本次水文方案命名" /></label>
-      <button class="btn" :disabled="cal.running || busy" @click="create">新建方案</button>
-      <button class="btn" :disabled="cal.running || busy || !cal.modelSchemeName" @click="$emit('save')">保存方案</button>
-      <label v-if="revisions.length > 1">历史修订<select class="input" :value="cal.modelSchemeRevision" :disabled="cal.running || busy" @change="load(cal.modelSchemeId, Number($event.target.value))"><option v-for="revision in revisions" :key="revision.revision" :value="revision.revision">修订 {{ revision.revision }} · {{ revision.created_at }}</option></select></label>
-    </div>
-    <details class="source-settings"><summary>资料来源与降雨处理</summary>
-      <div class="scheme-fields"><label>方案资料来源<select class="input" :value="app.selectedInputBundleVersionId" :disabled="cal.running" @change="source($event.target.value)"><option v-for="row in app.inputProducts" :key="row.bundleVersionId" :value="row.bundleVersionId">{{ row.name }}</option></select></label>
-        <label>降雨输入<select class="input" v-model="cal.rainfallMethod" :disabled="cal.running"><option value="reuse">直接使用已有网格降雨</option><option value="stationIdw">站点雨量自动插值</option></select></label>
-        <label v-if="cal.rainfallMethod === 'stationIdw'">站点资料来源<select class="input" v-model="cal.stationSourceId" :disabled="cal.running"><option :value="null">沿用当前资料的原始来源</option><option value="LOCAL_OBSERVATIONS">本地实测资料库</option><option v-for="row in sources" :key="row.sourceId" :value="row.sourceId">{{ row.name }}</option></select></label>
-      </div>
-      <details v-if="cal.rainfallMethod === 'stationIdw'"><summary>本方案插值条件</summary><div class="scheme-fields"><label>距离幂次<input class="input" type="number" min="1" max="4" step="0.1" v-model.number="cal.idwPower" /></label><label>最少有效雨量站<input class="input" type="number" min="1" max="32" v-model.number="cal.minimumStations" /></label></div></details>
-    </details>
+  <section v-if="!opened" class="scheme-list" aria-label="率定方案">
+    <header><div><h1>参数率定</h1><p>{{ app.basinName }} · {{ cal.section }}</p></div><button class="btn primary" :disabled="busy" @click="beginCreate">新建方案</button></header>
+    <form v-if="creating" class="scheme-create" @submit.prevent="create">
+      <label for="new-scheme-name">方案名称</label>
+      <input id="new-scheme-name" ref="nameInput" v-model.trim="newName" class="input" required maxlength="80" placeholder="填写名称" :disabled="busy" />
+      <button class="btn primary" :disabled="busy || !newName">建立方案</button>
+      <button type="button" class="btn" :disabled="busy" @click="creating = false">取消</button>
+    </form>
     <p v-if="error" role="alert" class="scheme-error">{{ error }}</p>
+    <div v-if="rows.length" class="scheme-cards">
+      <button v-for="row in rows" :key="row.id" class="scheme-choice" :data-scheme-id="row.id" :disabled="busy" @click="load(row.id)">
+        <b>{{ row.name }}</b><span>{{ dateLabel(row.updated_at || row.updatedAt) }}</span><i aria-hidden="true">→</i>
+      </button>
+    </div>
+    <p v-else-if="!busy && !creating && !error" class="empty">暂无率定方案</p>
+    <details v-if="originalRecords.length" class="original-records"><summary>已有率定记录</summary><button v-for="record in originalRecords" :key="record.originalCalibrationPlan.planId" class="scheme-choice" :disabled="busy" @click="loadOriginal(record)"><b>{{ record.name || record.originalCalibrationPlan.name }}</b><i aria-hidden="true">→</i></button></details>
   </section>
+  <header v-else class="scheme-heading" aria-label="当前率定方案">
+    <button class="btn" :disabled="busy" @click="back">← 方案列表</button><h1>{{ cal.modelSchemeName }}</h1>
+    <span v-if="saving" class="save-status" role="status">保存中</span>
+    <span v-else-if="error" class="scheme-error" role="alert">{{ error }} <button class="text-button" @click="flush">重试</button></span>
+  </header>
 </template>
+
 <script setup>
-import { onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { modelApi } from '@/services/modelBackendService'
-import { restoreModelScheme } from '@/services/modelSchemeService'
+import { calibrationEditor, restoreModelScheme, saveCalibrationEditor, schemeDefinition, originalCalibrationRecords, openOriginalCalibrationRecord, recoverActiveCalibrationOperation } from '@/services/modelSchemeService'
 import { useAppStore } from '@/stores/app'
 import { useCalibrationStore } from '@/stores/calibration'
-const app = useAppStore(), cal = useCalibrationStore(), rows = ref([]), revisions = ref([]), busy = ref(false), error = ref('')
-const sources = ref([])
-const emit = defineEmits(['save', 'loaded'])
-async function refresh() { try { const [schemes, defaults] = await Promise.all([modelApi('model-schemes'), modelApi('preparation-defaults')]); rows.value = schemes.schemes; if (cal.modelSchemeId) revisions.value = (await modelApi(`model-schemes/${cal.modelSchemeId}`)).revisions; cal.idwPower ??= defaults.idwPower; cal.minimumStations ??= defaults.minimumStations } catch (failure) { error.value = failure.message } }
-async function load(id, revision) { if (!id) return; busy.value = true; error.value = ''; try { const row = await modelApi(`model-schemes/${id}${revision ? `?revision=${revision}` : ''}`); revisions.value = row.revisions; await restoreModelScheme(cal, app, row); emit('loaded') } catch (failure) { error.value = failure.message } finally { busy.value = false } }
-async function create() {
-  cal.modelSchemeId = null; cal.modelSchemeRevision = 0; cal.modelSchemeLatestRevision = 0; cal.modelSchemeName = ''
-  cal.schemeWindows = []; cal.stationSourceId = null; cal.runResult = null; cal.simulationResult = null; cal.activeTaskId = null
-  cal.dirty = true; cal.running = false; cal.runStatus = 'needs-run'; cal.runMessage = ''
-  cal.events = cal.events.map(event => ({ ...event, purpose: '未使用' }))
-  cal.requiredInputBundleVersionId = null; cal.eventAssignment = null; cal.trialRecords = []
-  cal.scienceVersionId = null; cal.scienceDescriptor = null; cal.candidateWarmupHours = null
-  cal.statePolicy = cal.calibrationMode === 'continuous' && cal.operationMode !== 'simulation' ? 'continuous-origin' : 'independent-warmup'
-  cal.continuousOrigin = null; cal.initialStateVersionId = null; cal.sourcePlan = null; cal.sourcePlanRequestTemplate = null
-  if (cal.evaporationMode === 'science-version') cal.evaporationMode = 'monthly-climatology-assumption'
-  revisions.value = []; cal.idwPower = null; cal.minimumStations = null
-  await refresh(); cal.saveCurrentWorkspace(); error.value = ''; emit('loaded')
+
+const app = useAppStore(), cal = useCalibrationStore()
+const route = useRoute()
+const rows = ref([]), opened = ref(false), busy = ref(false), saving = ref(false), creating = ref(false)
+const originalRecords = ref([])
+const newName = ref(''), nameInput = ref(null), error = ref('')
+const emit = defineEmits(['loaded', 'opened'])
+let timer, loading = false, pendingSave = Promise.resolve(), restoringUnnamed = false
+
+function dateLabel(value) { return String(value || '').replace('T', ' ').slice(0, 16) }
+async function refresh() {
+  try {
+    const [schemes, parameters] = await Promise.all([modelApi('model-schemes'), modelApi('parameter-versions')])
+    rows.value = schemes.schemes || []
+    originalRecords.value = originalCalibrationRecords(parameters.versions || [], app.contextKey)
+  }
+  catch (failure) { error.value = failure.message }
 }
-async function source(id) { error.value = ''; try { await app.selectInputBundleVersion(id); cal.requiredInputBundleVersionId = null; cal.sourcePlan = null; cal.saveCurrentWorkspace() } catch (failure) { error.value = failure.message } }
-onMounted(async () => { await refresh(); try { sources.value = (await modelApi('input-sources')).sources } catch (failure) { error.value = failure.message } })
-defineExpose({ refresh })
+async function loadOriginal(record) {
+  if (cal.running || cal.activeOperationId) { error.value = '请先完成或停止当前计算'; return }
+  busy.value = true; loading = true; error.value = ''
+  try {
+    await refreshCatalog()
+    await openOriginalCalibrationRecord(cal, app, record)
+    opened.value = true; emit('opened', true); emit('loaded')
+  } catch (failure) { error.value = failure.message }
+  finally { busy.value = false; await nextTick(); loading = false }
+}
+async function refreshCatalog() {
+  const payload = await modelApi('flood-catalog?projectId=' + encodeURIComponent(app.basinId) + '&resolutionId=' + encodeURIComponent(app.modelScale))
+  cal.loadFullFloodCatalog(payload.events || [])
+}
+async function load(id) {
+  if ((cal.running || cal.activeOperationId) && cal.modelSchemeId !== id) { error.value = '请先完成或停止当前计算'; return }
+  busy.value = true; loading = true; error.value = ''
+  try {
+    await refreshCatalog()
+    await restoreModelScheme(cal, app, await modelApi('model-schemes/' + id))
+    opened.value = true; emit('opened', true); emit('loaded')
+  } catch (failure) { error.value = failure.message }
+  finally { busy.value = false; await nextTick(); loading = false }
+}
+async function create() {
+  if (!newName.value.trim()) return
+  if (cal.running || cal.activeOperationId) { error.value = '请先完成或停止当前计算'; return }
+  busy.value = true; loading = true; error.value = ''
+  try {
+    if (!restoringUnnamed) {
+      const defaults = await modelApi('preparation-defaults')
+      await refreshCatalog()
+      cal.resetCalibrationScheme(defaults, app.backendCase)
+    }
+    cal.modelSchemeName = newName.value.trim()
+    const editor = calibrationEditor(cal)
+    const row = await modelApi('model-schemes', { method: 'POST', body: { name: cal.modelSchemeName, context: editor.context, editor } })
+    cal.modelSchemeId = row.id; cal.modelSchemeRevision = row.revision; cal.modelSchemeLatestRevision = row.latestRevision
+    cal.saveCurrentWorkspace()
+    creating.value = false; newName.value = ''; opened.value = true; restoringUnnamed = false
+    emit('opened', true); emit('loaded')
+  } catch (failure) { error.value = failure.message }
+  finally { busy.value = false; await nextTick(); loading = false }
+}
+function beginCreate() { restoringUnnamed = false; newName.value = ''; creating.value = true }
+async function restoreTask(taskId, schemeId, legacyConditionId = null) {
+  busy.value = true; loading = true; error.value = ''
+  try {
+    await refreshCatalog()
+    const task = legacyConditionId ? null : await modelApi('calibration-tasks/' + encodeURIComponent(taskId))
+    const request = legacyConditionId ? await modelApi('database/schemes/' + encodeURIComponent(legacyConditionId)) : task.runConfig || task.request
+    if (request?.runType !== 'calibration') throw new Error('请选择率定计算记录')
+    const id = schemeId || request.scheme?.id
+    const existing = id ? await modelApi('model-schemes/' + encodeURIComponent(id)) : null
+    const method = request.inputs?.rainfallMethod || existing?.definition?.inputs?.rainfallMethod || 'reuse'
+    await restoreModelScheme(cal, app, { id: existing?.id || null, name: existing?.name || '',
+      revision: request.scheme?.revision || existing?.revision || 0, latestRevision: existing?.latestRevision || 0,
+      definition: schemeDefinition(request, method), calculationDraft: request, editor: {} })
+    cal.activeOperationId = null; cal.activeOperationRequest = null; cal.running = false
+    if (existing) { opened.value = true; emit('opened', true); emit('loaded') }
+    else { restoringUnnamed = true; creating.value = true; newName.value = '' }
+  } catch (failure) { error.value = failure.message }
+  finally { busy.value = false; await nextTick(); loading = false }
+}
+function queueSave() {
+  if (!opened.value || loading || !cal.modelSchemeId) return
+  clearTimeout(timer)
+  timer = setTimeout(flush, 500)
+}
+async function flush() {
+  clearTimeout(timer)
+  if (!opened.value || loading || !cal.modelSchemeId) return
+  const id = cal.modelSchemeId
+  pendingSave = pendingSave.catch(() => {}).then(async () => {
+    if (cal.modelSchemeId !== id) return
+    saving.value = true
+    try { await saveCalibrationEditor(cal); error.value = '' }
+    catch (failure) { error.value = failure.message; throw failure }
+    finally { saving.value = false }
+  })
+  try { await pendingSave } catch { /* The failed save remains visible beside the scheme name. */ }
+}
+async function back() { await flush(); if (error.value) return; opened.value = false; emit('opened', false); await refresh() }
+watch(() => JSON.stringify(calibrationEditor(cal)), queueSave)
+watch(() => app.contextKey, () => { opened.value = false; emit('opened', false); error.value = ''; refresh() })
+watch(creating, async value => { if (value) { await nextTick(); nameInput.value?.focus() } })
+onMounted(async () => {
+  await refresh()
+  if (route.query.legacyConditionId) await restoreTask(null, route.query.schemeId && String(route.query.schemeId), String(route.query.legacyConditionId))
+  else if (route.query.taskId) await restoreTask(String(route.query.taskId), route.query.schemeId && String(route.query.schemeId))
+  else if (route.query.schemeId) await load(String(route.query.schemeId))
+  else if (cal.activeOperationId && cal.modelSchemeId) {
+    try {
+      if (await recoverActiveCalibrationOperation(cal)) { opened.value = true; emit('opened', true); emit('loaded') }
+    } catch (failure) { error.value = failure.message }
+  }
+})
+onBeforeUnmount(() => { clearTimeout(timer); if (opened.value && !loading) saveCalibrationEditor(cal).catch(() => {}) })
+defineExpose({ refresh, flush, load })
 </script>
+
 <style scoped>
-.scheme-bar{margin:14px 0;padding:18px 20px;border:1px solid #d7e2de;background:#f4f8f6}.scheme-fields{display:flex;align-items:end;gap:12px;flex-wrap:wrap}.scheme-fields label{display:grid;gap:6px;flex:1 1 230px;font-size:12px;color:#486058}.scheme-fields .input{width:100%;min-width:0}.scheme-fields small{color:#65796d}.source-settings{margin-top:14px;font-size:12px}.source-settings summary{cursor:pointer;color:#477365}.source-settings .scheme-fields{margin-top:12px}.source-settings p{color:#6b7c74;line-height:1.7}.scheme-error{color:#ac3d3d}
+.original-records{margin-top:20px;border-top:1px solid #e4ece9;padding-top:14px}.original-records summary{font-size:12px;color:#768a7d;cursor:pointer;margin-bottom:12px}.original-records .scheme-choice{grid-template-columns:1fr 28px;margin-top:8px}
+.scheme-list{max-width:960px;margin:32px auto;padding:28px;background:#fff;border:1px solid #d6e2df;border-radius:5px}.scheme-list header,.scheme-heading{display:flex;align-items:center;gap:16px}.scheme-list header{justify-content:space-between;margin-bottom:24px}.scheme-list h1,.scheme-heading h1{font-size:20px;color:#244c44;margin:0}.scheme-list header p{margin:8px 0 0;color:#71837d;font-size:13px}.scheme-create{display:grid;grid-template-columns:auto minmax(160px,1fr) auto auto;gap:10px;align-items:center;padding:18px 0;border-top:1px solid #e4ece9}.scheme-create label{font-size:13px}.scheme-cards{display:grid;gap:8px}.scheme-choice{display:grid;grid-template-columns:1fr auto 28px;align-items:center;gap:20px;padding:17px 18px;background:#fbfdfc;border:1px solid #dce7e2;border-radius:4px;text-align:left;cursor:pointer;color:#31584c}.scheme-choice:hover{background:#eef6f2;border-color:#92b5a8}.scheme-choice span{font-size:12px;color:#75877e}.scheme-choice i{font-style:normal;font-size:20px}.scheme-choice:focus-visible{outline:2px solid #258276;outline-offset:2px}.empty{padding:52px 0;text-align:center;color:#8b9b94;font-size:14px}.scheme-heading{padding:7px 0}.save-status{margin-left:auto;color:#8a9d94;font-size:12px}.scheme-error{color:#a93636;font-size:13px}.text-button{border:0;background:none;color:inherit;text-decoration:underline;cursor:pointer}
+@media(max-width:640px){.scheme-list{margin:12px 0;padding:18px}.scheme-create{grid-template-columns:1fr 1fr}.scheme-create label,.scheme-create input{grid-column:1/-1}.scheme-choice{grid-template-columns:1fr 25px}.scheme-choice span{display:none}}
 </style>

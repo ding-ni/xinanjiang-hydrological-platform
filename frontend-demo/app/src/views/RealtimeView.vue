@@ -1,14 +1,12 @@
 <template>
-  <section class="view-realtime">
+  <section class="view-realtime" :class="{ 'has-product': app.hasLakeBalance }">
     <div class="metric-strip">
       <div class="metric"><span>当前流域</span><b>{{ displaySummary.basinName }}</b></div>
       <div class="metric"><span>{{ app.hasLakeBalance ? '入湖控制断面' : '出口断面' }}</span><b>{{ displaySummary.targetSection }}</b></div>
       <div class="metric"><span>{{ usesModelInputs ? '实测流量' : '当前流量' }}</span><b>{{ metricValue(displaySummary.currentFlow, 'm³/s') }}</b></div>
       <div class="metric"><span>{{ app.hasLakeBalance ? '湖面水位' : usesModelInputs ? '实测水位' : '当前水位' }}</span><b>{{ metricValue(displaySummary.currentLevel, 'm') }}</b></div>
-      <div class="metric"><span>{{ usesModelInputs ? '徐畈控制区面雨量' : '流域面平均雨量' }}</span><b>{{ hasNananxiObservation ? `${basinRain} mm（${usesModelInputs ? '逐时面积加权' : '离线站点均值'}）` : (app.hasLakeBalance ? `近 ${monitor.rainWindow} 小时 ${basinRain} mm（离线示意）` : '待接入') }}</b></div>
-      <div class="metric"><span>模型方案</span><b>{{ app.hasLakeBalance ? `${app.activeModelScheme.label} · ${app.activeScaleMeta.cellCount.toLocaleString()} 有效网格` : app.activeModelScheme.label }}</b></div>
+      <div class="metric"><span>{{ usesModelInputs ? '徐畈控制区面雨量' : '流域面平均雨量' }}</span><b>{{ hasNananxiObservation ? `${basinRain} mm` : (app.hasLakeBalance ? `近 ${monitor.rainWindow} 小时 ${basinRain} mm` : '—') }}</b></div>
       <div class="metric"><span>{{ usesModelInputs ? '回放时刻' : '资料时间' }}</span><b>{{ (app.hasLakeBalance || hasNananxiObservation) ? monitor.currentTimeLabel : '待接入' }}</b></div>
-      <ContextStatusMetric />
     </div>
 
     <div v-if="app.hasLakeBalance" class="product-bar">
@@ -28,22 +26,6 @@
         <button class="btn primary sm" type="button" @click="bringToForecast">带入洪水预报</button>
       </div>
     </div>
-    <div v-else class="product-bar project-status-bar">
-      <div class="prod-left">
-        <span class="pill">{{ projectStatus.label }}</span>
-        <b>{{ projectStatus.headline }}</b>
-        <span class="muted">{{ projectStatus.summary }}</span>
-      </div>
-      <div class="product-actions">
-        <button class="btn sm" type="button" :disabled="usesModelInputs && !hasNananxiObservation" @click="bringToState">
-          准备起算状态
-        </button>
-        <button class="btn primary sm" type="button" @click="bringToForecast">
-          进入洪水预报
-        </button>
-      </div>
-    </div>
-
     <div class="main-row" :class="{ 'detail-open': detailOpen }">
       <div class="left-stack">
         <div v-if="app.hasLakeBalance" class="panel panel-pad domain-card">
@@ -76,7 +58,6 @@
               <button type="button" :class="{ on: monitor.rainDisplayMode !== 'smooth' }" :aria-pressed="monitor.rainDisplayMode !== 'smooth'" @click="monitor.setRainDisplayMode('grid')">网格</button>
               <button type="button" :class="{ on: monitor.rainDisplayMode === 'smooth' }" :aria-pressed="monitor.rainDisplayMode === 'smooth'" @click="monitor.setRainDisplayMode('smooth')">平滑</button>
             </div>
-            <p class="time-hint">同一时次的网格雨量；平滑仅用于显示。</p>
           </template>
           <div v-if="app.hasLakeBalance" class="form-group-title">累计雨量时段</div>
           <div v-if="app.hasLakeBalance" class="seg">
@@ -93,17 +74,11 @@
         </div>
 
         <div v-if="!app.hasLakeBalance" class="panel panel-pad project-readiness">
-          <h3 class="panel-title">
-            <span>流域与站网</span>
-            <span class="count neutral">{{ sourceInputStatus }}</span>
-          </h3>
+          <h3 class="panel-title"><span>流域与站网</span></h3>
           <div class="domain-stats">
-            <div><span>流域边界</span><b>{{ caseData?.spatialAssets?.basin ? '已登记' : '—' }}</b></div>
             <div><span>河流</span><b>{{ projectCounts.rivers }} 条</b></div>
             <div><span>站点登记</span><b>{{ projectCounts.stations }} 个</b></div>
             <div><span>出口断面</span><b>{{ projectCounts.sections }} 个</b></div>
-            <div><span>有效计算栅格</span><b>{{ projectCounts.cells }} 个</b></div>
-            <div><span>地形资料</span><b>{{ caseData?.spatial?.terrain ? `${app.activeModelScheme.label} 已登记` : '—' }}</b></div>
           </div>
           <RouterLink v-if="usesModelInputs" class="btn" to="/data">查询站点雨量、水位与流量</RouterLink>
           <div v-if="usesModelInputs" class="station-picker">
@@ -114,23 +89,16 @@
             </select>
           </div>
           <p v-if="databaseError" class="time-hint" role="alert">{{ databaseError }}</p>
-          <div v-if="usesModelInputs" class="domain-note"><b>当前计算降雨</b><p>{{ currentRainfallPresentation.name }}</p><p>{{ currentRainfallPresentation.purpose }}</p><RouterLink to="/data?tab=inputs">查看或选用计算资料 →</RouterLink></div>
-          <details v-if="usesModelInputs" class="domain-note"><summary>资料编号与提取时段</summary><code>{{ app.selectedInputBundleVersionId }}</code><p>{{ currentRainfallPresentation.range }}</p></details>
-          <p v-if="app.basinId === 'nananxi-xufan'" class="time-hint">地图高程按当前产流网格显示。30 m 地形及汇流分区见<RouterLink to="/diagnostics">汇流与拓扑</RouterLink>。</p>
-          <div v-if="projectStatus.missingInputs.length" class="form-group-title">后续仍需补充</div>
-          <ul v-if="projectStatus.missingInputs.length" class="readiness-list">
-            <li v-for="item in projectStatus.missingInputs" :key="item">{{ item }}</li>
-          </ul>
-          <p class="time-hint">{{ hasNananxiObservation
-            ? usesModelInputs ? '历史资料回放：站点读取实测资料库，降雨场读取当前计算资料；未接入实时更新。' : '离线原始资料可按时段或场次回放；地图插值仅作展示，不是模型计算资料。'
-            : '当前项目仅有空间资料。' }}</p>
         </div>
       </div>
 
       <article class="panel map-card">
         <div class="map-head">
-          <span>{{ app.hasLakeBalance ? '流域雨水情态势 · 离线示意' : (hasNananxiObservation ? usesModelInputs ? '流域雨水情 · 历史回放' : '雨水情离线资料回放' : '流域空间资料') }}</span>
-          <span class="map-sub">{{ app.hasLakeBalance ? '站点、河网与面雨量 · 点击站点查看过程' : (hasNananxiObservation ? '边界、河网、DEM 与资料站点 · 点击站点查看过程' : '边界、河网、DEM 与站点登记 · 点击站点查看资料状态') }}</span>
+          <span>{{ app.hasLakeBalance || hasNananxiObservation ? '流域雨水情' : '流域空间资料' }}</span>
+          <div v-if="!app.hasLakeBalance" class="product-actions">
+            <RouterLink class="btn sm" to="/simulation">洪水模拟</RouterLink>
+            <button class="btn primary sm" type="button" @click="bringToForecast">洪水预报</button>
+          </div>
         </div>
         <div class="map-body">
           <BasinMap
@@ -153,11 +121,10 @@
           <span class="forcing-status" :class="{ loading: precipLoading }">{{ precipLoading ? '正在读取逐小时降水场…' : precipError || '离线逐小时降水场预览已载入' }}</span>
         </div>
         <div v-else-if="hasNananxiObservation || usesModelInputs" class="forcing-strip project-forcing">
-          <span class="forcing-status" :class="{ loading: rainGridLoading || monitor.historicalLoading, error: Boolean(rainGridError || monitor.historicalError) }">{{ rainGridLoading || monitor.historicalLoading ? '正在读取降雨栅格' : rainGridError || monitor.historicalError || rainGridSourceLabel }}</span>
-          <div><span>当前计算降雨</span><b>{{ usesModelInputs ? currentRainfallPresentation.name : '离线降雨展示预览' }} · {{ app.activeScaleMeta.label }}</b></div>
-          <div><span>图面时次</span><b>{{ usesModelInputs && !hasNananxiObservation ? '选择回放时段' : `${monitor.currentTimeLabel} · 第 ${monitor.timeIndex + 1}/${monitor.timeMax + 1} 时次` }}</b></div>
-          <div><span>有效格点</span><b>{{ currentPrecipCells.length }} 个</b></div>
-          <span class="forcing-note">{{ rainDisplayNote }}</span>
+          <span v-if="rainGridLoading || monitor.historicalLoading || rainGridError || monitor.historicalError" class="forcing-status" :class="{ loading: rainGridLoading || monitor.historicalLoading, error: Boolean(rainGridError || monitor.historicalError) }" role="status">{{ rainGridLoading || monitor.historicalLoading ? '正在读取降雨' : rainGridError || monitor.historicalError }}</span>
+          <details><summary>降雨资料</summary><p>{{ usesModelInputs ? currentRainfallPresentation.name : '站点雨量' }}</p></details>
+          <div><span>时刻</span><b>{{ usesModelInputs && !hasNananxiObservation ? '—' : monitor.currentTimeLabel }}</b></div>
+          <div><span>降雨网格</span><b>{{ currentPrecipCells.length }} 个</b></div>
         </div>
       </article>
 
@@ -186,12 +153,10 @@ import BasinMap from '@/components/map/BasinMap.vue'
 import StationDetail from '@/components/monitor/StationDetail.vue'
 import SelincoStationDetail from '@/components/monitor/SelincoStationDetail.vue'
 import TimelineBar from '@/components/monitor/TimelineBar.vue'
-import ContextStatusMetric from '@/components/common/ContextStatusMetric.vue'
 import { inputProductPresentation } from '@/services/inputProductPresentation.js'
 import { gridCellsAt, gridCellsAtTime, loadNananxiRainfallGrid } from '@/services/rainfallGridService'
 import { projectDataForContext } from '@/services/caseAvailabilityService'
 import { usesModelInputService, finiteInputValue } from '@/services/modelInputService'
-import { modelInputDisplayStatus } from '@/services/modelInputPresentation'
 import { modelApi } from '@/services/modelBackendService'
 
 const monitor = useMonitorStore()
@@ -239,12 +204,6 @@ watch([usesModelInputs, () => monitor.currentTimeLabel, () => app.basinId], () =
 }, { immediate: true })
 const hasNananxiObservation = computed(() => Boolean(caseData.value) && app.hasObservationCatalog && monitor.hasHistoricalObservations
   && (!usesModelInputs.value || (app.modelScale === '1km' && !app.backendError && monitor.historicalPreview?.sourceType === 'model-qc')))
-const sourceInputStatus = computed(() => usesModelInputs.value
-  ? modelInputDisplayStatus({ resolution: app.modelScale, registered: app.hasModelInput,
-    bundleVersionId: app.selectedInputBundleVersionId,
-    loaded: hasNananxiObservation.value, loading: monitor.historicalLoading,
-    backendError: app.backendError, inputError: monitor.historicalError || app.inputCatalogError }).label
-  : app.dataStatus)
 const projectStations = computed(() => {
   const rows = [
     ...(caseData.value?.stations?.stations || []),
@@ -269,36 +228,6 @@ const displaySummary = computed(() => {
     currentFlow: outlet?.flow ?? null,
     currentLevel: outlet?.level ?? null,
     dataStatus: app.dataStatus
-  }
-})
-const projectStatus = computed(() => {
-  if (usesModelInputs.value) {
-    const ready = hasNananxiObservation.value
-    return {
-      label: '历史雨水情',
-      headline: ready ? '计算资料回放' : monitor.historicalLoading ? '正在查询时段' : app.modelScale !== '1km' ? '空间资料浏览' : '请选择回放时段',
-      summary: ready ? '网格降雨 · 控制区面积加权面雨量 · 徐畈出口流量' : monitor.historicalError || app.backendError || '南安溪 1 km 计算方案',
-      missingInputs: [],
-      canState: ready, canForecast: false
-    }
-  }
-  const datasetCatalog = caseData.value?.datasets || {}
-  const resolution = caseData.value?.resolution || {}
-  const missingInputs = datasetCatalog.missingInputs || resolution.missingInputs || (
-    app.basinId === 'nananxi-xufan'
-      ? ['预报降雨', '模型初始状态', '产流与汇流计算服务']
-      : []
-  )
-  const hasDatasets = Boolean(datasetCatalog.datasets?.length)
-  const hasHistorical = datasetCatalog.datasets?.some((item) => item.role === 'observation')
-  const hasForecast = datasetCatalog.datasets?.some((item) => item.role === 'forecast')
-  return {
-    label: resolution.statusLabel || app.dataStatus || '资料状态',
-    headline: hasHistorical ? '离线原始资料预览' : (hasDatasets ? '业务数据目录已接入' : caseData.value?.spatialAssets?.basin ? '当前展示已核实空间资料' : '当前案例资料未接入'),
-    summary: datasetCatalog.sourceSummary || caseData.value?.manifest?.source?.note || '小时资料未登记。',
-    missingInputs,
-    canState: hasHistorical,
-    canForecast: hasHistorical && app.basinId !== 'llpq'
   }
 })
 const projectCounts = computed(() => {
@@ -348,13 +277,6 @@ const currentPrecipCells = computed(() => {
   const index = Math.min(product.times.length - 1, monitor.timeIndex)
   return product.cells.map((cell) => ({ id: cell.id, bounds: cell.bounds, qpf: cell.values[index] == null ? null : Number(cell.values[index]) }))
 })
-const rainGridSourceLabel = computed(() => {
-  if (nananxiRainGridProduct.value?.sourceType === 'model-qc') return '整编逐时网格降雨'
-  if (nananxiRainGridProduct.value?.sourceType === 'preprocessed-netcdf') return '离线 NC 派生展示预览已载入'
-  if (nananxiRainGridProduct.value?.sourceType === 'static-preview') return '本地静态降雨栅格预览已载入'
-  if (nananxiRainGridProduct.value?.sourceType === 'observed-window-derived') return '离线站点插值展示网格已生成'
-  return '降雨栅格待载入'
-})
 const basinRain = computed(() => {
   if (usesModelInputs.value) {
     const value = hasNananxiObservation.value ? finiteInputValue(monitor.modelInputSummary?.arealRainfallMm?.[monitor.timeIndex]) : null
@@ -369,17 +291,6 @@ const basinRain = computed(() => {
   if (!values.length) return '—'
   return (values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1)
 })
-
-const smoothRainStationCount = computed(() => projectStations.value.filter((station) => station.type === 'rain' && finiteInputValue(station.rain1h) != null).length)
-const smoothRainStatus = computed(() => {
-  if (!hasNananxiObservation.value) return '站点实测后可生成'
-  return smoothRainStationCount.value
-    ? `站点雨量平滑显示 · ${smoothRainStationCount.value}站`
-    : '当前时次暂无可用站点'
-})
-const rainDisplayNote = computed(() => usesModelInputs.value
-  ? app.modelScale !== '1km' ? '当前尺度未接入计算降雨' : monitor.rainDisplayMode === 'smooth' ? '网格雨量平滑显示 · 面雨量按原网格统计' : '模型计算网格降雨'
-  : `${smoothRainStatus.value} · 离线图层仅用于展示`)
 
 function metricValue(value, unit) {
   if (value == null || value === '') return '—'
@@ -438,7 +349,7 @@ async function loadRainfallGridWindow(requestId = observationRequestId) {
   if (usesModelInputs.value) {
     if (app.modelScale !== '1km' || preview.sourceType !== 'model-qc' || !monitor.modelInputProduct) {
       nananxiRainGridProduct.value = null
-      rainGridError.value = '当前尺度没有已登记的实际 整编资料 降雨栅格'
+      rainGridError.value = '当前尺度没有降雨资料'
       return
     }
     nananxiRainGridProduct.value = monitor.modelInputProduct
@@ -613,12 +524,13 @@ function bringToForecast() {
 .station-picker .input { width: 100%; min-width: 0; }
 .view-realtime {
   display: grid;
-  grid-template-rows: 46px auto minmax(0, 1fr) auto;
+  grid-template-rows: 46px minmax(0, 1fr) auto;
   gap: 10px;
   width: 100%;
   height: 100%;
   min-height: 0;
 }
+.view-realtime.has-product { grid-template-rows: 46px auto minmax(0, 1fr) auto; }
 
 .product-bar {
   display: flex;
@@ -664,16 +576,6 @@ function bringToForecast() {
 .tag.ok {
   background: #e6f7ed;
   color: #14833e;
-}
-
-.project-status-bar {
-  border-color: #cbdcd5;
-  background: linear-gradient(90deg, #f2f8f5, #fff);
-}
-
-.project-status-bar .pill {
-  background: #e4f0ea;
-  color: #286247;
 }
 
 .btn.sm {
@@ -736,42 +638,9 @@ function bringToForecast() {
   overflow: auto;
 }
 
-.count {
-  min-width: 20px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: #fff1e8;
-  color: var(--orange);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.count.neutral {
-  background: #e8f1f4;
-  color: #356171;
-}
-
 .project-readiness {
   min-height: 0;
   overflow: auto;
-}
-
-.readiness-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 8px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.readiness-list li {
-  padding: 4px 7px;
-  border: 1px solid #d7e1e8;
-  border-radius: 4px;
-  background: #f7fafb;
-  color: #536879;
-  font-size: 11px;
 }
 
 .timeline-pending {
@@ -897,12 +766,6 @@ function bringToForecast() {
   background: linear-gradient(180deg, #fff, #f8fbff);
 }
 
-.map-sub {
-  color: #6a7c95;
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .map-body {
   min-height: 0;
 }
@@ -922,9 +785,12 @@ function bringToForecast() {
 .forcing-status { color: var(--green) !important; font-weight: 800; white-space: nowrap; }
 .forcing-status.loading { color: var(--blue) !important; }
 .forcing-status.error { color: var(--red) !important; white-space: normal; }
+.project-forcing { grid-template-columns: minmax(0, 2fr) minmax(160px, 1fr) 100px; }
+.project-forcing .forcing-status { grid-column: 1 / -1; }
 
 @media (max-width: 1200px) {
-  .view-realtime {
+  .view-realtime,
+  .view-realtime.has-product {
     height: auto;
     min-height: 100%;
     grid-template-rows: auto auto auto auto;

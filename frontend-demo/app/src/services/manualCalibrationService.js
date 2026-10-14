@@ -35,9 +35,52 @@ export function changedParameters(before = {}, after = {}) {
     .map(key => `${key} ${display(before[key])} → ${display(after[key])}`).join(' · ')
 }
 
-export const TRIAL_COLORS = ['#718096', '#16847b', '#b35b32', '#8264a2', '#2677ad', '#ad7a17']
-
 export function alignedTrialSeries(hydrograph, times) {
   const values = new Map((hydrograph?.forecast || []).map(row => [row.time, row.value]))
   return times.map(time => values.get(time) ?? null)
+}
+
+export function latestComparableTrial(records = [], current, periodId) {
+  if (!current?.frozenRequest || !current?.hydrographs?.[periodId]) return null
+  const identity = trialConditions(current.frozenRequest, current)
+  const index = records.findIndex(row => row.taskId === current.taskId)
+  const prior = (index < 0 ? records : records.slice(0, index)).filter(row => row.conditions === identity)
+  return prior.at(-1) || null
+}
+
+const hourKey = value => String(value || '').replace(' ', 'T').slice(0, 16)
+
+export function resultProcessMatches(editor, result, periodId) {
+  const request = result?.frozenRequest
+  if (!request || request.period?.mode !== editor.calibrationMode) return false
+  if (editor.schemeSourceBundleVersionId && (request.inputs?.sourceBundleVersionId || request.inputs?.bundleVersionId) !== editor.schemeSourceBundleVersionId) return false
+  if ((request.calibration?.statePolicy || 'independent-warmup') !== editor.statePolicy) return false
+  if (Number(request.period.warmupDays) !== Number(editor.warmupDays)) return false
+  if (editor.statePolicy === 'continuous-origin' && hourKey(request.calibration?.continuousOrigin) !== hourKey(editor.continuousOrigin)) return false
+  if ((request.science?.versionId || null) !== (editor.scienceVersionId || null)) {
+    // Registered runtime science is also created from the editable default
+    // conditions; only an explicitly selected reference is compared by ID.
+    if (editor.scienceVersionId) return false
+    const mode = result.petMode || result.lineage?.petMode
+    if (editor.evaporationMode === 'constant-zero' && mode && mode !== 'CONSTANT_ZERO_EXPLICIT_REQUEST') return false
+    if (editor.evaporationMode === 'monthly-climatology-assumption' && mode && mode !== 'MONTHLY_CLIMATOLOGY_ASSUMPTION') return false
+    const frozenMode = request.inputs?.evaporation?.mode
+    if (frozenMode !== editor.evaporationMode && frozenMode !== 'science-version') return false
+  }
+  if (editor.calibrationMode === 'event') {
+    const current = [...(editor.schemeWindows || []), ...(editor.events || [])].find(row => row.id === periodId)
+    const frozen = request.period.events?.find(row => row.id === periodId)
+    return Boolean(current && frozen && hourKey(current.start) === hourKey(frozen.start) && hourKey(current.end) === hourKey(frozen.end))
+  }
+  return ['calibrationStart', 'calibrationEnd', 'validationStart', 'validationEnd', 'independentStart', 'independentEnd']
+    .every(key => hourKey(request.period[key]) === hourKey(editor[key]))
+}
+
+export function calibrationSummaryMetrics(metrics = {}) {
+  return {
+    nse: metrics.nse ?? metrics.NSE ?? metrics.mean_NSE,
+    peak: metrics.peakErrorPercent ?? metrics.peak_error_percent ?? metrics.mean_abs_peak_error_percent,
+    time: metrics.peakTimeErrorHours ?? metrics.peak_time_error_hours ?? metrics.median_peak_time_error_hours ?? metrics.mean_abs_peak_time_error_hours,
+    volume: metrics.volumeErrorPercent ?? metrics.volume_error_percent ?? metrics.mean_abs_volume_error_percent
+  }
 }

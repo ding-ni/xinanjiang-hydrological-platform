@@ -31,7 +31,7 @@
       </div>
       <div v-if="!app.isSelinco && props.layers.qpfGrid" class="smooth-rain-legend">
         <span class="smooth-rain-gradient" /><div><span>0</span><span>10</span><span>25</span><span>50+</span></div>
-        <small>{{ forbidsStationInterpolation ? '后端整编格点雨量（mm/h）；空白含零值或缺测' : '离线降雨网格预览（mm/h）' }}</small>
+        <small>降雨量（mm/h）</small>
       </div>
       <div v-if="app.isSelinco" class="legend-symbols">
         <div><i class="sym rain" />降水站</div>

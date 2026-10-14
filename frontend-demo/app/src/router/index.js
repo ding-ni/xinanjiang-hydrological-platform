@@ -4,6 +4,8 @@ const routes = [
   { path: '/system', name: 'system', component: () => import('@/views/SystemView.vue'), meta: { title: '工作区与系统' } },
   { path: '/', redirect: '/realtime' },
   { path: '/data', name: 'data', component: () => import('@/views/DataView.vue'), meta: { title: '水文资料库' } },
+  { path: '/simulation', name: 'simulation', component: () => import('@/views/SimulationView.vue'), meta: { title: '洪水模拟' } },
+  { path: '/state/advanced', name: 'state-advanced', component: () => import('@/views/AdvancedStateView.vue'), meta: { title: '独立状态初始化' } },
   {
     path: '/realtime',
     name: 'realtime',
@@ -26,19 +28,19 @@ const routes = [
     path: '/calibration',
     name: 'calibration',
     component: () => import('@/views/CalibrationView.vue'),
-    meta: { title: '率定与模拟' }
+    meta: { title: '参数率定' }
   },
   {
     path: '/diagnostics',
     name: 'diagnostics',
     component: () => import('@/views/DiagnosticView.vue'),
-    meta: { title: '模型诊断' }
+    meta: { title: '进阶诊断' }
   },
   {
     path: '/archive',
     name: 'archive',
     component: () => import('@/views/ArchiveView.vue'),
-    meta: { title: '成果管理' }
+    meta: { title: '计算成果' }
   },
   {
     path: '/config',

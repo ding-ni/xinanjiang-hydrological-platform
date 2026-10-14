@@ -4,6 +4,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -161,6 +162,52 @@ class WorkspaceHttpTests(unittest.TestCase):
         self.assertEqual(code, 200, backup)
         self.assertEqual(self.request('workspace/backups')[1]['backups'][0]['name'], backup['name'])
         self.assertEqual(self.request('workspace/backups', 'POST', {'path': 'outside'})[0], 400)
+
+    def test_backup_holds_operation_parameter_and_queue_locks_in_order(self):
+        entries = []
+        class TracedLock:
+            def __init__(self, label, lock):
+                self.label, self.lock = label, lock
+            def __enter__(self):
+                self.lock.acquire()
+                entries.append(self.label)
+                return self
+            def __exit__(self, *args):
+                self.lock.release()
+
+        operations = self.manager.operations
+        named = self.manager.parameter_schemes
+        snapshots = [(operations, 'lock', 'operations'), (named, 'lock', 'parameters'),
+                     (self.manager, 'lock', 'model'), (self.input_manager, 'lock', 'inputs'),
+                     (self.products, '_lock', 'products'), (self.manager.forecast_products, 'lock', 'forecast')]
+        saved = []
+        def assert_locked(root):
+            self.assertEqual(entries[:6], [label for _, _, label in snapshots])
+            acquired = []
+            def other_thread():
+                for owner, attribute, label in snapshots:
+                    lock = getattr(owner, attribute).lock
+                    success = lock.acquire(blocking=False)
+                    acquired.append((label, success))
+                    if success:
+                        lock.release()
+            peer = threading.Thread(target=other_thread)
+            peer.start()
+            peer.join(timeout=2)
+            self.assertFalse(peer.is_alive())
+            self.assertEqual(acquired, [(label, False) for _, _, label in snapshots])
+            return {'name': 'BACKUP-test', 'files': 0}
+
+        try:
+            for owner, attribute, label in snapshots:
+                original = getattr(owner, attribute)
+                saved.append((owner, attribute, original))
+                setattr(owner, attribute, TracedLock(label, original))
+            with patch('server.create_backup', side_effect=assert_locked):
+                self.assertEqual(self.request('workspace/backups', 'POST', {})[0], 200)
+        finally:
+            for owner, attribute, original in saved:
+                setattr(owner, attribute, original)
 
 
 if __name__ == '__main__': unittest.main(verbosity=2)

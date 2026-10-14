@@ -1,13 +1,12 @@
 <template>
   <div class="hydrology-figure">
     <div class="figure-legend" aria-label="率定过程图图例">
-      <span v-if="forcing.precipitation?.length"><i class="bar rain" />{{ forcing.controlAreaKm2 ? '控制区面积加权降雨' : '面平均降雨' }}</span>
+      <span v-if="forcing.precipitation?.length"><i class="bar rain" />{{ rainfallLabel }}</span>
       <span v-if="hasTemperature"><i class="line temperature" />面平均气温</span>
       <span><i class="line observed" />实测流量</span>
       <span v-if="!observedOnly"><i class="line simulated" :style="{ borderColor: currentCurve.color }" />{{ currentCurve.label }}</span>
-      <span v-for="trial in comparisons" :key="trial.taskId"><i class="line" :style="{ borderColor: trial.color }" />{{ trial.label }}</span>
+      <span v-for="trial in visibleComparisons" :key="trial.taskId"><i class="line" :style="{ borderColor: trial.color }" />{{ trial.label }}</span>
       <span v-for="item in activeComponentLegends" :key="item.key"><i class="line component" :style="{ borderColor: item.color, borderTopStyle: item.style }" />{{ item.name }}</span>
-      <span v-if="forcing.sourceLabel">{{ forcing.sourceLabel }}</span>
     </div>
     <BaseChart class="hydrology-chart" :option="option" />
   </div>
@@ -37,6 +36,8 @@ const componentDefs = [
 
 const activeComponentLegends = computed(() => props.displayMode === 'components' ? componentDefs.filter((item) => props.visibleComponents[item.key]) : [])
 const hasTemperature = computed(() => !props.observedOnly && Boolean(props.forcing.temperature?.length))
+const visibleComparisons = computed(() => props.observedOnly ? [] : props.comparisons.slice(-1))
+const rainfallLabel = computed(() => props.forcing.rainfallLabel || (props.forcing.controlAreaKm2 ? '控制区面积加权降雨' : '面平均降雨'))
 
 function axisTime(value) {
   const text = String(value)
@@ -51,7 +52,7 @@ const option = computed(() => {
   const observed = times.map((time) => observedMap.get(time) ?? null)
   const simulatedMap = new Map((h?.forecast || []).map((item) => [item.time, item.value]))
   const simulated = times.map((time) => simulatedMap.get(time) ?? null)
-  const trialSeries = axis => props.comparisons.map(trial => ({
+  const trialSeries = axis => visibleComparisons.value.map(trial => ({
     id: trial.taskId, name: trial.label, type: 'line', xAxisIndex: axis, yAxisIndex: axis,
     data: alignedTrialSeries(trial.hydrograph, times), connectNulls: false, showSymbol: false,
     lineStyle: { width: 1.8, color: trial.color }, itemStyle: { color: trial.color },
@@ -99,7 +100,7 @@ const option = computed(() => {
         { type: 'slider', xAxisIndex: [0, 1], height: 13, bottom: 4, showDetail: false }
       ],
       series: [
-        { name: '面平均降雨', type: 'bar', xAxisIndex: 0, yAxisIndex: 0, data: props.forcing.precipitation || [], barMaxWidth: 8, itemStyle: { color: '#4C9BD3' } },
+        { name: rainfallLabel.value, type: 'bar', xAxisIndex: 0, yAxisIndex: 0, data: props.forcing.precipitation || [], barMaxWidth: 8, itemStyle: { color: '#4C9BD3' } },
         { name: '实测流量', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: observed, showSymbol: false, connectNulls: false, lineStyle: { width: 2.2, color: '#1B365D' }, itemStyle: { color: '#1B365D' } },
         ...(!props.observedOnly ? [{ name: props.currentCurve.label, type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: simulated, connectNulls: false, showSymbol: false, lineStyle: { width: 2.3, type: 'dashed', color: props.currentCurve.color }, itemStyle: { color: props.currentCurve.color } }] : []),
         ...trialSeries(1)
@@ -149,10 +150,10 @@ const option = computed(() => {
       { type: 'slider', xAxisIndex: [0, 1, 2], height: 13, bottom: 5, borderColor: '#c8d4dd', backgroundColor: '#f5f7f9', fillerColor: 'rgba(42,111,151,0.13)', handleStyle: { color: '#2a6f97' }, textStyle: { color: '#607587', fontSize: 9 }, showDetail: false }
     ],
     series: [
-      { name: '面平均降雨', type: 'bar', xAxisIndex: 0, yAxisIndex: 0, data: props.forcing.precipitation || [], barMaxWidth: 8, itemStyle: { color: '#4C9BD3' }, emphasis: { itemStyle: { color: '#2377ae' } }, z: 2 },
+      { name: rainfallLabel.value, type: 'bar', xAxisIndex: 0, yAxisIndex: 0, data: props.forcing.precipitation || [], barMaxWidth: 8, itemStyle: { color: '#4C9BD3' }, emphasis: { itemStyle: { color: '#2377ae' } }, z: 2 },
       { name: '面平均气温', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: props.forcing.temperature || [], showSymbol: false, lineStyle: { width: 1.9, color: '#D55E00' }, markLine: { silent: true, symbol: 'none', lineStyle: { color: '#8798a5', type: 'dashed', width: 1 }, label: { formatter: '0 °C', color: '#657786', fontSize: 9 }, data: [{ yAxis: 0 }] }, z: 4 },
       { name: '实测流量', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: observed, connectNulls: false, showSymbol: false, symbol: 'circle', symbolSize: 4, lineStyle: { width: 2.2, color: '#1B365D' }, itemStyle: { color: '#1B365D' }, emphasis: { focus: 'series' }, z: 8 },
-      { name: '模拟流量', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: simulated, connectNulls: false, showSymbol: false, lineStyle: { width: 2.3, type: 'dashed', color: '#D55E00' }, emphasis: { focus: 'series' }, z: 7 },
+      { name: props.currentCurve.label, type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: simulated, connectNulls: false, showSymbol: false, lineStyle: { width: 2.3, type: 'dashed', color: props.currentCurve.color }, emphasis: { focus: 'series' }, z: 7 },
       ...componentSeries,
       ...trialSeries(2)
     ]

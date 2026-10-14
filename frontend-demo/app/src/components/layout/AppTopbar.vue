@@ -26,7 +26,7 @@
         </select>
       </div>
       <div class="chip project-chip" :title="app.activeContext.projectName"><span>模型</span><b>{{ app.activeContext.projectName }}</b></div>
-      <div class="chip clock-chip" :title="route.name === 'realtime' ? '当前历史资料回放时刻；实时资料更新尚未接入。' : '当前选择的回放或起报时刻，资料覆盖范围见资料页。'"><span>{{ route.name === 'realtime' ? '回放时刻' : route.name === 'forecast' ? '起报时刻' : '工作时刻' }}</span><b>{{ clockValue }}</b></div>
+      <div v-if="route.name === 'realtime'" class="chip clock-chip"><span>回放时刻</span><b>{{ clockValue }}</b></div>
       <div class="chip status" :class="`status-${inputStatus.status}`">
         <span>资料状态</span>
         <b>{{ inputStatus.label }}</b>
@@ -65,13 +65,16 @@ const inputStatus = computed(() => usesModelInputService(app.activeContext)
 
 const titleMap = {
   data: '水文资料库',
-  diagnostics: '模型诊断',
+  diagnostics: '进阶诊断',
   realtime: '雨水情',
   forecast: '洪水预报',
   state: '模拟状态',
-  calibration: '率定与模拟',
-  archive: '成果管理',
-  config: '模型与资料'
+  calibration: '参数率定',
+  simulation: '洪水模拟',
+  archive: '计算成果',
+  config: '模型与资料',
+  system: '工作区与系统',
+  advancedState: '独立状态初始化'
 }
 
 const title = computed(() => titleMap[route.name] || '业务平台')

@@ -43,23 +43,41 @@ def point_source(manager, task_id):
     result = manager.result(task_id)
     folder = safe_task(manager.root, task_id)
     request = read_json(folder / "request.json")
-    if request.get("runType") not in {"simulation", "stateInitialization"} or request.get("period", {}).get("initialStateVersionId"):
-        raise ValueError("任意点重跑要求独立初始化的连续模拟；续算的河网记忆不能迁移到切分拓扑")
+    if request.get("runType") not in {"simulation", "stateInitialization", "stateContinuation", "forecast"}:
+        raise ValueError("请选择已完成的模拟或预报成果")
     if not (folder / "routing-evidence.json").is_file():
         raise ValueError("该旧任务未保存完整产流过程，请新建连续模拟后再查询点位")
     metadata = read_json(folder / "routing-evidence.json")
-    if request.get('science'):
-        # A point query reroutes saved runoff through today's implementation.
-        # Require the same registered implementation and scientific source.
-        freeze_science_selection(request, manager.root.parent)
     evidence = result.get("routingEvidence", {})
     if (metadata.get("taskId") != task_id or metadata.get("lineage") != request.get("lineage")
             or evidence.get("arraySHA256") != sha(folder / "routing-runoff.npz")
             or metadata.get("arraySHA256") != evidence.get("arraySHA256")
-            or evidence.get("catalogSHA256") != sha(folder / "routing-evidence.json")
-            or metadata.get("initialRoutingState") is not None):
+            or evidence.get("catalogSHA256") != sha(folder / "routing-evidence.json")):
         raise ValueError("来源任务产流、汇流证据与成功结果不一致")
     return folder, request, result, metadata
+
+
+def require_point_rerun(source, evidence, runtime_root):
+    if source.get('period', {}).get('initialStateVersionId') or evidence.get('initialRoutingState') is not None:
+        raise ValueError('该成果采用续算状态；河道中间断面需独立复算，控制断面可直接查询')
+    if source.get('science'):
+        freeze_science_selection(copy.deepcopy(source), runtime_root)
+
+
+def locate_river_point(engine, point):
+    from xaj_routing.raster_formats import cell_center_xy
+    try:
+        nearest, reach, distance = engine._nearest_stream(engine._point_cell(point['lon'], point['lat']))
+    except (ValueError, IndexError) as exc:
+        raise ValueError('所选位置不在可查询河网范围，请在流域河道内重新选点') from exc
+    if distance > 300:
+        raise ValueError(f'距河道{distance:.0f}米，超过300米，请在河道附近重新选点')
+    longitude, latitude = engine.inverse_transformer.transform(*cell_center_xy(engine.grid, *nearest))
+    control = next((node for node in engine.topology_result.control_nodes
+                    if node.get('cell') == list(nearest) and node.get('upstream_reach_id') == 'R0020_UP'), None)
+    location = {'clicked': [point['lon'], point['lat']], 'queried': [longitude, latitude],
+                'distanceM': distance, 'reachId': reach}
+    return longitude, latitude, location, control
 
 
 def normalize_diagnostic(request, manager):
@@ -133,6 +151,14 @@ def normalize_diagnostic(request, manager):
             frozen['lineage']['sourceTaskId'] = request['lineage']['sourceTaskId']
         frozen, bundle = freeze_input_selection(frozen, manager.products)
         frozen = freeze_routing_selection(frozen, bundle, manager.routing_versions)
+        if request.get('riverOnly'):
+            parameters = manager.routing_versions.resolve(frozen['routing']['versionId'])
+            engine = make_point_engine(bundle, folder, parameters['parameters'])
+            _longitude, _latitude, _location, control = locate_river_point(engine, point)
+            if not control:
+                require_point_rerun(source, evidence, manager.root.parent)
+        else:
+            require_point_rerun(source, evidence, manager.root.parent)
         request.update(frozen)
         request["sourceResultSHA256"] = sha(folder / "result.json")
         request["sourceRoutingEvidence"] = copy.deepcopy(result["routingEvidence"])
@@ -266,23 +292,13 @@ def run_point(folder, request):
     longitude, latitude = point['lon'], point['lat']
     location = None
     if request.get('riverOnly'):
-        from xaj_routing.raster_formats import cell_center_xy
-        try:
-            nearest, reach, distance = engine._nearest_stream(engine._point_cell(longitude, latitude))
-        except (ValueError, IndexError) as exc:
-            raise ValueError('所选位置不在可查询河网范围，请在流域河道内重新选点') from exc
-        if distance > 300:
-            raise ValueError(f'距河道{distance:.0f}米，超过300米，请在河道附近重新选点')
-        longitude, latitude = engine.inverse_transformer.transform(*cell_center_xy(engine.grid, *nearest))
-        location = {'clicked': [point['lon'], point['lat']], 'queried': [longitude, latitude], 'distanceM': distance, 'reachId': reach}
-        control = next((node for node in engine.topology_result.control_nodes
-                        if node.get('cell') == list(nearest) and node.get('upstream_reach_id') == 'R0020_UP'), None)
+        longitude, latitude, location, control = locate_river_point(engine, point)
         if control:
             # The simulated outlet process is already the frozen control-node
             # outflow. Reading it avoids re-routing or rebuilding its state.
             rows = result['hydrograph']['forecast']
             answer = {'schema_version': 'point_flow_query.v1', 'run_id': request['sourceTaskId'],
-                      'point': {'lon': longitude, 'lat': latitude, 'cell': list(nearest)},
+                      'point': {'lon': longitude, 'lat': latitude, 'cell': control['cell']},
                       'classification': {'point_type': 'RIVER'}, 'location': location,
                       'series': {'time': [row['time'] for row in rows], 'flow_cms': [row['value'] for row in rows], 'unit': 'm3/s'},
                       'method': 'PERSISTED_CONTROL_HYDROGRAPH',
@@ -290,6 +306,7 @@ def run_point(folder, request):
                                    'upstream_reach_id': control['upstream_reach_id'], 'requires_rerun': False},
                       'quality': {'status': 'FORMAL_SPLIT_RESULT', 'warning': '读取来源模拟已保存的控制断面流量。'}}
             return {'pointQuery': answer, 'sourceTaskId': request['sourceTaskId'], 'warnings': [answer['quality']['warning']]}
+    require_point_rerun(original, metadata, RUNTIME)
     # The native slope query also needs the actual complete reach/component run.
     from integration.runoff_adapter import aggregate_runoff_to_reach_segments
     from xaj_routing.engine import RoutingEngine

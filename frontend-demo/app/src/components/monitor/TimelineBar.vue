@@ -3,7 +3,6 @@
     <div class="timeline-main">
       <div class="label-block">
         <span class="ttl">过程回放</span>
-        <span class="sub">{{ app.hasLakeBalance ? '离线降水场预览' : usesModelInputs ? '网格降雨与站点实测回放' : '离线原始雨量资料' }} · {{ playbackMetadataReady ? monitor.timelineLabel : '选择回放时段' }}</span>
       </div>
       <button class="play" type="button" :disabled="playbackDisabled" :aria-label="monitor.playing ? '暂停回放' : '开始回放'" :title="monitor.playing ? '暂停回放' : '开始回放'" @click="monitor.togglePlay()">
       <component :is="monitor.playing ? VideoPause : VideoPlay" />
@@ -67,10 +66,10 @@
       <template v-else>
         <span class="replay-window">{{ replayWindowLabel }}</span>
         <label class="latest-window"><span>窗口长度</span><select v-model.number="latestHours" class="replay-input" :disabled="monitor.historicalLoading" @change="loadLatest"><option :value="24">24 小时</option><option :value="72">72 小时</option><option :value="168">7 天</option></select></label>
-        <button class="replay-load" type="button" :disabled="monitor.historicalLoading" @click="loadLatest">刷新并载入最新共同覆盖时段</button>
+        <button class="replay-load" type="button" :disabled="monitor.historicalLoading" @click="loadLatest">刷新</button>
       </template>
       <span v-if="replayError || monitor.historicalError" class="replay-error">{{ replayError || monitor.historicalError }}</span>
-      <span v-else class="replay-help">{{ replayHelp }}</span>
+      <span v-else-if="monitor.historicalLoading" class="replay-loading" role="status">正在读取资料</span>
     </div>
   </div>
 </template>
@@ -97,8 +96,8 @@ const usesModelInputs = computed(() => usesModelInputService(app.activeContext))
 const playbackMetadataReady = computed(() => !usesModelInputs.value || monitor.hasHistoricalObservations)
 const playbackDisabled = computed(() => monitor.historicalLoading || (usesModelInputs.value && !monitor.hasHistoricalObservations))
 const replayWindowLabel = computed(() => playbackMetadataReady.value
-  ? `${monitor.historicalReplayLabel} · ${monitor.timelineStart} 至 ${monitor.timelineEnd}`
-  : '请选择有效回放时段')
+  ? `${monitor.timelineStart} 至 ${monitor.timelineEnd}`
+  : '')
 const replayMode = computed({
   get: () => monitor.historicalReplayMode,
   set: (value) => { monitor.historicalReplayMode = value }
@@ -122,13 +121,6 @@ const noEventCatalogLabel = computed(() => {
 })
 const catalogMinInput = computed(() => commonCatalogBoundary('start'))
 const catalogMaxInput = computed(() => commonCatalogBoundary('end'))
-const replayHelp = computed(() => {
-  if (usesModelInputs.value) return '降雨网格采用选定计算资料；测站显示同一时刻的库内实测雨量、水位和流量。'
-  if (replayMode.value === 'event') return '按已登记洪水场次的起止时间读取对应雨量、流量和降雨场。'
-  if (replayMode.value === 'range') return '在雨量与出口水文资料的共同覆盖范围内读取指定时段。'
-  return '按雨量与出口水文资料的共同覆盖范围读取最新窗口。'
-})
-
 watch(() => app.basinId, (domainId) => monitor.setTimelineContext(domainId), { immediate: true })
 watch(() => app.inputSelectionKey, () => {
   if (!usesModelInputs.value) return
@@ -289,12 +281,6 @@ onBeforeUnmount(() => {
   font-weight: 800;
 }
 
-.sub {
-  color: #6a7c95;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
 .play,
 .step {
   display: inline-flex;
@@ -368,7 +354,7 @@ onBeforeUnmount(() => {
 .replay-load:hover { border-color: #178276; background: #dff2ed; }
 .replay-window { align-self: center; min-width: 220px; color: #55717a; font-size: 10px; font-variant-numeric: tabular-nums; }
 .replay-error { align-self: center; color: #a44f42; font-size: 10px; }
-.replay-help { align-self: center; color: #6f858c; font-size: 10px; }
+.replay-loading { align-self: center; color: #6f858c; font-size: 10px; }
 
 @media (max-width: 900px) {
   .timeline-main { grid-template-columns: auto auto auto auto minmax(0, 1fr); }

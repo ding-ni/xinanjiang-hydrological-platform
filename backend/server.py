@@ -42,6 +42,8 @@ from forecast_products import ForecastProducts, freeze_forecast_parameters
 from science_context import ScienceVersions, freeze_science_selection, inherit_state_science
 from original_calibration_plan import validate_original_request
 from model_schemes import ModelSchemes
+from parameter_schemes import ParameterSchemes
+from hydrological_operations import HydrologicalOperations, flood_catalog
 
 LABELS = {"calibration": "洪水场次率定", "simulation": "连续模拟", "stateInitialization": "状态初始化", "stateContinuation": "状态续算", "forecast": "洪水预报"}
 RUN_TYPES = {"calibration": "eventCalibration", "simulation": "continuousSimulation", "stateInitialization": "stateInitialization", "stateContinuation": "stateContinuation", "forecast": "forecast"}
@@ -71,6 +73,8 @@ class TaskManager:
         self.root.mkdir(parents=True, exist_ok=True)
         self.database = HydroDatabase(self.runtime_root)
         self.schemes = ModelSchemes(self.database)
+        self.parameter_schemes = ParameterSchemes(self)
+        self.operations = None
         self.states = StateRepository(self)
         self.results = ResultRepository(self)
         self.lock = threading.RLock()
@@ -99,14 +103,14 @@ class TaskManager:
         # inventing a date or allowing one legacy record to break all new jobs.
         return sorted([self.get(p.parent.name) for p in self.root.glob("*/status.json")], key=lambda row: str(row.get("createdAt") or ""), reverse=True)
 
-    def submit(self, request):
+    def submit(self, request, operation_id=None, state_role=None):
         if isinstance(request, dict) and request.get('inputs', {}).get('sourceBundleVersionId'):
             source = request['inputs']['sourceBundleVersionId']
             preparation = safe_task(self.runtime_root / 'input-tasks', request['inputs'].get('preparationTaskId'))
             status, prepared, config = read_json(preparation / 'status.json'), read_json(preparation / 'result.json'), read_json(preparation / 'request.json')
             from scheme_inputs import normalize_preparation
-            check = normalize_preparation({key: config[key] for key in ('operation', 'requestId', 'name', 'projectId', 'resolutionId', 'rainfallMethod', 'idwPower', 'minimumStations') if key in config} | {
-                'parentBundleVersionId': source, 'period': request['period'], 'idwPower': request['inputs'].get('idwPower', 2), 'minimumStations': request['inputs'].get('minimumStations', 1), 'rainfallMethod': request['inputs'].get('rainfallMethod', 'reuse'),
+            check = normalize_preparation({key: config[key] for key in ('operation', 'requestId', 'name', 'projectId', 'resolutionId', 'rainfallMethod', 'idwPower', 'minimumStations', 'operationPurpose') if key in config} | {
+                'parentBundleVersionId': source, 'period': request['period'], 'idwPower': request['inputs'].get('idwPower', 2), 'minimumStations': request['inputs'].get('minimumStations', 1), 'rainfallMethod': request['inputs'].get('rainfallMethod', config.get('rainfallMethod', 'reuse')),
                 **({'stationSourceId': request['inputs']['stationSourceId']} if request['inputs'].get('stationSourceId') else {}),
                 'statePolicy': (request.get('calibration') or {}).get('statePolicy', 'continuous-origin' if request['period'].get('continuousOrigin') else 'independent-warmup'),
                 'science': request.get('science', {}), 'evaporation': request.get('inputs', {}).get('evaporation', {}),
@@ -140,13 +144,13 @@ class TaskManager:
             request = inherit_state_science(request, checkpoint, self.runtime_root)
         request, _science = freeze_science_selection(request, self.runtime_root)
         if checkpoint is not None:
-            assert_state_input_compatibility(checkpoint, request)
+            assert_state_input_compatibility(checkpoint, request, self.products)
             if request['runType'] == 'forecast':
                 self.forecast_products.freeze(request)
                 freeze_forecast_parameters(request, checkpoint, self)
-        return self._enqueue(request)
+        return self._enqueue(request, operation_id=operation_id, state_role=state_role)
 
-    def _enqueue(self, request, task_prefix="JOB", run_type=None, label=None, source="model-backend"):
+    def _enqueue(self, request, task_prefix="JOB", run_type=None, label=None, source="model-backend", operation_id=None, state_role=None):
         if request.get("runType") == "calibration" and request.get("period", {}).get("mode") == "continuous":
             run_type = run_type or "continuousCalibration"
             label = label or "连续时段率定"
@@ -180,6 +184,8 @@ class TaskManager:
                       "status": "queued", "progress": 0, "stageLabel": "等待模型计算",
                       "createdAt": now(), "startedAt": None, "completedAt": None, "resultSource": source,
                       "resultVersionId": None, "errorMessage": "", "lineage": request.get("lineage", {}), "productionEligible": False}
+            if operation_id:
+                status.update(operationId=operation_id, stateRole=state_role, internal=True)
             write_json(folder / "request.json", request)
             write_json(folder / "status.json", status)
             self.database.index_task(status, self.root.name)
@@ -233,7 +239,7 @@ class TaskManager:
                                     stageLabel='资料检查有待处理项' if result.get('issues') else '计算资料已备齐')
                     except Exception as exc:
                         self.update(task_id, status='failed', errorMessage=str(exc), stageLabel='资料准备未完成')
-                elif not isinstance(self, InputTaskManager) and result.get('calibrationMode') == 'continuous' and result.get('statePolicy') == 'continuous-origin':
+                elif not isinstance(self, InputTaskManager) and not self.get(task_id).get('operationId') and result.get('calibrationMode') == 'continuous' and result.get('statePolicy') == 'continuous-origin':
                     try:
                         request = read_json(folder / 'request.json')
                         windows = request['period']['windows']
@@ -305,6 +311,8 @@ class TaskManager:
         return self.submit(request)
 
     def close(self):
+        if self.operations is not None:
+            self.operations.close()
         if self.input_tasks is not None:
             self.input_tasks.close()
         for status in self.list():
@@ -340,6 +348,8 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
             manager.input_tasks = InputTaskManager(manager.runtime_root / "input-tasks", products=products)
         input_manager = manager.input_tasks
     baseline = products.resolve()
+    if manager.operations is None:
+        manager.operations = HydrologicalOperations(manager, input_manager)
     input_readers = {(baseline["bundleVersionId"], baseline["manifestSHA256"]): InputService(bundle=baseline)}
     input_reader_lock = threading.RLock()
     diagnostics = TaskDiagnostics(manager)
@@ -409,7 +419,7 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                     self.send_json(200, {'backups': sorted(rows, key=lambda r: r['createdAt'], reverse=True)})
                 elif self.command == 'POST':
                     if self.read_body() != {}: raise ValueError('备份请求无需目录参数')
-                    with manager.lock, input_manager.lock, products._lock, manager.forecast_products.lock:
+                    with manager.operations.lock, manager.parameter_schemes.lock, manager.lock, input_manager.lock, products._lock, manager.forecast_products.lock:
                         self.send_json(200, create_backup(manager.runtime_root))
                 else:
                     raise KeyError('接口不存在')
@@ -491,6 +501,40 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 payload = manager.schemes.list() if self.command == 'GET' else manager.schemes.save(self.read_body())
                 self.send_json(200, payload)
                 return
+            if path.startswith(f'{prefix}/model-schemes/') and path.endswith('/draft') and self.command == 'POST':
+                pieces = path[len(f'{prefix}/model-schemes/'):].split('/')
+                if len(pieces) != 2:
+                    raise KeyError('方案不存在')
+                self.send_json(200, manager.schemes.save_editor(pieces[0], self.read_body()))
+                return
+            if path == f'{prefix}/flood-catalog' and self.command == 'GET':
+                if argument('projectId', 'nananxi-xufan') != 'nananxi-xufan' or argument('resolutionId', '1km') != '1km':
+                    raise ValueError('请选择南安溪徐畈1 km洪水目录')
+                self.send_json(200, flood_catalog(manager.database))
+                return
+            if path == f'{prefix}/parameter-schemes' and self.command in {'GET', 'POST'}:
+                self.send_json(200, manager.parameter_schemes.list() if self.command == 'GET' else manager.parameter_schemes.save(self.read_body()))
+                return
+            if path.startswith(f'{prefix}/parameter-schemes/') and self.command == 'GET':
+                self.send_json(200, manager.parameter_schemes.get(path.rsplit('/', 1)[-1]))
+                return
+            if path == f'{prefix}/operations' and self.command in {'GET', 'POST'}:
+                self.send_json(200 if self.command == 'GET' else 202,
+                    manager.operations.list() if self.command == 'GET' else manager.operations.submit(self.read_body()))
+                return
+            if path.startswith(f'{prefix}/operations/'):
+                pieces = path[len(f'{prefix}/operations/'):].split('/')
+                if self.command == 'GET' and len(pieces) == 1:
+                    payload = manager.operations.get(pieces[0])
+                elif self.command == 'GET' and len(pieces) == 2 and pieces[1] == 'result':
+                    payload = manager.operations.result(pieces[0])
+                elif self.command == 'POST' and len(pieces) == 2 and pieces[1] == 'cancel':
+                    self.read_body()
+                    payload = manager.operations.cancel(pieces[0])
+                else:
+                    raise KeyError('计算接口不存在')
+                self.send_json(200, payload)
+                return
             if path == f'{prefix}/station-network' and self.command in {'GET', 'POST'}:
                 from station_network import station_network, observation_adapter
                 parent = products.resolve(argument('bundleVersionId'))
@@ -498,7 +542,13 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 self.send_json(200, station_network(products, parent, self.read_body() if self.command == 'POST' else None))
                 return
             if path == f'{prefix}/preparation-defaults' and self.command in {'GET', 'POST'}:
-                self.send_json(200, manager.schemes.defaults(self.read_body() if self.command == 'POST' else None))
+                body = self.read_body() if self.command == 'POST' else None
+                if body is not None:
+                    selected = {**manager.schemes.defaults(), **body}
+                    products.resolve(selected['sourceBundleVersionId'])
+                    if selected.get('stationSourceId') not in {None, 'LOCAL_OBSERVATIONS'}:
+                        products.source(selected['stationSourceId'])
+                self.send_json(200, manager.schemes.defaults(body))
                 return
             if path.startswith(f'{prefix}/model-schemes/') and self.command == 'GET':
                 self.send_json(200, manager.schemes.get(path.rsplit('/', 1)[-1], int(argument('revision')) if argument('revision') else None))

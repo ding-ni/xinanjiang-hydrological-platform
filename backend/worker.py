@@ -16,7 +16,7 @@ from contracts import freeze_input_selection, freeze_routing_selection
 from input_products import InputProducts
 from routing_versions import RoutingVersions
 from routing_adapter import RegisteredRoutingRunner
-from state_integrity import assert_state_input_compatibility, validated_parent_state
+from state_integrity import assert_state_input_compatibility, validated_parent_state, build_state_driving_identity
 from state_initialization_adapter import freeze_initialization, anchored_routing
 from calibration_search import run_search
 from calibration_objectives import objective_terms
@@ -46,14 +46,15 @@ from xaj_routing.io import read_topology_json
 
 
 class ModelJob:
-    def __init__(self, folder, publish_parameters=True):
+    def __init__(self, folder, publish_parameters=False):
         self.folder = Path(folder)
         self.publish_parameters = publish_parameters
         self.request = read_json(self.folder / "request.json")
         if (self.request.get('calibration') or {}).get('simulationOnly'):
             self.publish_parameters = False
         self.request = validate_original_request(self.request, RUNTIME)
-        self.request, self.bundle = freeze_input_selection(self.request, InputProducts())
+        self.products = InputProducts(runtime_root=RUNTIME)
+        self.request, self.bundle = freeze_input_selection(self.request, self.products)
         self.request = freeze_routing_selection(self.request, self.bundle)
         self.request = freeze_initialization(self.request, self.bundle)
         self.request, self.science = freeze_science_selection(self.request, RUNTIME)
@@ -182,7 +183,7 @@ class ModelJob:
         print(stage, flush=True)
 
     def load(self, rows, warmup):
-        if self.bundle.get('manifest', {}).get('forcingPolicy') == 'STRICT_MISSING' or self.period.get('mode') == 'continuous' or self.request.get('scheme'):
+        if self.request['runType'] != 'calibration' or self.bundle.get('manifest', {}).get('forcingPolicy') == 'STRICT_MISSING' or self.period.get('mode') == 'continuous' or self.request.get('scheme'):
             from strict_forcing import load_hourly_forcing
             data = []
             for row in rows:
@@ -206,7 +207,18 @@ class ModelJob:
         simulated = simulated.loc[event.start:event.end]
         observed = event.observed.reindex(simulated.index)
         is_forecast = self.request['runType'] == 'forecast'
+        observation_coverage = None if is_forecast else evaluate_observation_coverage(
+            simulated.index, observed, read_json(self.input_paths['quality']))
         metrics = {} if is_forecast else kernels.metrics(observed, simulated)
+        if not is_forecast:
+            paired = observed.dropna()
+            # A visible gap stays a gap. Missing peaks and full-event volumes
+            # must not receive a misleading score from the available fragment.
+            if not observation_coverage['accepted'] or len(paired) < 3 or paired.var() == 0:
+                metrics['NSE'] = None
+            if observation_coverage['coverage_fraction'] < 1:
+                for name in ('peak_error_percent', 'peak_time_error_hours', 'volume_error_percent'):
+                    metrics[name] = None
         peak_time = simulated.idxmax()
         areas = contributing_grid_areas(self.mapping_file, read_topology_json(self.topology), "R0020_UP", self.grid_ids)
         rainfall = np.average(event.precip, axis=1, weights=areas)
@@ -218,6 +230,7 @@ class ModelJob:
             "volume": float(simulated.sum() * 3600), "startMark": self.request['issue']['issueTime'] if is_forecast else event.start.isoformat(),
             "metrics": {"nse": metrics.get("NSE"), "peakErr": metrics.get("peak_error_percent"), "timeErrH": metrics.get("peak_time_error_hours"), "volErr": metrics.get("volume_error_percent")},
             'volumeEvaluation': {} if is_forecast else masked_volume_metrics(simulated.index, observed, simulated),
+            'observationCoverage': observation_coverage,
             "forcing": {"precipitation": [float(v) for v in rainfall], "temperature": [], "components": {},
                         "versionId": self.forecast_rain['versionId'] if is_forecast else self.forcing_version, "bundleVersionId": self.bundle_version,
                         "sourceLabel": self.forecast_rain['sourceLabel'] if is_forecast else "实际登记驱动 · 徐畈控制区面积加权降雨",
@@ -295,7 +308,12 @@ class ModelJob:
                    "context": self.request["context"], "gridIds": self.grid_ids,
                    "gridGeometry": self.grid_geometry,
                    "land": land, "routing": routing, "parameters": parameters,
+                   "routingTopology": {"unitIds": self.router.unit_ids,
+                                       "reachIds": self.router.reach_ids,
+                                       "controlReachId": self.router.control_point.reach_id},
                    "sourceTaskId": self.task_id, "resultSource": "model-backend", "productionEligible": False}
+        if getattr(self, 'driving_identity', None) is not None:
+            payload['drivingIdentity'] = self.driving_identity
         payload['scienceSnapshot'] = ScienceVersions(RUNTIME).export(self.science['scienceVersionId'])
         payload["parameterVersionId"] = self.request.get("lineage", {}).get("parameterVersionId")
         payload["initialization"] = getattr(self, "initialization_summary", None)
@@ -314,12 +332,13 @@ class ModelJob:
         start, end = pd.Timestamp(self.period["startTime"]), pd.Timestamp(self.period["endTime"])
         warmup = int(round(float(self.period.get("warmupDays", 7)) * 24))
         parent = self.period.get("initialStateVersionId")
+        checkpoint = None
         land, routing = self.initial_state(self.params), None
         if parent:
             if not str(parent).startswith("STATE-JOB-") or "/" in parent or "\\" in parent:
                 raise ValueError("只能使用后端生成的真实状态版本")
             checkpoint = validated_parent_state(RUNTIME / "states" / f"{parent}.json", RUNTIME / "tasks", parent)
-            assert_state_input_compatibility(checkpoint, self.request)
+            assert_state_input_compatibility(checkpoint, self.request, self.products)
             if any(checkpoint["context"].get(k) != self.request["context"].get(k) for k in ("projectId", "resolutionId", "modelConfigId", "contextKey")) or checkpoint["gridIds"] != self.grid_ids:
                 raise ValueError("状态版本与案例、尺度或网格不一致")
             if start != pd.Timestamp(checkpoint["time"]) + pd.Timedelta(hours=1):
@@ -338,6 +357,12 @@ class ModelJob:
         event = self.load([{"event_id": self.task_id, "year": start.year, "start": start, "end": end, "group": "SIMULATION"}], warmup)[0]
         provider = self.pet_provider
         event.pet_mm_h = provider.values(event.times)
+        # A legacy parent lacks a reproducible prefix; preserve its strict
+        # same-bundle continuation without claiming a verified full trajectory.
+        self.driving_identity = build_state_driving_identity(
+            self.bundle, self.grids, event.times, event.precip, event.source_station_count,
+            parent=checkpoint.get('drivingIdentity') if checkpoint else None, products=self.products
+        ) if checkpoint is None or checkpoint.get('drivingIdentity') else None
         self.warnings.append('蒸散发使用冻结科学条件：' + self.science['petMode'])
         self.progress(40, "计算 110 个有效网格产流和控制断面汇流")
         simulated, final_land, final_routing = self.route_with_history(event, land, routing)
@@ -354,6 +379,8 @@ class ModelJob:
                 final_routing = anchored_routing(self.router, anchor)
                 self.initialization_summary.update(anchor=anchor,
                     controlFlowCms=float(final_routing["prev_out"][self.router.control_reach]))
+                self.driving_identity['observedFlowAnchor'] = {
+                    'time': anchor['time'], 'flowCms': anchor['flowCms']}
         parameters = kernels.resolved_runoff_parameters(self.params)
         version = self.checkpoint(final_land, final_routing, event.end, parameters)
         hydrograph = self.hydrograph(event, simulated)
@@ -368,12 +395,13 @@ class ModelJob:
                 'statePolicy': self.science['statePolicy']['strategy'],
                 'continuousOrigin': self.continuous_origin.isoformat() if hasattr(self, 'continuous_origin') else None,
                 'actualWarmupHours': warmup,
+                'drivingIdentity': self.driving_identity,
                 "routingEvidence": self.routing_evidence}
 
     def forecast(self):
         parent = self.period['initialStateVersionId']
         checkpoint = validated_parent_state(RUNTIME / 'states' / f'{parent}.json', RUNTIME / 'tasks', parent)
-        assert_state_input_compatibility(checkpoint, self.request)
+        assert_state_input_compatibility(checkpoint, self.request, self.products)
         issue = pd.Timestamp(self.request['issue']['issueTime'])
         if (pd.Timestamp(checkpoint['time']) != issue
                 or any(checkpoint['context'].get(key) != self.request['context'].get(key) for key in ('contextKey', 'projectId', 'resolutionId', 'modelConfigId'))

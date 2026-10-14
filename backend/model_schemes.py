@@ -41,17 +41,32 @@ class ModelSchemes:
                     calculation_draft TEXT NOT NULL, created_at TEXT NOT NULL,
                     PRIMARY KEY(scheme_id,revision));
                 CREATE TABLE IF NOT EXISTS preparation_defaults (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS model_scheme_editors (
+                    scheme_id TEXT PRIMARY KEY REFERENCES model_schemes(id),
+                    payload TEXT NOT NULL, updated_at TEXT NOT NULL);
             ''')
 
     def defaults(self, body=None):
+        standard = {'idwPower': 2, 'minimumStations': 1, 'rainfallMethod': 'stationIdw',
+                    'stationSourceId': 'LOCAL_OBSERVATIONS', 'sourceBundleVersionId': 'NANANXI_QC_20260819_CONTROL_V2'}
         if body is not None:
-            if not isinstance(body, dict) or set(body) != {'idwPower', 'minimumStations'} or isinstance(body['idwPower'], bool) or not isinstance(body['idwPower'], (int, float)) or not 1 <= body['idwPower'] <= 4 or type(body['minimumStations']) is not int or not 1 <= body['minimumStations'] <= 32:
+            if not isinstance(body, dict) or set(body) - set(standard):
+                raise ValueError('默认资料设置无效')
+            body = {**self.defaults(), **body}
+            if isinstance(body['idwPower'], bool) or not isinstance(body['idwPower'], (int, float)) or not 1 <= body['idwPower'] <= 4 or type(body['minimumStations']) is not int or not 1 <= body['minimumStations'] <= 32:
                 raise ValueError('插值幂次须为1至4，最少有效站须为1至32')
+            if body['rainfallMethod'] not in {'stationIdw', 'reuse'} or not isinstance(body['sourceBundleVersionId'], str):
+                raise ValueError('默认降雨资料无效')
+            if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{2,100}', body['sourceBundleVersionId']):
+                raise ValueError('默认计算资料无效')
+            source = body.get('stationSourceId')
+            if source is not None and source != 'LOCAL_OBSERVATIONS' and not re.fullmatch(r'SRC-[A-Za-z0-9_-]{1,96}', str(source)):
+                raise ValueError('默认站点资料无效')
             with self.database.connect() as db:
                 db.execute('INSERT INTO preparation_defaults VALUES(1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload', (json.dumps(body),))
         with self.database.connect() as db:
             row = db.execute('SELECT payload FROM preparation_defaults WHERE id=1').fetchone()
-            return json.loads(row['payload']) if row else {'idwPower': 2, 'minimumStations': 1}
+            return {**standard, **json.loads(row['payload'])} if row else standard
 
     def list(self):
         with self.database.connect() as db:
@@ -64,16 +79,62 @@ class ModelSchemes:
             scheme = db.execute('SELECT * FROM model_schemes WHERE id=?', (scheme_id,)).fetchone()
             if not scheme:
                 raise KeyError('方案不存在')
+            selected = scheme['revision'] if revision is None else revision
             row = db.execute('SELECT * FROM model_scheme_revisions WHERE scheme_id=? AND revision=?',
-                             (scheme_id, revision or scheme['revision'])).fetchone()
-            if not row:
+                             (scheme_id, selected)).fetchone()
+            if not row and selected != 0:
                 raise KeyError('方案修订不存在')
+            editor = db.execute('SELECT payload FROM model_scheme_editors WHERE scheme_id=?', (scheme_id,)).fetchone()
+            editing = json.loads(editor['payload']) if editor else {}
             revisions = [dict(r) for r in db.execute('SELECT revision,created_at FROM model_scheme_revisions WHERE scheme_id=? ORDER BY revision DESC', (scheme_id,))]
-            return {**dict(scheme), 'latestRevision': scheme['revision'], 'revision': row['revision'], 'definition': json.loads(row['definition']),
-                    'calculationDraft': json.loads(row['calculation_draft']), 'definitionSHA256': row['definition_sha256'],
-                    'revisions': revisions}
+            return {**dict(scheme), 'latestRevision': scheme['revision'], 'revision': selected,
+                    'definition': json.loads(row['definition']) if row else {'context': editing.get('context', {}), 'period': {}},
+                    'calculationDraft': json.loads(row['calculation_draft']) if row else {},
+                    'definitionSHA256': row['definition_sha256'] if row else None,
+                    'editor': editing, 'revisions': revisions}
+
+    def create(self, body):
+        if not isinstance(body, dict) or set(body) - {'name', 'context', 'editor'}:
+            raise ValueError('请填写方案名称')
+        name = str(body.get('name') or '').strip()
+        if not name or len(name) > 80:
+            raise ValueError('请为方案命名，最多80个字符')
+        context = body.get('context', {})
+        if not isinstance(context, dict):
+            raise ValueError('方案流域无效')
+        identifier, instant = 'SCHEME-' + uuid.uuid4().hex, now()
+        editor = copy.deepcopy(body.get('editor') or {})
+        if not isinstance(editor, dict):
+            raise ValueError('方案内容无效')
+        editor['context'] = context
+        payload = self._editor_payload(editor)
+        with self.database.connect() as db:
+            db.execute('INSERT INTO model_schemes VALUES (?,?,?,?)', (identifier, name, 0, instant))
+            db.execute('INSERT INTO model_scheme_editors VALUES (?,?,?)', (identifier, payload, instant))
+        return self.get(identifier)
+
+    @staticmethod
+    def _editor_payload(editor):
+        if not isinstance(editor, dict):
+            raise ValueError('方案内容无效')
+        payload = json.dumps(editor, ensure_ascii=False, allow_nan=False)
+        if len(payload.encode('utf-8')) > 1800000:
+            raise ValueError('方案内容过大')
+        return payload
+
+    def save_editor(self, scheme_id, body):
+        self.get(scheme_id)
+        if not isinstance(body, dict) or set(body) != {'editor'}:
+            raise ValueError('方案内容无效')
+        payload, instant = self._editor_payload(body['editor']), now()
+        with self.database.connect() as db:
+            db.execute('INSERT INTO model_scheme_editors VALUES (?,?,?) ON CONFLICT(scheme_id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at', (scheme_id, payload, instant))
+            db.execute('UPDATE model_schemes SET updated_at=? WHERE id=?', (instant, scheme_id))
+        return self.get(scheme_id)
 
     def save(self, body):
+        if isinstance(body, dict) and 'definition' not in body and not body.get('id'):
+            return self.create(body)
         if not isinstance(body, dict) or set(body) - {'id', 'revision', 'name', 'definition', 'calculationDraft'}:
             raise ValueError('方案保存字段无效')
         name = body.get('name', '').strip()
@@ -122,6 +183,8 @@ class ModelSchemes:
             if not isinstance(selection, dict) or set(selection) != {'id', 'revision'} or type(selection['revision']) is not int:
                 raise ValueError('请明确方案和修订号')
             record = self.get(selection['id'], selection['revision'])
+            if record['revision'] == 0:
+                raise ValueError('请先选定洪水或计算时段')
             if record['definition']['context'].get('contextKey') != request.get('context', {}).get('contextKey'):
                 raise ValueError('方案与计算流域或尺度不一致')
             if input_definition(request, request.get('inputs', {}).get('rainfallMethod', record['definition']['inputs'].get('rainfallMethod', 'reuse'))) != record['definition']:

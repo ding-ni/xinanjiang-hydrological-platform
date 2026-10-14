@@ -11,7 +11,7 @@ from common import RUNTIME, now, read_json, write_json
 from workspace_service import WorkspaceLock, workspace_identity
 from platform_config import APP_VERSION
 
-PARTS = ('tasks', 'states', 'parameters', 'inputs', 'input-tasks', 'routing-versions', 'science-versions', 'projects', 'exports', 'forecast-rain')
+PARTS = ('tasks', 'states', 'parameters', 'parameter-schemes', 'operations', 'inputs', 'input-tasks', 'routing-versions', 'science-versions', 'projects', 'exports', 'forecast-rain')
 
 
 def digest(path):
@@ -41,7 +41,7 @@ def create_backup(root, destination=None):
     if destination == root or destination in root.parents or any(destination.is_relative_to(root / part) for part in PARTS + ('database',)):
         raise ValueError('备份位置不能位于计算资料目录内')
     # Offline callers hold the workspace lock; live callers hold both queue locks.
-    for part in ('tasks', 'input-tasks'):
+    for part in ('tasks', 'input-tasks', 'operations'):
         for status in (root / part).glob('*/status.json'):
             if read_json(status).get('status') in {'running', 'queued', 'cancelling'}:
                 raise RuntimeError('请等待当前计算完成后备份')

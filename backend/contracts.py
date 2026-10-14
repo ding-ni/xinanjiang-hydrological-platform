@@ -169,7 +169,8 @@ def normalize_request(request, catalog, runtime_root=None):
     request = clean(request)
     period = request.setdefault("period", {})
     warmup = finite_number(period.get("warmupDays", 7), "预热期")
-    if not math.isfinite(warmup) or warmup < 1 or warmup > 365:
+    minimum_warmup = 0 if period.get('initialStateVersionId') else 1
+    if not math.isfinite(warmup) or warmup < minimum_warmup or warmup > 365:
         raise ValueError("预热期必须为 1 到 365 天")
     if run_type == "calibration":
         if period.get("mode") not in {"event", "continuous"}:

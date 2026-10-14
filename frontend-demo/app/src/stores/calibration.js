@@ -13,7 +13,7 @@ import {
 import { resolveDomainContext } from '@/data/domainContext'
 import { useTasksStore } from '@/stores/tasks'
 import { useAppStore } from '@/stores/app'
-import { registerCalibrationResult, parameterLibraryFor } from '@/services/parameterLibraryService'
+import { parameterLibraryFor } from '@/services/parameterLibraryService'
 import { useStateStore } from '@/stores/state'
 import { modelApi, normalizeBackendTask } from '@/services/modelBackendService'
 import { saveBusinessDraft } from '@/services/workspaceService'
@@ -304,10 +304,12 @@ function createWorkspace(context) {
     baseline: { ...params },
     operationMode: 'calibration',
     modelSchemeId: null, modelSchemeRevision: 0, modelSchemeLatestRevision: 0, modelSchemeName: '', schemeWindows: [], rainfallMethod: 'reuse', fixedEventSimulation: false, idwPower: null, minimumStations: null, stationSourceId: null,
+    schemeSourceBundleVersionId: null, schemeRoutingVersionId: null, fullFloodCatalogLoaded: false,
+    activeOperationId: null, activeOperationRequest: null, operationProgress: null,
     simulationStart: isSelinco ? '2026-06-01T00:00' : isNananxi ? '2024-01-01T00:00' : '',
     simulationEnd: isSelinco ? '2026-06-06T00:00' : isNananxi ? '2024-12-31T23:00' : '',
     warmupDays: isSelinco ? 30 : 90,
-    // 资料范围由项目目录加载后写入，不能在工作区里写死某个年份。
+    // 资料范围由项目目录加载后写入。
     observationRange: null,
     initialStateVersionId: isSelinco ? context.modelConfig.statePrefix : null,
     outputStepHours: 1,
@@ -326,6 +328,7 @@ function createWorkspace(context) {
 
 const WORKSPACE_FIELDS = [
   'modelSchemeId', 'modelSchemeRevision', 'modelSchemeLatestRevision', 'modelSchemeName', 'schemeWindows', 'rainfallMethod', 'fixedEventSimulation', 'idwPower', 'minimumStations', 'stationSourceId',
+  'schemeSourceBundleVersionId', 'schemeRoutingVersionId', 'fullFloodCatalogLoaded', 'activeOperationId', 'activeOperationRequest', 'operationProgress',
   'domainId',
   'modelScale',
   'modelConfigId',
@@ -489,6 +492,11 @@ export const useCalibrationStore = defineStore('calibration', {
       }, { calibration: 0, validation: 0, independent: 0 })
     },
     schemeEvents(state) {
+      if (state.fullFloodCatalogLoaded) {
+        const windows = state.schemeWindows || []
+        const overrides = new Set(windows.map(row => row.id))
+        return [...state.events.filter(row => row.status !== 'inactive' && !overrides.has(row.id)), ...windows.filter(row => row.status !== 'inactive')]
+      }
       return currentInputFloodEvents(state.events, { registeredOnly: Boolean(state.backendContractVersion),
         selectedBundleVersionId: useAppStore().selectedInputBundleVersionId, registeredBundleVersionId: state.backendInputBundleVersionId,
         schemeWindows: state.schemeWindows || [] })
@@ -531,6 +539,7 @@ export const useCalibrationStore = defineStore('calibration', {
 
   actions: {
     markInputSelectionChanged() {
+      if (this.modelSchemeId && this.schemeSourceBundleVersionId) return
       this.dirty = true
       if (this.runResult) this.runResult.isCurrent = false
       if (this.simulationResult) this.simulationResult.isCurrent = false
@@ -545,7 +554,7 @@ export const useCalibrationStore = defineStore('calibration', {
       const bundle = backend.inputBundleVersionId || DEFAULT_INPUT_BUNDLE_VERSION_ID
       if (this.backendInputBundleVersionId && this.backendInputBundleVersionId !== bundle) this.markInputSelectionChanged()
       this.backendInputBundleVersionId = bundle
-      this.events = mergeBackendFloodEvents(this.events, backend.events)
+      if (!this.fullFloodCatalogLoaded) this.events = mergeBackendFloodEvents(this.events, backend.events)
       if (!firstMigration) {
         Object.assign(this, registeredBackendEventSelection(this.events, this.eventId))
         this.syncEventCatalog()
@@ -580,8 +589,9 @@ export const useCalibrationStore = defineStore('calibration', {
       if (!workspace) return
       workspace.activeTaskId = task.taskId
       workspace.running = false
-      const matchesInput = current && inputResultUsesSelection(request, useAppStore())
-      const matchesRouting = current && (request.routing?.versionId || 'control-split-v2') === useAppStore().selectedRoutingVersionId
+      const schemeResult = request.scheme?.id && request.scheme.id === workspace.modelSchemeId
+      const matchesInput = current && (schemeResult || inputResultUsesSelection(request, useAppStore()))
+      const matchesRouting = current && (schemeResult || (request.routing?.versionId || 'control-split-v2') === useAppStore().selectedRoutingVersionId)
       const isCurrent = !workspace.dirty && matchesInput && matchesRouting
       workspace.runStatus = isCurrent ? 'complete' : 'needs-run'
       if (request.runType === 'simulation') {
@@ -589,15 +599,12 @@ export const useCalibrationStore = defineStore('calibration', {
         workspace.runMessage = '连续模拟完成，流量与状态已保存。'
       } else if (request.runType === 'calibration') {
         if (result.calibrationTarget !== 'routing' && !workspace.trialRecords.some(row => row.taskId === task.taskId)) {
-          workspace.trialRecords.push({ taskId: task.taskId, conditions: trialConditions(request, result),
+          workspace.trialRecords.push({ taskId: result.primaryTaskId || result.taskId || task.taskId, conditions: trialConditions(request, result),
             parameterVersionId: result.parameterVersionId, parameters: { ...result.bestParameters },
             completedAt: task.completedAt, manual: result.evaluationMode === 'manual', visible: true })
         }
-        const version = result.simulationOnly ? { id: request.calibration.initialParameterVersionId } : registerCalibrationResult({ projectData, projectId: request.context.projectId, resolutionId: request.context.resolutionId,
-          activeContext: resolveDomainContext(request.context.projectId, { modelScale: request.context.resolutionId, configId: request.context.modelConfigId }),
-          request, result, taskId: task.taskId })
         workspace.runCount += 1
-        workspace.runResult = { ...result, frozenRequest: JSON.parse(JSON.stringify(request)), inputBundleVersionId: frozenInputBundleVersionId(request), metrics: result.hydrograph.metrics, peak: result.hydrograph.peak, peakTime: result.hydrograph.peakTime, score: 0, grade: result.simulationOnly ? '场次模拟完成' : result.evaluationMode === 'manual' ? '人工试调完成' : '率定完成', completedAt: task.completedAt, isCurrent }
+        workspace.runResult = { ...result, taskId: result.primaryTaskId || result.taskId || task.taskId, frozenRequest: JSON.parse(JSON.stringify(request)), inputBundleVersionId: frozenInputBundleVersionId(request), metrics: result.hydrograph?.metrics, peak: result.hydrograph?.peak, peakTime: result.hydrograph?.peakTime, score: 0, grade: result.simulationOnly ? '场次模拟完成' : result.evaluationMode === 'manual' ? '人工试调完成' : '率定完成', completedAt: task.completedAt || result.completedAt || new Date().toISOString(), isCurrent }
         if (request.period.mode === 'event' && !result.hydrographs?.[workspace.eventId]) {
           const selected = request.period.events.find((event) => result.hydrographs?.[event.id])
           if (selected) {
@@ -608,9 +615,6 @@ export const useCalibrationStore = defineStore('calibration', {
         }
         workspace.runMessage = result.simulationOnly ? '场次模拟完成。' : result.evaluationMode === 'manual' ? '试调完成。' : '率定完成。'
       }
-      if (workspace.dirty) workspace.runMessage += ' 计算期间条件已修改；此结果对应提交时的冻结条件，请重新计算新方案。'
-      if (!matchesInput) workspace.runMessage += ` 输入 ${frozenInputBundleVersionId(request)} 与当前工作区不同，历史结果未重新标注。`
-      if (!matchesRouting) workspace.runMessage += ' 汇流版本与当前工作区不同，请重新计算新方案。'
       if (current) this.saveCurrentWorkspace()
       else persistWorkspaceRecords(this.workspaces)
     },
@@ -674,6 +678,9 @@ export const useCalibrationStore = defineStore('calibration', {
       }
     },
     async recoverBackendTasks() {
+      if (this.activeOperationId) {
+        return this.awaitOperation(this.activeOperationId, this.activeOperationRequest)
+      }
       const tasks = useTasksStore()
       await tasks.refresh()
       const rows = tasks.tasksForContext(this.contextKey).filter((row) => row.resultSource === 'model-backend' && ['eventCalibration', 'eventSimulation', 'continuousCalibration', 'continuousSimulation'].includes(row.runType))
@@ -705,6 +712,105 @@ export const useCalibrationStore = defineStore('calibration', {
       if (!this.contextKey) return
       this.workspaces[this.contextKey] = copyWorkspace(this)
       persistWorkspaceRecords(this.workspaces)
+    },
+    loadFullFloodCatalog(events = []) {
+      const current = new Map(this.events.map(row => [row.id, row]))
+      this.events = events.map(row => normalizeFloodEvent({ ...row,
+        basinProjectId: this.domainId, purpose: current.get(row.id)?.purpose || '未使用',
+        runtimeRegistered: true, registeredStatus: 'active', status: row.status === 'inactive' ? 'inactive' : 'active' }))
+      this.fullFloodCatalogLoaded = true
+      if (!this.events.some(row => row.id === this.eventId)) {
+        const first = this.events[0]
+        this.eventId = first?.id || null; this.eventStart = first?.start || null; this.eventEnd = first?.end || null
+      }
+      this.saveCurrentWorkspace()
+    },
+    resetCalibrationScheme(defaults = {}, backend = {}) {
+      this.modelSchemeId = null; this.modelSchemeRevision = 0; this.modelSchemeLatestRevision = 0; this.modelSchemeName = ''
+      this.schemeWindows = []; this.runResult = null; this.simulationResult = null; this.activeTaskId = null
+      this.activeOperationId = null; this.activeOperationRequest = null; this.operationProgress = null
+      this.events = this.events.map(row => ({ ...row, purpose: '未使用' }))
+      this.operationMode = 'calibration'; this.calibrationMode = 'event'; this.fixedEventSimulation = false
+      this.params = { ...(backend?.parameters || this.baseline) }; this.baseline = { ...this.params }
+      this.paramVersion = backend?.parameterVersionId || null
+      this.algorithm = backend?.algorithms?.[0]?.id || this.algorithm
+      this.maxEvaluations = backend?.defaultMaxEvaluations || this.maxEvaluations
+      this.populationSize = 12; this.searchStrategy = 'joint'; this.searchSeed = 42
+      this.searchParameters = null; this.routingSearchParameters = null; this.calibrationTarget = 'runoff'
+      this.optimizerSettings = {}; this.searchParameterOrder = null; this.criteria = criteriaTemplate()
+      this.requiredInputBundleVersionId = null; this.eventAssignment = null; this.trialRecords = []
+      this.scienceVersionId = null; this.scienceDescriptor = null; this.candidateWarmupHours = null
+      this.statePolicy = 'independent-warmup'; this.continuousOrigin = null; this.initialStateVersionId = null
+      this.sourcePlan = null; this.sourcePlanRequestTemplate = null; this.originalCalibrationPlan = null
+      this.originalPlanChanged = false
+      this.evaporationMode = 'monthly-climatology-assumption'; this.warmupDays = backend?.defaultWarmupDays ?? 7
+      this.rainfallMethod = defaults.rainfallMethod || 'stationIdw'; this.stationSourceId = defaults.stationSourceId || 'LOCAL_OBSERVATIONS'
+      this.schemeSourceBundleVersionId = defaults.sourceBundleVersionId || useAppStore().selectedInputBundleVersionId
+      this.schemeRoutingVersionId = useAppStore().selectedRoutingVersionId
+      this.idwPower = defaults.idwPower ?? 2; this.minimumStations = defaults.minimumStations ?? 1
+      this.dirty = true; this.running = false; this.runStatus = 'needs-run'; this.runMessage = ''
+      this.saveCurrentWorkspace()
+    },
+    async runOperationRequest(request, operation = 'calibration') {
+      this.running = true; this.dirty = false; this.runStatus = 'running'; this.runMessage = ''
+      try {
+        const task = await modelApi('operations', { method: 'POST', body: { operation, requestId: request.requestId, request, rainfallMethod: this.rainfallMethod }, timeoutMs: 60000 })
+        this.activeOperationId = task.operationId || task.taskId || task.id
+        this.activeOperationRequest = clonePlain(request); this.operationProgress = task
+        this.saveCurrentWorkspace()
+        return await this.awaitOperation(this.activeOperationId, request)
+      } catch (error) {
+        this.running = false; this.runStatus = 'failed'; this.runMessage = error.message; this.saveCurrentWorkspace()
+        return { ok: false, errors: [error.message] }
+      }
+    },
+    async awaitOperation(operationId, request) {
+      if (backendWaits.has(operationId)) return backendWaits.get(operationId)
+      const key = request?.context?.contextKey || this.contextKey
+      const workspace = () => this.contextKey === key ? this : this.workspaces[key]
+      let terminal = false
+      const pending = (async () => {
+        try {
+          let task = await modelApi(`operations/${operationId}`)
+          while (['queued', 'running', 'cancelling'].includes(task.status)) {
+            const current = workspace()
+            if (current) { current.operationProgress = task; current.running = true }
+            await new Promise(resolve => setTimeout(resolve, 1000))
+            task = await modelApi(`operations/${operationId}`)
+          }
+          if (!['completed', 'archived'].includes(task.status)) {
+            terminal = true
+            const failure = new Error(task.errorMessage || task.error || (task.status === 'cancelled' ? '计算已停止' : '计算未完成'))
+            failure.issues = task.issues || task.result?.issues || []
+            throw failure
+          }
+          const result = await modelApi(`operations/${operationId}/result`)
+          const executedRequest = result.frozenRequest || task.runConfig?.request || request
+          const primaryId = result.primaryTaskId || result.taskId || task.primaryTaskId || operationId
+          this.applyBackendResult(executedRequest, result, { ...task, taskId: primaryId }, useAppStore().projectData)
+          terminal = true
+          const current = workspace()
+          if (current) {
+            current.activeOperationId = null; current.activeOperationRequest = null; current.operationProgress = task
+            if (!current.dirty && result.bestParameters) {
+              current.params = { ...result.bestParameters }
+              if (result.routingCandidate?.routingVersionId) current.schemeRoutingVersionId = result.routingCandidate.routingVersionId
+            }
+          }
+          if (this.contextKey === key) this.saveCurrentWorkspace()
+          return { ok: true, result, task }
+        } catch (error) {
+          const current = workspace()
+          if (current) { current.running = false; current.runStatus = error.message === '计算已停止' ? 'cancelled' : 'failed'; current.runMessage = error.message;
+            current.operationProgress = { ...current.operationProgress, status: current.runStatus, issues: error.issues || [] };
+            if (terminal) { current.activeOperationId = null; current.activeOperationRequest = null }
+            else current.operationProgress.status = 'unavailable' }
+          if (this.contextKey === key) this.saveCurrentWorkspace()
+          return { ok: false, errors: [error.message], issues: error.issues || [] }
+        } finally { backendWaits.delete(operationId) }
+      })()
+      backendWaits.set(operationId, pending)
+      return pending
     },
     setContext(domainId, modelScale, modelConfigId) {
       const context = resolveDomainContext(domainId, { configId: modelConfigId, modelScale })
@@ -750,10 +856,11 @@ export const useCalibrationStore = defineStore('calibration', {
       return this.setContext(context.basinId, context.modelScale, context.configId)
     },
     setOperationMode(mode) {
-      this.operationMode = mode === 'simulation' ? 'simulation' : 'calibration'
-      this.runMessage = this.operationMode === 'simulation'
-        ? '设置模拟时段和初始状态后开始连续模拟。'
-        : '选择洪水场次和评价指标后即可开始率定。'
+      const operation = mode === 'simulation' ? 'simulation' : 'calibration'
+      if (this.operationMode === operation) return
+      this.operationMode = operation
+      this.markNeedsRun('')
+      this.saveCurrentWorkspace()
     },
     setSimulationField(key, value) {
       if (!['simulationStart', 'simulationEnd', 'warmupDays', 'initialStateVersionId', 'outputStepHours'].includes(key)) return
@@ -841,7 +948,13 @@ export const useCalibrationStore = defineStore('calibration', {
         if (Number.isFinite(config.warmupDays)) this.warmupDays = config.warmupDays
         if (Array.isArray(config.events)) {
           const selected = new Map(config.events.map((row) => [row.id, row]))
-          for (const row of config.events) if (!this.events.some(event => event.id === row.id)) this.events.push(normalizeFloodEvent({ ...row, runtimeRegistered: false, status: 'active' }))
+          for (const row of config.events) if (!this.events.some(event => event.id === row.id)) {
+            if (this.fullFloodCatalogLoaded) {
+              this.schemeWindows ||= []
+              if (!this.schemeWindows.some(event => event.id === row.id)) this.schemeWindows.push({ ...row,
+                runtimeRegistered: false, status: 'active', sourceBundleVersionId: config.inputs?.sourceBundleVersionId || config.inputs?.bundleVersionId })
+            } else this.events.push(normalizeFloodEvent({ ...row, runtimeRegistered: false, status: 'active' }))
+          }
           this.events = this.events.map((row) => normalizeFloodEvent({ ...row, ...(selected.get(row.id) || {}),
             purpose: selected.get(row.id)?.purpose || '未使用', status: row.status, runtimeRegistered: row.runtimeRegistered,
             registeredStatus: row.registeredStatus }))
@@ -994,7 +1107,7 @@ export const useCalibrationStore = defineStore('calibration', {
       const normalized = mode === 'continuous' ? 'continuous' : 'event'
       if (this.calibrationMode === normalized) return
       this.calibrationMode = normalized
-      if (normalized === 'continuous' && !this.scienceVersionId && !this.sourcePlan) {
+      if (normalized === 'continuous' && this.operationMode !== 'simulation' && !this.scienceVersionId && !this.sourcePlan) {
         this.statePolicy = 'continuous-origin'
         if (!this.continuousOrigin && this.calibrationStart) {
           this.continuousOrigin = new Date(Date.parse(`${this.calibrationStart.replace(' ', 'T')}Z`) - Number(this.warmupDays) * 86400000).toISOString().slice(0, 16)
@@ -1003,7 +1116,7 @@ export const useCalibrationStore = defineStore('calibration', {
       this.markNeedsRun('率定方式已调整，请重新率定。')
     },
     setEvent(id, start = null, end = null) {
-      const event = this.events.find((item) => item.id === id)
+      const event = this.schemeEvents.find((item) => item.id === id) || this.events.find((item) => item.id === id)
       if (!event) return
       const nextStart = start || event.start
       const nextEnd = end || event.end
@@ -1299,12 +1412,12 @@ export const useCalibrationStore = defineStore('calibration', {
       this.saveCurrentWorkspace()
     },
     setScienceField(key, value) {
-      if (!['statePolicy', 'evaporationMode'].includes(key) || this.running) return
-      if (this.scienceVersionId) return
+      if (!['statePolicy', 'evaporationMode', 'continuousOrigin'].includes(key) || this.running) return
+      if (this.scienceVersionId && key !== 'continuousOrigin') return
       this.detachOriginalPlan()
       this[key] = value
       if (key === 'statePolicy' && value !== 'continuous-origin') this.continuousOrigin = null
-      this.markNeedsRun('预热与蒸散发条件已调整，请重新计算。')
+      this.markNeedsRun('起算条件已调整')
       this.saveCurrentWorkspace()
     },
     setPeriod(key, value) {
@@ -1498,6 +1611,11 @@ export const useCalibrationStore = defineStore('calibration', {
       return { ok: true, result: this.simulationResult, task: completed }
     },
     async cancelCalibration() {
+      if (this.activeOperationId) {
+        const task = await modelApi(`operations/${this.activeOperationId}/cancel`, { method: 'POST', body: {} })
+        this.operationProgress = task; this.runMessage = '正在停止'; this.saveCurrentWorkspace()
+        return task
+      }
       if (!this.activeTaskId) return null
       const requestedContextKey = this.contextKey
       const task = await useTasksStore().cancelTask(this.activeTaskId)

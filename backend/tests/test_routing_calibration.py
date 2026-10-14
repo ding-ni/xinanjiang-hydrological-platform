@@ -105,7 +105,9 @@ class RoutingNumericalTests(unittest.TestCase):
                 folder = Path(temp) / 'tasks' / name
                 write_json(folder / 'request.json', normalize_request(request, case_catalog()))
                 write_json(folder / 'status.json', {'taskId': name})
-                return ModelJob(folder)
+                # This isolated diagnostic explicitly registers its routing
+                # candidate for numerical replay; routine jobs keep it local.
+                return ModelJob(folder, publish_parameters=True)
             request = routing_request()
             job = make(request, 'JOB-routing-search')
             base = copy.deepcopy(job.routing_payload)

@@ -47,6 +47,7 @@
 # Unified platform runtime and isolated dependencies.
 /runtime/
 /runtime-20261012/
+/runtime-staff-acceptance-*/
 /backend/.venv/
 /frontend-demo/app/dist-unified/
 __pycache__/

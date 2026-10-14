@@ -35,7 +35,7 @@
           <div><b>当前模型计算资料</b><span>{{ app.basinName }} · {{ app.activeScaleMeta.label }}</span>
             <span>{{ app.selectedInputProduct?.name || app.selectedInputBundleVersionId }}</span>
             <span v-if="inputCatalogError">{{ inputCatalogError }}</span></div>
-          <RouterLink to="/calibration">建立方案、率定与模拟 →</RouterLink>
+          <RouterLink to="/calibration">参数率定 →</RouterLink>
         </section>
         <template v-if="tab === '水雨情资料'">
           <div class="panel-title-row">
@@ -148,6 +148,13 @@
           <h3 class="panel-title">流域与站网</h3>
           <template v-if="app.basinId === 'nananxi-xufan'">
             <RouterLink to="/data">查询实测资料 →</RouterLink>
+            <details v-if="app.backendCase" class="workspace-input-settings"><summary>资料设置</summary>
+              <div class="config-grid two">
+                <div class="field"><label for="workspace-input-source">基础计算资料</label><select id="workspace-input-source" class="input" v-model="preparationDefaults.sourceBundleVersionId" @change="savePreparationDefaults"><option v-for="source in app.inputProducts" :key="source.bundleVersionId" :value="source.bundleVersionId">{{ source.name }}</option></select></div>
+                <div class="field"><label for="workspace-rainfall-method">降雨资料</label><select id="workspace-rainfall-method" class="input" v-model="preparationDefaults.rainfallMethod" @change="savePreparationDefaults"><option value="reuse">已有网格降雨</option><option value="stationIdw">站点雨量</option></select></div>
+                <div v-if="preparationDefaults.rainfallMethod === 'stationIdw'" class="field"><label for="workspace-station-source">站点资料</label><select id="workspace-station-source" class="input" v-model="preparationDefaults.stationSourceId" @change="savePreparationDefaults"><option :value="null">基础资料的原始雨量</option><option value="LOCAL_OBSERVATIONS">本地实测资料库</option><option v-for="source in networkSources" :key="source.sourceId" :value="source.sourceId">{{ source.name }}</option></select></div>
+              </div>
+            </details>
             <details v-if="app.backendCase" class="station-network"><summary>计算站网</summary>
               <label>资料来源<select class="input" v-model="networkBundle" @change="loadNetwork"><option v-for="source in app.inputProducts" :key="source.bundleVersionId" :value="source.bundleVersionId">{{ source.name }}</option></select></label>
               <label>站点来源<select class="input" v-model="networkSource" @change="loadNetwork"><option value="">沿用资料的原始来源</option><option value="LOCAL_OBSERVATIONS">本地实测资料库</option><option v-for="source in networkSources" :key="source.sourceId" :value="source.sourceId">{{ source.name }}</option></select></label>
@@ -394,9 +401,18 @@ const monitor = useMonitorStore()
 const app = useAppStore()
 const router = useRouter()
 const calibration = useCalibrationStore()
-const preparationDefaults = ref({ idwPower: 2, minimumStations: 1 })
+const preparationDefaults = ref({ idwPower: 2, minimumStations: 1, rainfallMethod: 'stationIdw', stationSourceId: 'LOCAL_OBSERVATIONS', sourceBundleVersionId: 'NANANXI_QC_20260819_CONTROL_V2' })
 const network = ref(null), networkBundle = ref(''), networkError = ref(''), networkBusy = ref(false)
 const networkSource = ref(''), networkSources = ref([])
+function saveInputSettings() { calibration.detachOriginalPlan(); calibration.markNeedsRun('计算资料已调整'); calibration.saveCurrentWorkspace() }
+async function selectWorkspaceInput(id) {
+  try {
+    await app.selectInputBundleVersion(id)
+    calibration.requiredInputBundleVersionId = null; calibration.sourcePlan = null; calibration.sourcePlanRequestTemplate = null
+    calibration.rainfallMethod = 'reuse'; calibration.stationSourceId = null
+    saveInputSettings()
+  } catch (failure) { ElMessage.error(failure.message) }
+}
 const networkPath = () => `station-network?bundleVersionId=${encodeURIComponent(networkBundle.value)}${networkSource.value ? `&sourceId=${encodeURIComponent(networkSource.value)}` : ''}`
 async function loadNetwork() {
   const source = networkPath()

@@ -15,14 +15,13 @@ it('diagnostic and archive Vue sources compile with their real template bindings
   }
 })
 
-it('simulation chart retains a stable row and mobile simulation uses one column', () => {
+it('calibration workbench keeps a full process chart and reduces to one column on smaller screens', () => {
   const source = readFileSync(new URL('../src/views/CalibrationView.vue', import.meta.url), 'utf8')
   assert.match(source, /\.process-panel\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column/)
-  const chartMinimum = Number(source.match(/\.hydro\s*\{[^}]*min-height:\s*(\d+)px/)?.[1])
+  const chartMinimum = Number(source.match(/\.process-panel\s*\{[^}]*height:\s*(\d+)px/)?.[1])
   assert.ok(chartMinimum >= 320, 'The process chart retains at least 320px of plotting space')
-  assert.match(source, /\.process-panel\s*\{[^}]*height:\s*max-content/)
-  assert.match(source, /\.calibration-layout\.simulation-mode,[^{]*\{\s*grid-template-columns:\s*1fr/s)
-  assert.match(source, /simulationPeakLabel/)
+  assert.match(source, /@media\(max-width:900px\)\{\.workbench,\.workbench\.manual-mode\{grid-template-columns:1fr/s)
+  assert.match(source, /latestComparableTrial/)
   const dataView = readFileSync(new URL('../src/views/DataView.vue', import.meta.url), 'utf8')
   assert.doesNotMatch(dataView, /id="scheme-task"/)
   const archive = readFileSync(new URL('../src/views/ArchiveView.vue', import.meta.url), 'utf8')

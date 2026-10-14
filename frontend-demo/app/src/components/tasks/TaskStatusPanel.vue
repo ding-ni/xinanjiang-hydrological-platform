@@ -3,7 +3,7 @@
     <div class="task-head">
       <div>
         <span class="task-kicker">{{ task.resultSource === 'frontend-fixture' ? '试算任务' : '模型任务' }}</span>
-        <b>{{ task.runTypeLabel }} · {{ task.taskId }}</b>
+        <b :title="task.taskId">{{ task.runTypeLabel }}</b>
       </div>
       <span class="task-state">{{ statusLabel }}</span>
     </div>

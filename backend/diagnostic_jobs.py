@@ -116,6 +116,8 @@ def normalize_diagnostic(request, manager):
                 'warmupYear': warmup, 'workflowConfigSHA256': config_sha, 'workflowEvidence': evidence,
                 **{key: frozen[key] for key in ('context', 'inputs', 'routing')}, 'lineage': lineage}
     if request.get("runType") == "pointQuery":
+        if 'riverOnly' in request and not isinstance(request['riverOnly'], bool):
+            raise ValueError('河道查询标识无效')
         folder, source, result, evidence = point_source(manager, request.get("sourceTaskId"))
         point = request.get("point")
         if not isinstance(point, dict) or set(point) != {"lon", "lat", "channelWidthM"}:
@@ -260,6 +262,34 @@ def run_point(folder, request):
             for index, grid_id in enumerate(metadata["gridIds"]):
                 writer.writerow([time, grid_id, *[float(components[name][step, index]) for name in ("RS", "RI", "RG")]])
     engine = make_point_engine(bundle, folder, parameters["parameters"])
+    point = request['point']
+    longitude, latitude = point['lon'], point['lat']
+    location = None
+    if request.get('riverOnly'):
+        from xaj_routing.raster_formats import cell_center_xy
+        try:
+            nearest, reach, distance = engine._nearest_stream(engine._point_cell(longitude, latitude))
+        except (ValueError, IndexError) as exc:
+            raise ValueError('所选位置不在可查询河网范围，请在流域河道内重新选点') from exc
+        if distance > 300:
+            raise ValueError(f'距河道{distance:.0f}米，超过300米，请在河道附近重新选点')
+        longitude, latitude = engine.inverse_transformer.transform(*cell_center_xy(engine.grid, *nearest))
+        location = {'clicked': [point['lon'], point['lat']], 'queried': [longitude, latitude], 'distanceM': distance, 'reachId': reach}
+        control = next((node for node in engine.topology_result.control_nodes
+                        if node.get('cell') == list(nearest) and node.get('upstream_reach_id') == 'R0020_UP'), None)
+        if control:
+            # The simulated outlet process is already the frozen control-node
+            # outflow. Reading it avoids re-routing or rebuilding its state.
+            rows = result['hydrograph']['forecast']
+            answer = {'schema_version': 'point_flow_query.v1', 'run_id': request['sourceTaskId'],
+                      'point': {'lon': longitude, 'lat': latitude, 'cell': list(nearest)},
+                      'classification': {'point_type': 'RIVER'}, 'location': location,
+                      'series': {'time': [row['time'] for row in rows], 'flow_cms': [row['value'] for row in rows], 'unit': 'm3/s'},
+                      'method': 'PERSISTED_CONTROL_HYDROGRAPH',
+                      'topology': {'topology_action': 'EXISTING_CONTROL_NODE', 'control_node_id': control['node_id'],
+                                   'upstream_reach_id': control['upstream_reach_id'], 'requires_rerun': False},
+                      'quality': {'status': 'FORMAL_SPLIT_RESULT', 'warning': '读取来源模拟已保存的控制断面流量。'}}
+            return {'pointQuery': answer, 'sourceTaskId': request['sourceTaskId'], 'warnings': [answer['quality']['warning']]}
     # The native slope query also needs the actual complete reach/component run.
     from integration.runoff_adapter import aggregate_runoff_to_reach_segments
     from xaj_routing.engine import RoutingEngine
@@ -270,14 +300,15 @@ def run_point(folder, request):
     write_reach_flows_csv(folder / "reach_flow.csv", routed.reach_flows, request["sourceTaskId"])
     write_component_flows_csv(folder / "component_flow.csv", routed.component_flows, request["sourceTaskId"])
     write_json(folder / "progress.json", {"progress": 65, "stageLabel": "定位点位并执行原后端切分汇流 / 坡面诊断"})
-    point = request["point"]
-    answer = engine.query(lon=point["lon"], lat=point["lat"], channel_width_m=point["channelWidthM"],
+    answer = engine.query(lon=longitude, lat=latitude, channel_width_m=point["channelWidthM"],
                           run_id=request["sourceTaskId"], rerun_output_dir=folder / "split-rerun")
     pairs = [(time, flow) for time, flow in zip(answer["series"]["time"], answer["series"]["flow_cms"])
              if metadata["startTime"] <= time.replace(" ", "T") <= metadata["endTime"]]
     if not pairs or any(not math.isfinite(flow) or flow < 0 for _, flow in pairs):
         raise ValueError("点位过程线缺失或出现无效流量")
     answer["series"].update(time=[time.replace(" ", "T") for time, _ in pairs], flow_cms=[flow for _, flow in pairs])
+    if location:
+        answer['location'] = location
     return {"pointQuery": answer, "sourceTaskId": request["sourceTaskId"], "warnings": [answer["quality"]["warning"], "诊断计算，不能用于生产预报。"]}
 
 

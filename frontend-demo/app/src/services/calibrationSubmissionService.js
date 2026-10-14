@@ -122,15 +122,15 @@ export function physicalFloodGroups(events = [], { includeUnused = false } = {})
  */
 export function selectCalibrationCandidates(events = [], options = {}) {
   const method = options.method || 'all-valid'
-  const active = events.filter((event) => event.runtimeRegistered !== false
-    && (event.runtimeRegistered !== true || event.registeredStatus === 'active')
+  const active = events.filter((event) => (options.allowUnprepared || event.runtimeRegistered !== false)
+    && (options.allowUnprepared || event.runtimeRegistered !== true || event.registeredStatus === 'active')
     && event.status !== 'inactive' && event.status !== 'draft' && event.status !== 'pending')
   const valid = active.filter((event) => {
     const peak = event.observedPeak
     const peakReady = (typeof peak === 'number' || (typeof peak === 'string' && peak.trim() !== ''))
       && Number.isFinite(Number(peak))
     const flowReady = event.flowCompleteness == null || Number(event.flowCompleteness) > 0
-    return peakReady && flowReady
+    return (peakReady || (options.allowUnprepared && !['top-n', 'peak-threshold'].includes(method))) && flowReady
   })
 
   if (method === 'top-n') {
@@ -311,6 +311,12 @@ export function buildCalibrationRequest({ app, calibration, operationMode, event
     request.calibration.evaluationMode = original.calibration.evaluationMode || 'automatic'
     request.calibration.objectives = Object.fromEntries(Object.keys(original.calibration.objectives)
       .map(key => [key, JSON.parse(JSON.stringify(calibration.criteria[key]))]))
+  }
+  if (runType === 'calibration' && calibration.fixedEventSimulation) {
+    request.calibration.evaluationMode = 'manual'
+    request.calibration.simulationOnly = true
+    for (const key of ['searchParameters', 'routingSearchParameters', 'target', 'jointProfile']) delete request.calibration[key]
+    request.execution.expectedOutputs = ['simulated-hydrographs', 'evaluation-metrics']
   }
   return request
 }

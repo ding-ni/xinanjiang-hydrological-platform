@@ -21,11 +21,14 @@ export function registeredBackendEventSelection(events = [], selectedId = null) 
 
 /** Retained local/other-input records are evidence, not current process options. */
 export function currentInputFloodEvents(events = [], { registeredOnly = false, selectedBundleVersionId = null,
-  registeredBundleVersionId = null } = {}) {
+  registeredBundleVersionId = null, schemeWindows = [] } = {}) {
   if (registeredOnly && selectedBundleVersionId && registeredBundleVersionId
     && selectedBundleVersionId !== registeredBundleVersionId) return []
-  return (Array.isArray(events) ? events : []).filter(event => event.status !== 'inactive'
-    && (!registeredOnly || event.runtimeRegistered === true))
+  const drafts = schemeWindows.filter(row => row.sourceBundleVersionId === selectedBundleVersionId && row.status !== 'inactive')
+  const overrides = new Set(drafts.map(row => row.id))
+  const registered = (Array.isArray(events) ? events : []).filter(event => event.status !== 'inactive'
+    && (!registeredOnly || event.runtimeRegistered === true) && !overrides.has(event.id))
+  return [...registered, ...drafts]
 }
 
 /**

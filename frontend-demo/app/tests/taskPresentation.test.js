@@ -1,6 +1,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { filterTasks } from '../src/services/taskPresentation.js'
+import { filterTasks, recoverableCalculation } from '../src/services/taskPresentation.js'
+
+test('returning to a scheme draft never adopts another historical calculation', () => {
+  const history = [{ taskId: 'old', createdAt: '2026-01-01' }, { taskId: 'new', createdAt: '2026-02-01' }]
+  for (const draft of [{ dirty: true }, { modelSchemeId: 'scheme' }, { modelSchemeName: '新方案' }]) {
+    assert.equal(recoverableCalculation(history, draft), null)
+  }
+  assert.equal(recoverableCalculation(history, { activeTaskId: 'old', dirty: true }), history[0])
+  assert.equal(recoverableCalculation(history, { activeTaskId: 'missing' }), null)
+  assert.equal(recoverableCalculation(history, {}), history[1])
+  assert.equal(history[0].taskId, 'old')
+})
 
 const rows = [
   { taskId: 'JOB-ABC123', runTypeLabel: '点查询', status: 'completed', stageLabel: '结果保存', runConfig: { runType: 'pointQuery' } },

@@ -20,7 +20,7 @@ const routes = [
     path: '/state',
     name: 'state',
     component: () => import('@/views/StateView.vue'),
-    meta: { title: '起算状态' }
+    meta: { title: '模拟状态' }
   },
   {
     path: '/calibration',

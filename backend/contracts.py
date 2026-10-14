@@ -34,24 +34,24 @@ def timestamp(value):
 
 
 def continuous_windows(period):
-    """Disjoint scoring windows, each with its own rainfall-only warm-up."""
+    """Chronological, disjoint scoring windows; state policy is frozen separately."""
     windows = []
     for prefix, purpose in (("calibration", "率定"), ("validation", "验证"), ("independent", "独立检验")):
         start_value, end_value = period.get(prefix + "Start"), period.get(prefix + "End")
         if prefix == "independent" and not start_value and not end_value:
             continue
         start, end = timestamp(start_value), timestamp(end_value)
-        if start >= end or (end - start).total_seconds() > 366 * 24 * 3600:
-            raise ValueError(f"{purpose}期开始须早于结束，单段不超过一年")
-        if start.year < 1960 or end.year > 2024:
-            raise ValueError(f"{purpose}期超出已登记资料年份")
+        if start >= end:
+            raise ValueError(f"{purpose}期开始须早于结束")
         windows.append({"id": prefix.upper(), "purpose": purpose,
                         "start": start.isoformat(), "end": end.isoformat()})
     ordered = sorted(windows, key=lambda row: row["start"])
     if any(left["end"] >= right["start"] for left, right in zip(ordered, ordered[1:])):
         raise ValueError("率定、验证与独立检验时段不能重叠（结束时刻计入本段）")
+    if [row['id'] for row in ordered] != [row['id'] for row in windows]:
+        raise ValueError('评价期须按率定、验证、独立检验的时间顺序排列')
     if period.get("initialStateVersionId"):
-        raise ValueError("连续率定各时段按候选参数独立预热，不使用已有末状态")
+        raise ValueError("连续率定须为每组候选参数重新演算状态，不使用已有末状态")
     if "windows" in period and period["windows"] != windows:
         raise ValueError("冻结时段与率定设置不一致")
     return windows
@@ -175,6 +175,8 @@ def normalize_request(request, catalog, runtime_root=None):
         if period.get("mode") not in {"event", "continuous"}:
             raise ValueError("请选择洪水场次或连续时段率定")
         evaluation_mode = request['calibration'].get('evaluationMode', 'automatic')
+        if 'simulationOnly' in request['calibration'] and (request['calibration']['simulationOnly'] is not True or evaluation_mode != 'manual' or period.get('mode') != 'event'):
+            raise ValueError('场次模拟须使用指定参数与场次时段')
         if evaluation_mode not in {'automatic', 'manual'}:
             raise ValueError('请选择自动率定或人工试调')
         if evaluation_mode == 'manual':
@@ -264,10 +266,8 @@ def normalize_request(request, catalog, runtime_root=None):
     else:
         start = timestamp(period.get("startTime"))
         end = timestamp(period.get("endTime"))
-        if end < start or (end - start).total_seconds() > 366 * 24 * 3600:
-            raise ValueError("计算时段无效或超过一年；请使用状态续算分段执行")
-        if start.year < 1960 or end.year > 2024:
-            raise ValueError("当前版本驱动资料不覆盖该时段")
+        if end < start:
+            raise ValueError("计算结束时刻不能早于起点")
         if request.get("inputs", {}).get("evaporation", {}).get("mode") not in {"monthly-climatology-assumption", "science-version"}:
             raise ValueError("连续计算必须显式确认逐月假设 PET；不能把它标注为实测蒸散发")
         if run_type == "stateContinuation" and not period.get("initialStateVersionId"):
@@ -278,8 +278,8 @@ def normalize_request(request, catalog, runtime_root=None):
             raise ValueError("初始化应指定同一起算状态时刻")
         if period.get('continuousOrigin'):
             origin = timestamp(period['continuousOrigin'])
-            if period.get('initialStateVersionId') or origin > start or start - origin > timedelta(days=366 * 10):
-                raise ValueError('连续原点须早于起点且不超过十年，续算继承父状态不另设原点')
+            if period.get('initialStateVersionId') or origin > start:
+                raise ValueError('连续起点须早于计算起点，续算继承父状态不另设起点')
     params = request.get("calibration", {}).get("initialParameters", {}) if run_type == "calibration" else request.get("parameters", {})
     if set(params) - set(PARAMETERS):
         raise ValueError(f"模型参数未登记：{sorted(set(params) - set(PARAMETERS))}")
@@ -309,8 +309,8 @@ def normalize_request(request, catalog, runtime_root=None):
             origin = timestamp(request['calibration']['continuousOrigin'])
             first = min(timestamp(row['start']) for row in period.get('windows', period.get('events', []))
                         if row.get('purpose') != '未使用' and row.get('status') != 'inactive')
-            if state_policy != 'continuous-origin' or origin > first or first - origin > timedelta(days=366 * 10):
-                raise ValueError('连续原点须早于首个评价时刻，且不超过十年')
+            if state_policy != 'continuous-origin' or origin > first:
+                raise ValueError('连续起点须早于首个评价时刻')
     if request.get('inputs', {}).get('evaporation', {}).get('mode') == 'science-version' and not request.get('science', {}).get('versionId'):
         raise ValueError('选择科学条件蒸散发时须指定已登记科学版本')
     return request
@@ -345,8 +345,6 @@ def validate_event_period(period, request, case, runtime_root=None):
                 raise ValueError("场次窗口与已登记洪水资料不一致；请先登记修订版本")
             if start >= end:
                 raise ValueError("场次开始必须早于结束")
-            if start.year < 1960 or end.year > 2024 or (end - start).total_seconds() > 366 * 24 * 3600:
-                raise ValueError("场次时段超出登记资料范围或超过一年")
         if not any(row["purpose"] == "率定" for row in rows):
             raise ValueError("至少需要一场率定或人工试算洪水")
         if request['calibration'].get('evaluationMode', 'automatic') != 'manual' and not any(row["purpose"] == "验证" for row in rows):

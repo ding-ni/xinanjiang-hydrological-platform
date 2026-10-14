@@ -6,6 +6,15 @@ import { cloneWorkspaceValue, mergeWorkspaceFloodEvents } from '../src/services/
 import { eligibleFloodEvents, normalizeFloodEvent } from '../src/services/floodEventService.js'
 import { selectCalibrationCandidates } from '../src/services/calibrationSubmissionService.js'
 
+it('explicit scheme windows override only their declared source and survive catalog refresh', () => {
+  const registered = [{ id: 'same', start: 'old', runtimeRegistered: true, status: 'active' }, { id: 'other', status: 'active', runtimeRegistered: false }]
+  const window = { id: 'same', start: 'new', status: 'active', sourceBundleVersionId: 'A' }
+  const a = currentInputFloodEvents(registered, { registeredOnly: true, selectedBundleVersionId: 'A', registeredBundleVersionId: 'A', schemeWindows: [window] })
+  assert.deepEqual(a, [window])
+  assert.deepEqual(currentInputFloodEvents(registered, { registeredOnly: true, selectedBundleVersionId: 'B', registeredBundleVersionId: 'B', schemeWindows: [window] }), [registered[0]])
+  assert.equal(registered[0].start, 'old')
+})
+
 function qcEvent(overrides = {}) {
   return {
     id: 'xf-20170620',

@@ -122,7 +122,7 @@ with sync_playwright() as p:
     page.wait_for_load_state("networkidle")
     page.wait_for_selector(".simulation-result-card", timeout=20000)
     assert result["endStateVersionId"] in page.locator(".simulation-result-card").inner_text()
-    page.get_by_role("button", name="保存为起算状态", exact=True).click()
+    page.get_by_role("button", name="查看模拟状态", exact=True).click()
     page.wait_for_url("**/#/state")
     page.wait_for_load_state("networkidle")
     expect(page.locator('.node-item.active')).to_have_attribute('title', result['endStateVersionId'])

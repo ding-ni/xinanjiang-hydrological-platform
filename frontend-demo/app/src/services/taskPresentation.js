@@ -3,6 +3,13 @@ export const taskStatusLabels = {
   completed: '完成', archived: '已归档', failed: '失败',
 }
 
+export function recoverableCalculation(rows, workspace) {
+  // An open draft is not a request to reopen the latest historical result.
+  if (workspace.activeTaskId) return rows.find(row => row.taskId === workspace.activeTaskId) || null
+  if (workspace.modelSchemeId || workspace.modelSchemeName || workspace.dirty) return null
+  return [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] || null
+}
+
 export function filterTasks(rows, { query = '', status = '' } = {}) {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
   return rows.filter(row => {

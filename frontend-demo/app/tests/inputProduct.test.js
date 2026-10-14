@@ -25,6 +25,14 @@ describe('immutable input product frontend boundary', () => {
     assert.equal(JSON.stringify(job), before)
     assert.equal(inputResultUsesSelection(job, { selectedInputBundleVersionId: 'INPUT-OLD' }), true)
   })
+  it('automatically prepared result retains its source selection and immutable computed input', () => {
+    const record = { inputBundleVersionId: 'INPUT-PREPARED', frozenRequest: {
+      inputs: { bundleVersionId: 'INPUT-PREPARED', sourceBundleVersionId: 'INPUT-SOURCE' }
+    } }
+    assert.equal(inputResultUsesSelection(record, { selectedInputBundleVersionId: 'INPUT-SOURCE' }), true)
+    assert.equal(inputResultUsesSelection(record, { selectedInputBundleVersionId: 'INPUT-OTHER' }), false)
+    assert.equal(frozenInputBundleVersionId(record), 'INPUT-PREPARED')
+  })
   it('templates contain only null rain, placeholder stations and no claimed observations', () => {
     const template = sourceJsonTemplate()
     assert.ok(template.name.includes('非实测'))

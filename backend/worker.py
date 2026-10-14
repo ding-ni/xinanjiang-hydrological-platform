@@ -50,6 +50,8 @@ class ModelJob:
         self.folder = Path(folder)
         self.publish_parameters = publish_parameters
         self.request = read_json(self.folder / "request.json")
+        if (self.request.get('calibration') or {}).get('simulationOnly'):
+            self.publish_parameters = False
         self.request = validate_original_request(self.request, RUNTIME)
         self.request, self.bundle = freeze_input_selection(self.request, InputProducts())
         self.request = freeze_routing_selection(self.request, self.bundle)
@@ -101,6 +103,8 @@ class ModelJob:
 
     def freeze_input_provenance(self):
         warmup = pd.Timedelta(days=float(self.period.get("warmupDays", 7)))
+        calibration = self.request.get('calibration') or {}
+        policy = calibration.get('statePolicy', self.science['statePolicy'].get('strategy')) if self.request['runType'] == 'calibration' else self.science['statePolicy'].get('strategy')
         periods = self.period.get("windows", []) if self.period.get("mode") == "continuous" else self.period.get("events", [])
         if self.request['runType'] == 'forecast':
             self.forecast_rain = ForecastProducts().freeze(self.request)
@@ -112,18 +116,16 @@ class ModelJob:
         for row in periods:
             if row.get("purpose") == "未使用" or row.get("status") == "inactive":
                 continue
-            effective_warmup = pd.Timedelta(0) if self.period.get("initialStateVersionId") else warmup
+            effective_warmup = pd.Timedelta(0) if self.period.get("initialStateVersionId") or policy == 'continuous-origin' else warmup
             years.update(range((pd.Timestamp(row["start"]) - effective_warmup).year, pd.Timestamp(row["end"]).year + 1))
-        calibration = self.request.get('calibration') or {}
-        policy = calibration.get('statePolicy', self.science['statePolicy'].get('strategy')) if self.request['runType'] == 'calibration' else self.science['statePolicy'].get('strategy')
         if policy == 'continuous-origin' and not self.period.get('initialStateVersionId'):
             origin = calibration.get('continuousOrigin') or self.period.get('continuousOrigin') or self.science['statePolicy'].get('continuousOrigin')
             if not origin or origin == 'FIRST_DATABASE_EVENT_YEAR_JAN1_MINUS_FIXED_WARMUP':
                 origin = continuous_origin(read_json(self.input_paths['events'])['packages'], int(warmup.total_seconds() / 3600))
             self.continuous_origin = pd.Timestamp(origin)
             first = min(pd.Timestamp(row['start']) for row in periods if row.get('purpose') != '未使用' and row.get('status') != 'inactive')
-            if self.continuous_origin > first or first - self.continuous_origin > pd.Timedelta(days=366 * 10):
-                raise ValueError('连续原点与首个评价时刻相隔超过十年或晚于起点；请选择候选来源输入版本或显式登记连续起点')
+            if self.continuous_origin > first:
+                raise ValueError('连续起点晚于首个评价时刻')
             last = max(pd.Timestamp(row['end']) for row in periods if row.get('purpose') != '未使用' and row.get('status') != 'inactive')
             years.update(range(self.continuous_origin.year, last.year + 1))
         paths = [self.precip_dir / f"nananxi_precip_hourly_1km_{year}.nc" for year in sorted(years)]
@@ -173,11 +175,14 @@ class ModelJob:
         self.input_digest = hashlib.sha256(__import__('json').dumps(manifest, sort_keys=True).encode()).hexdigest()
 
     def progress(self, percent, stage):
-        write_json(self.folder / "progress.json", {"progress": round(float(percent), 1), "stageLabel": stage})
+        payload = {"progress": round(float(percent), 1), "stageLabel": stage}
+        if hasattr(self, 'search_history'):
+            payload['searchProgress'] = {'evaluations': len(self.search_history), 'budget': self.request['calibration']['optimizer']['maxEvaluations'], 'history': self.search_history[-200:]}
+        write_json(self.folder / "progress.json", payload)
         print(stage, flush=True)
 
     def load(self, rows, warmup):
-        if self.bundle.get('manifest', {}).get('forcingPolicy') == 'STRICT_MISSING':
+        if self.bundle.get('manifest', {}).get('forcingPolicy') == 'STRICT_MISSING' or self.period.get('mode') == 'continuous' or self.request.get('scheme'):
             from strict_forcing import load_hourly_forcing
             data = []
             for row in rows:
@@ -421,7 +426,7 @@ class ModelJob:
         warmup = int(round(float(self.period.get('warmupDays', 7)) * 24))
         state_policy = self.request['calibration'].get('statePolicy', self.science['statePolicy']['strategy'])
         self.progress(5, "读取率定、验证及独立检验资料")
-        events = self.load(union_rows, warmup)
+        events = self.load(union_rows, 0 if state_policy == 'continuous-origin' else warmup)
         by_id = {event.event_id: event for event in events}
         views = []
         for row in rows:
@@ -432,6 +437,15 @@ class ModelJob:
         provider = self.pet_provider
         for event in events:
             event.pet_mm_h = provider.values(event.times)
+        metrics_requested = self.request['calibration']['objectives']['metrics']
+        if metrics_requested.get('nse') or metrics_requested.get('kge'):
+            invalid = []
+            for event in views:
+                sample = event.observed.dropna()
+                if len(sample) < 3 or sample.var() == 0 or (metrics_requested.get('kge') and sample.mean() == 0):
+                    invalid.append(event.event_id)
+            if invalid:
+                raise ValueError('所选NSE或KGE指标需要至少3个有效且有变化的实测流量：' + '、'.join(invalid))
         quality = read_json(self.input_paths['quality'])
         if continuous:
             audits = []
@@ -510,10 +524,18 @@ class ModelJob:
                 raise ValueError(f"{event.event_id} 模拟流量存在无效值或时间缺口")
             return series
 
+        self.search_history = []
         def objective(params):
-            shared = simulate(timeline, params) if timeline is not None else None
-            frame = pd.DataFrame([kernels.metrics(e.observed, (shared if shared is not None else simulate(e, params)).loc[e.start:e.end]) for e in events if e.group == "CALIBRATION"])
-            return kernels.objective_loss(frame, terms)
+            loss = None
+            try:
+                shared = simulate(timeline, params) if timeline is not None else None
+                frame = pd.DataFrame([kernels.metrics(e.observed, (shared if shared is not None else simulate(e, params)).loc[e.start:e.end]) for e in events if e.group == "CALIBRATION"])
+                loss = kernels.objective_loss(frame, terms)
+                return loss
+            finally:
+                previous = self.search_history[-1]['bestLoss'] if self.search_history else None
+                finite = float(loss) if loss is not None and np.isfinite(loss) else None
+                self.search_history.append({'evaluation': len(self.search_history) + 1, 'loss': finite, 'bestLoss': min(previous, finite) if previous is not None and finite is not None else finite if previous is None else previous})
 
         initial = joint_calibration.initial_candidate(self.params, self.routing_payload) if joint_search else self.routing_payload if routing_search else self.params
         def resolve_runoff(params):
@@ -584,8 +606,9 @@ class ModelJob:
         parameters = {k.split(".")[-1]: v for k, v in kernels.resolved_runoff_parameters(runoff_best).items()}
         result = {"parameterVersionId": version, "bestParameters": parameters, "calibrationMode": self.period["mode"],
                   "evaluationMode": self.request['calibration'].get('evaluationMode', 'automatic'),
+                  'simulationOnly': self.request['calibration'].get('simulationOnly', False),
                   "periods": self.period.get("windows"), "periodQuality": audits if continuous else None,
-                  "statePolicy": state_policy, 'actualWarmupHours': warmup,
+                  "statePolicy": state_policy, 'actualWarmupHours': int((timeline.start - self.continuous_origin).total_seconds() / 3600) if timeline is not None else warmup,
                   'continuousOrigin': self.continuous_origin.isoformat() if timeline is not None else None,
                   "optimizationGroups": ["CALIBRATION"],
                   'evaluationPolicy': 'EQUAL_PHYSICAL_GROUP_UNIQUE_HOURS', 'overlapGroups': physical_groups,

@@ -308,7 +308,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task", required=True)
     args = parser.parse_args()
-    process_task(Path(args.task))
+    folder = Path(args.task).resolve()
+    if read_json(folder / 'request.json').get('operation') == 'schemeInput':
+        from scheme_inputs import build_prepared
+        products = InputProducts()
+        if folder.parent != products.tasks_root.resolve() or not DATA_TASK_ID.fullmatch(folder.name):
+            raise ValueError('方案资料任务目录无效')
+        result = build_prepared(folder, products)
+        result.update(resultVersionId='DATA-RESULT-' + folder.name, resultSource='input-processing')
+        write_json(folder / 'result.json', result)
+    else:
+        process_task(folder)
     return 0
 
 

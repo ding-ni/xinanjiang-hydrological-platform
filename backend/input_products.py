@@ -60,8 +60,8 @@ def hourly_time(value):
         result = datetime.fromisoformat(value)
     except ValueError as exc:
         raise ValueError("资料时刻无效") from exc
-    if not 1960 <= result.year <= 2024:
-        raise ValueError("本轮处理年份仅允许 1960 至 2024；不推断或扩展固定出口流量")
+    if not 1960 <= result.year <= 2100:
+        raise ValueError("资料年份须为 1960 至 2100，实际可用范围按来源检查")
     return result
 
 
@@ -402,6 +402,9 @@ class InputProducts:
     def normalize_processing_request(self, payload):
         if not isinstance(payload, dict):
             raise ValueError("输入处理请求须为 JSON 对象")
+        if payload.get('operation') == 'schemeInput':
+            from scheme_inputs import normalize_preparation
+            return normalize_preparation(payload, self)
         _fields(payload, {"requestId", "operation", "projectId", "resolutionId", "name", "start", "end",
                           "parentBundleVersionId", "sourceId", "idwPower", "minimumStations", "zeroOnlyPolicy"})
         _case(payload)

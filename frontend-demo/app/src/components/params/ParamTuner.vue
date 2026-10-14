@@ -3,7 +3,7 @@
     <div class="panel-head" v-if="title">
       <h3 class="panel-title">{{ title }}</h3>
       <div class="head-actions">
-        <span v-if="dirty" class="dirty-tag">{{ livePreview ? '已调整' : '待试算' }}</span>
+        <span v-if="dirty" class="dirty-tag">已调整</span>
         <button v-if="showReset" class="btn" type="button" @click="$emit('reset')">重置</button>
       </div>
     </div>
@@ -39,7 +39,7 @@
           @input="drafts[d.key] = $event.target.value; livePreview && onNum(d.key, $event.target.value)"
           @change="commit(d.key, $event.target.value)"
         />
-        <p class="hint-line"><span>{{ d.min }} — {{ d.max }}</span> · {{ d.desc }}</p>
+        <p class="hint-line"><span>{{ d.min }} — {{ d.max }}</span></p>
       </div>
     </div>
     <button
@@ -50,7 +50,7 @@
     >
       {{ advanced ? '收起高级参数' : `高级参数（全部 ${defs.length} 项）` }}
     </button>
-    <p class="engine-note">{{ livePreview ? '演示过程线随参数调整' : '调整参数后，点击试算比较过程线' }}</p>
+    <p v-if="livePreview" class="engine-note">演示过程线随参数调整</p>
   </div>
 </template>
 

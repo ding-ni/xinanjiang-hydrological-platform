@@ -198,7 +198,7 @@ def main():
             assert model_result["productionEligible"] is False
             card = page.locator(".simulation-result-card").inner_text()
             assert "不是当前方案" in card and qc_version in card
-            page.get_by_role("button", name="保存为起算状态", exact=True).click()
+            page.get_by_role("button", name="查看模拟状态", exact=True).click()
             page.wait_for_url("**/#/state")
             page.get_by_role("button", name="续算状态", exact=True).click()
             page.locator(".state-block-note").filter(has_text="跨资料版本必须重新初始化").wait_for()

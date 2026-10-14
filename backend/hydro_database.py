@@ -165,22 +165,28 @@ class HydroDatabase:
         return first, last
 
     @staticmethod
-    def _window_summary(db, station, variable, first, last):
+    def _window_summary(db, station, variable, first, last, sourceId=None):
         site = db.execute("SELECT station_id AS id,name,lon,lat FROM stations WHERE project_id=? AND station_id=?", (PROJECT, station)).fetchone()
         if not site:
             raise KeyError("站点不在本流域资料库中")
         arguments = (PROJECT, station, variable, first, last)
+        scope = ''
+        if sourceId:
+            if not db.execute('SELECT 1 FROM source_files WHERE id=?', (sourceId,)).fetchone():
+                raise ValueError('资料来源未登记')
+            scope = ' AND source_id=?'
+            arguments += (sourceId,)
         conflict = db.execute("""SELECT time_hour FROM observations
             WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ?
-            GROUP BY time_hour HAVING count(*)>1 LIMIT 1""", arguments).fetchone()
+            """ + scope + ' GROUP BY time_hour HAVING count(*)>1 LIMIT 1', arguments).fetchone()
         if conflict:
             raise RuntimeError("同一小时存在多个来源，须明确资料版本后查询")
         statistics = db.execute("""SELECT count(*) AS records,count(value) AS valid,
             coalesce(sum(CASE WHEN value=0 THEN 1 ELSE 0 END),0) AS zeros,
             sum(value) AS total,min(value) AS minimum,max(value) AS maximum
-            FROM observations WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ?""", arguments).fetchone()
+            FROM observations WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ?""" + scope, arguments).fetchone()
         sources = [row[0] for row in db.execute("""SELECT DISTINCT source_id FROM observations
-            WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ? ORDER BY source_id""", arguments)]
+            WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ?""" + scope + ' ORDER BY source_id', arguments)]
         expected = last - first + 1
         return {"projectId": PROJECT, "station": dict(site), "variable": variable, "unit": VARIABLES[variable][1],
                 "sources": sources, "expected": expected, "records": statistics["records"], "valid": statistics["valid"],
@@ -200,7 +206,7 @@ class HydroDatabase:
             if recorded:
                 current = next(records, None)
 
-    def window(self, station, variable, start, end, offsetHours=0):
+    def window(self, station, variable, start, end, offsetHours=0, sourceId=None):
         first, last = self._window_bounds(variable, start, end)
         expected = last - first + 1
         if type(offsetHours) is not int or not 0 <= offsetHours < expected:
@@ -210,10 +216,10 @@ class HydroDatabase:
         with self.connect() as db:
             # Statistics and the displayed segment share one read snapshot.
             db.execute("BEGIN")
-            summary = self._window_summary(db, station, variable, first, last)
+            summary = self._window_summary(db, station, variable, first, last, sourceId)
             records = db.execute("""SELECT time_hour,value,source_id FROM observations
-                WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ? ORDER BY time_hour""",
-                                 (PROJECT, station, variable, display_first, display_last))
+                WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ?""" + (' AND source_id=?' if sourceId else '') + ' ORDER BY time_hour',
+                                 (PROJECT, station, variable, display_first, display_last) + ((sourceId,) if sourceId else ()))
             series = list(self._series_rows(records, display_first, display_last))
         return {**summary, "series": series,
                 "display": {"start": timestamp(display_first), "end": timestamp(display_last),
@@ -221,15 +227,15 @@ class HydroDatabase:
                             "limitHours": DISPLAY_LIMIT_HOURS, "hasPrevious": offsetHours > 0, "hasNext": display_last < last}}
 
     @contextmanager
-    def export_window(self, station, variable, start, end):
+    def export_window(self, station, variable, start, end, sourceId=None):
         """Validate before HTTP headers, then iterate a complete hourly range."""
         first, last = self._window_bounds(variable, start, end)
         with self.connect() as db:
             db.execute("BEGIN")
-            summary = self._window_summary(db, station, variable, first, last)
+            summary = self._window_summary(db, station, variable, first, last, sourceId)
             records = db.execute("""SELECT time_hour,value,source_id FROM observations
-                WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ? ORDER BY time_hour""",
-                                 (PROJECT, station, variable, first, last))
+                WHERE project_id=? AND station_id=? AND variable=? AND time_hour BETWEEN ? AND ?""" + (' AND source_id=?' if sourceId else '') + ' ORDER BY time_hour',
+                                 (PROJECT, station, variable, first, last) + ((sourceId,) if sourceId else ()))
             yield summary, self._series_rows(records, first, last)
 
     def monitor(self, end):

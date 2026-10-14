@@ -4,9 +4,9 @@
     <p v-if="error" role="alert" class="error">{{ error }}</p>
     <template v-if="info">
       <div class="overview panel"><div><span>当前工作区</span><h3>{{ info.workspace.name }}</h3><small>{{ info.workspace.id }}</small></div><div><span>程序版本</span><b>{{ info.version }}</b></div><div><span>资料库版本</span><b>{{ info.schemaVersion }}</b></div><div><span>磁盘剩余</span><b>{{ size(info.freeBytes) }}</b></div></div>
-      <section class="panel directories"><div class="section-title"><h3>目录位置</h3><span>配置文件 <code>{{ info.configFile }}</code></span></div>
+      <details class="panel directories"><summary>目录位置与配置文件</summary><div class="section-title"><span>配置文件 <code>{{ info.configFile }}</code></span></div>
         <div v-for="row in info.directories" :key="row.id" class="directory"><b>{{ row.label }}</b><code>{{ row.path }}</code><button class="btn" @click="copy(row.path)">复制路径</button></div>
-      </section>
+      </details>
       <div class="lower">
         <section class="panel backup"><div class="section-title"><h3>工作区备份</h3><button class="btn primary" :disabled="busy" @click="backup">{{ busy ? '正在备份…' : '备份工作区' }}</button></div><p class="subtle">保存资料库、计算资料、参数、起算状态与计算成果。</p>
           <p v-if="message" role="status" class="message">{{ message }}</p>

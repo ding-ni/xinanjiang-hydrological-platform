@@ -14,9 +14,10 @@
         <span class="sub">模拟 · 率定 · 预报 · 状态 · 综合检验</span>
       </h3>
       <div class="task-filters">
+        <select class="input" v-model="schemeFilter" aria-label="按方案查看成果"><option value="">全部方案与历史计算</option><option v-for="row in schemes" :key="row.id" :value="row.id">{{ row.name }}</option><option value="historical">历史计算（未关联方案）</option></select>
         <select class="input" v-model="taskTypeFilter"><option value="">全部任务类型</option><option v-for="type in taskTypeOptions" :key="type" :value="type">{{ runTypeLabel(type) }}</option></select>
         <select class="input" v-model="taskStateFilter"><option value="">全部任务状态</option><option v-for="status in taskStateOptions" :key="status" :value="status">{{ taskStatusLabel(status) }}</option></select>
-        <input class="input" v-model="taskKeyword" aria-label="检索成果" placeholder="成果名称、分组、备注或任务编号" />
+        <input class="input" v-model="taskKeyword" aria-label="检索成果" placeholder="成果名称、分组或备注" />
         <select class="input" v-model="collectionFilter" aria-label="成果分组筛选"><option value="">全部分组</option><option v-for="group in collections" :key="group" :value="group">{{ group }}</option></select>
         <button class="btn mini" :class="{ primary: favoriteFilter }" :aria-pressed="favoriteFilter" @click="favoriteFilter = !favoriteFilter">收藏</button>
         <button class="btn mini" :disabled="exporting || !successfulFiltered.length" @click="exportFiltered">{{ exporting ? '汇总中…' : '导出筛选汇总' }}</button>
@@ -28,7 +29,7 @@
         <thead><tr><th>成果名称</th><th>任务类型</th><th>状态</th><th>分组 / 阶段</th><th>来源</th><th>创建时间</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="task in filteredTasks" :key="task.taskId" :class="{ active: task.taskId === selectedTaskId }">
-            <td class="product-cell" :title="task.taskId"><b>{{ resultMetadata[task.taskId]?.favorite ? '★ ' : '' }}{{ resultMetadata[task.taskId]?.name || `${task.runTypeLabel} · ${task.taskId.slice(-8)}` }}</b></td>
+            <td class="product-cell" :title="task.taskId"><b>{{ resultMetadata[task.taskId]?.favorite ? '★ ' : '' }}{{ resultMetadata[task.taskId]?.name || `${task.lineage?.schemeName || '历史计算'} · ${task.runTypeLabel} · ${task.createdAt?.replace('T', ' ').slice(0,16)}` }}</b><small v-if="task.lineage?.schemeRevision">方案修订 {{ task.lineage.schemeRevision }}</small></td>
             <td>{{ task.runTypeLabel }}</td>
             <td><span class="tag" :class="taskStatusTag(task.status)">{{ taskStatusLabel(task.status) }}</span></td>
             <td>{{ resultMetadata[task.taskId]?.collection || (['completed', 'archived'].includes(task.status) ? '未分组' : `${task.stageLabel} · ${task.progress}%`) }}</td>
@@ -45,6 +46,7 @@
       </table></div>
       <details v-if="selectedTask" class="task-inspector"><summary>冻结计算条件</summary><div class="task-inspector-fields">
         <b>{{ selectedTask.runTypeLabel }} · {{ selectedTask.taskId }}</b>
+        <span>方案：{{ selectedTaskLineage.schemeName || '历史计算' }} · 修订 {{ selectedTaskLineage.schemeRevision || '—' }}</span>
         <span>来源任务：{{ selectedTaskLineage.sourceTaskId || selectedTask.sourceTaskId || '首次作业' }}</span>
         <span>资料版本：{{ selectedTaskLineage.dataVersionId || '—' }}</span>
         <span>场次集版本：{{ selectedTaskLineage.eventSetVersionId || '—' }}</span>
@@ -57,12 +59,15 @@
       <section v-if="selectedTask?.resultSource === 'model-backend'" class="backend-result-inspector">
         <p v-if="taskResultError" class="warn-text">{{ taskResultError }}</p>
         <template v-if="taskResult">
-          <ResultWorkbench :key="selectedTask.taskId" :task="selectedTask" :result="taskResult" :tasks="contextTasks" :metadata="resultMetadata" :definitions="app.backendCase?.parameterDefinitions || []" @saved="saveResultMetadata" @open="openTask" />
+          <div class="btn-row"><button v-if="taskResult.stateCalculationTaskId || taskResult.endStateVersionId" class="btn" @click="openStates">查看模拟状态</button><button v-if="taskResult.stateCalculationTaskId || taskResult.endStateVersionId" class="btn" @click="router.push({ path: '/diagnostics', query: { source: taskResult.stateCalculationTaskId || selectedTask.taskId } })">查询河道断面流量</button></div>
+          <p v-if="taskResult.stateCalculationError" class="warn-text">最佳参数状态保存失败：{{ taskResult.stateCalculationError }}。可按最佳参数独立模拟后查看状态。</p>
+          <ResultWorkbench :key="selectedTask.taskId" :task="selectedTask" :result="taskResult" :tasks="contextTasks" :metadata="resultMetadata" :definitions="app.backendCase?.parameterDefinitions || []" @saved="saveResultMetadata" @open="openTask" @simulate="openBestSimulation" />
         </template>
         <p v-else-if="!taskResultError && ['completed','archived'].includes(selectedTask.status)" class="loading-result">正在读取计算成果…</p>
       </section>
     </section>
 
+    <details v-if="legacyConditions.length" class="panel panel-pad"><summary>历史保存条件 · {{ legacyConditions.length }} 条</summary><div v-for="row in legacyConditions" :key="row.id" class="task-filters"><span>{{ row.name }}</span><button class="btn mini" @click="restoreLegacy(row)">打开条件草稿</button></div></details>
     <div v-if="archive.contextRows.length" class="body">
       <aside class="panel panel-pad filter-panel">
         <h3 class="panel-title">档案筛选</h3>
@@ -239,6 +244,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { simulationDraft } from '@/services/resultSimulationService'
 import { useArchiveStore } from '@/stores/archive'
 import { useForecastStore } from '@/stores/forecast'
 import { useCalibrationStore } from '@/stores/calibration'
@@ -248,7 +254,7 @@ import HydrographChart from '@/components/charts/HydrographChart.vue'
 import { ElMessage } from 'element-plus'
 import ContextStatusMetric from '@/components/common/ContextStatusMetric.vue'
 import ResultWorkbench from '@/components/model/ResultWorkbench.vue'
-import { modelApi, modelBackendEnabled } from '@/services/modelBackendService'
+import { modelApi, modelBackendEnabled, normalizeBackendTask } from '@/services/modelBackendService'
 import { csv, downloadText, summaryRows, SUMMARY_HEADER } from '@/services/resultPresentation'
 
 const archive = useArchiveStore()
@@ -261,6 +267,7 @@ const compareId = ref(null)
 const taskTypeFilter = ref('')
 const taskStateFilter = ref('')
 const taskKeyword = ref('')
+const schemeFilter = ref(''), schemes = ref([]), legacyConditions = ref([])
 const selectedTaskId = ref(null)
 const taskResult = ref(null)
 const taskResultError = ref('')
@@ -270,7 +277,10 @@ const successfulFiltered = computed(() => filteredTasks.value.filter(row => row.
 async function refreshMetadata() {
   if (!modelBackendEnabled()) return
   catalogError.value = ''
-  try { resultMetadata.value = (await modelApi('result-catalog')).metadata }
+  try {
+    const [catalog, named, legacy] = await Promise.all([modelApi('result-catalog'), modelApi('model-schemes'), modelApi('database/schemes')])
+    resultMetadata.value = catalog.metadata; schemes.value = named.schemes; legacyConditions.value = legacy.schemes
+  }
   catch (failure) { catalogError.value = failure.message }
 }
 function saveResultMetadata(id, row) { resultMetadata.value = { ...resultMetadata.value, [id]: row } }
@@ -306,6 +316,8 @@ const taskStateOptions = computed(() => [...new Set(contextTasks.value.map((task
 const filteredTasks = computed(() => {
   const keyword = taskKeyword.value.trim().toLowerCase()
   return contextTasks.value.filter((task) => {
+    const schemeId = task.lineage?.schemeId || task.runConfig?.lineage?.schemeId
+    if (schemeFilter.value && (schemeFilter.value === 'historical' ? Boolean(schemeId) : schemeId !== schemeFilter.value)) return false
     if (taskTypeFilter.value && task.runType !== taskTypeFilter.value) return false
     if (taskStateFilter.value && task.status !== taskStateFilter.value) return false
     const metadata = resultMetadata.value[task.taskId] || {}
@@ -340,7 +352,7 @@ const publishedCount = computed(() => archive.contextRows.filter((row) => row.st
 const reproducibleCount = computed(() => archive.contextRows.filter((row) => row.repro).length)
 
 const taskStatusLabels = { queued: '排队', running: '运行中', completed: '已完成', archived: '已归档', failed: '失败', cancelled: '已停止' }
-const runTypeLabels = { continuousSimulation: '连续模拟', continuousCalibration: '连续时段率定', eventCalibration: '洪水场次率定', stateInitialization: '起算状态生成', stateContinuation: '状态推算', forecast: '洪水预报', pointQuery: '指定位置流量查询', diagnosticExperiment: '参数稳定性检验', productionWorkflow: '模型综合检验' }
+const runTypeLabels = { continuousSimulation: '连续模拟', continuousCalibration: '连续时段率定', eventCalibration: '洪水场次率定', eventSimulation: '场次模拟', stateInitialization: '起算状态生成', stateContinuation: '状态推算', forecast: '洪水预报', pointQuery: '指定位置流量查询', diagnosticExperiment: '参数稳定性检验', productionWorkflow: '模型综合检验' }
 runTypeLabels.stateImport = '状态导入'
 runTypeLabels.spatialExport = '空间成果制作'
 function runTypeLabel(type) { return runTypeLabels[type] || type }
@@ -353,6 +365,7 @@ function taskStatusTag(status) {
 }
 async function openTask(task) {
   const config = task.runConfig || {}
+  const sourceBundle = config.inputs?.sourceBundleVersionId || config.inputs?.bundleVersionId
   if (task.runType === 'stateImport') {
     app.prepareHandoff('state', { sourcePage: 'archive', sourceLabel: '导入状态', stateVersionId: `STATE-${task.taskId}`, issueTime: config.period?.endTime })
     router.push('/state')
@@ -361,8 +374,8 @@ async function openTask(task) {
   if (calibration.running) { ElMessage.error('率定工作区有正在执行的任务，请完成或停止后恢复条件。'); return }
   app.setBasin(config.domainId || app.basinId)
   if (config.modelConfigId) app.setModelConfig(config.modelConfigId)
-  if (task.resultSource === 'model-backend' && config.inputs?.bundleVersionId && config.inputs.bundleVersionId !== app.selectedInputBundleVersionId) {
-    try { await app.selectInputBundleVersion(config.inputs.bundleVersionId) }
+  if (task.resultSource === 'model-backend' && sourceBundle && sourceBundle !== app.selectedInputBundleVersionId) {
+    try { await app.selectInputBundleVersion(sourceBundle) }
     catch (error) { ElMessage.error(`无法恢复原任务输入：${error.message}`); return }
   }
   if (config.routing?.versionId) app.updateWorkContext({ selectedRoutingVersionId: config.routing.versionId })
@@ -384,9 +397,18 @@ async function openTask(task) {
     sourceTaskId: task.taskId
   }
 
-  if (['continuousSimulation', 'continuousCalibration', 'eventCalibration'].includes(task.runType)) {
+  if (['continuousSimulation', 'continuousCalibration', 'eventCalibration', 'eventSimulation'].includes(task.runType)) {
     calibration.setContext(app.basinId, app.modelScale, app.modelConfigId)
     calibration.loadFromTaskConfig(task.runType, config)
+    calibration.schemeWindows = (config.period?.events || config.events || []).filter(row => !calibration.events.some(event => event.id === row.id && event.start === row.start && event.end === row.end && event.runtimeRegistered)).map(row => ({ ...row, sourceBundleVersionId: sourceBundle, runtimeRegistered: false, status: 'active' }))
+    calibration.modelSchemeId = config.scheme?.id || null
+    calibration.modelSchemeRevision = config.scheme?.revision || 0
+    calibration.modelSchemeLatestRevision = config.scheme?.id ? (await modelApi(`model-schemes/${config.scheme.id}`)).latestRevision : 0
+    calibration.modelSchemeName = config.lineage?.schemeName || task.lineage?.schemeName || ''
+    calibration.requiredInputBundleVersionId = sourceBundle
+    calibration.rainfallMethod = config.inputs?.rainfallMethod || 'reuse'
+    calibration.stationSourceId = config.inputs?.stationSourceId || null
+    calibration.idwPower = config.inputs?.idwPower ?? 2; calibration.minimumStations = config.inputs?.minimumStations ?? 1
     app.prepareHandoff('calibration', common)
     router.push('/calibration')
   } else if (['stateInitialization', 'stateContinuation'].includes(task.runType)) {
@@ -396,7 +418,36 @@ async function openTask(task) {
     app.prepareHandoff('forecast', common)
     router.push({ path: '/forecast', query: { task: task.taskId } })
   }
-  ElMessage.success('已带入原任务条件，请复核后执行')
+  ElMessage.success('已打开计算草稿')
+}
+async function restoreLegacy(row) {
+  try {
+    const request = await modelApi(`database/schemes/${row.id}`)
+    const type = request.runType === 'simulation' ? 'continuousSimulation' : request.runType === 'calibration' ? request.period.mode === 'continuous' ? 'continuousCalibration' : 'eventCalibration' : request.runType
+    await openTask({ ...normalizeBackendTask({ taskId: row.sourceTaskId, runConfig: request, runType: type, resultSource: 'model-backend' }), runType: type })
+  } catch (failure) { ElMessage.error(failure.message) }
+}
+async function openStates() {
+  try {
+    const id = taskResult.value.stateCalculationTaskId || selectedTask.value.taskId
+    const result = id === selectedTask.value.taskId ? taskResult.value : await tasks.getResult(id)
+    if (!result.endStateVersionId) throw new Error('状态保存计算尚未完成，请查看对应模拟任务进度。')
+    app.prepareHandoff('state', { sourcePage: 'archive', sourceLabel: '计算成果状态', stateVersionId: result.endStateVersionId, sourceTaskId: id })
+    router.push('/state')
+  } catch (failure) { ElMessage.warning(failure.message) }
+}
+
+async function openBestSimulation(task, result) {
+  try {
+    const child = result.stateCalculationTaskId ? tasks.taskById(result.stateCalculationTaskId) : null
+    const request = simulationDraft(task.request || task.runConfig, result, child?.request || child?.runConfig)
+    const draft = normalizeBackendTask({ ...task, runConfig: request })
+    draft.runType = request.runType === 'simulation' ? 'continuousSimulation' : 'eventSimulation'
+    // Preserve the parent scheme identity while opening a new calculation draft.
+    draft.runConfig.scheme = task.runConfig.scheme
+    await openTask(draft)
+    ElMessage.success('最佳参数已带入模拟草稿')
+  } catch (failure) { ElMessage.error(failure.message) }
 }
 
 const pinnedCompareRow = computed(() => archive.rows.find((row) => row.productId === compareId.value) || null)

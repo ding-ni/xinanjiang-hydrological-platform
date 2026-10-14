@@ -1,5 +1,5 @@
 <template>
-  <section class="view-cal">
+  <section class="view-cal" :class="`stage-${workflowStep}`">
     <div class="metric-strip" aria-label="率定与模拟概况">
       <div class="metric"><span>{{ cal.sourcePlan ? '原方案起始参数' : '当前参数方案' }}</span><b :title="cal.paramVersion">{{ parameterVersionLabel(cal.paramVersion) }}</b></div>
       <div class="metric"><span>{{ workMode === 'simulation' ? '模拟对象' : '率定断面' }}</span><b>{{ cal.section }}</b></div>
@@ -10,33 +10,39 @@
       <ContextStatusMetric />
     </div>
 
+    <ModelSchemeBar v-if="app.backendCase" ref="schemeBar" @save="saveSchemeDraft" @loaded="restoreSchemeView" />
+    <nav v-if="app.backendCase" class="workflow-steps" aria-label="水文作业步骤"><button v-for="(label, id) in { scheme: '1 · 方案与时段', conditions: '2 · 计算条件', results: '3 · 计算结果' }" :key="id" :class="{ active: workflowStep === id }" @click="workflowStep = id">{{ label }}</button></nav>
+    <section v-if="preparationIssues.length" class="preparation-issues" role="alert"><h3>所选资料有待处理项</h3><ul><li v-for="issue in preparationIssues" :key="issue.eventId"><b>{{ issue.eventId }} · {{ issue.purpose }}</b>：{{ issue.reasons.join('；') }}<small v-for="gap in issue.missingIntervals" :key="gap.start">降雨缺测 {{ gap.start }} 至 {{ gap.end }} · {{ gap.hours }}小时</small><small v-for="gap in issue.petMissingIntervals" :key="gap.start">蒸散发配置缺测 {{ gap.start }} 至 {{ gap.end }} · {{ gap.hours }}小时</small><small v-for="gap in issue.flowMissingIntervals" :key="gap.start">流量缺测 {{ gap.start }} 至 {{ gap.end }} · {{ gap.hours }}小时</small></li></ul><button v-if="calMode === 'event'" class="btn" @click="excludePreparationIssues">批量排除上述洪水</button></section>
     <div class="operation-tabs panel" aria-label="率定与模拟类型">
-      <button type="button" :class="{ active: workMode === 'simulation' }" @click="setWorkMode('simulation')"><b>连续模拟</b><span>按时段运行并生成末状态</span></button>
-      <button type="button" :class="{ active: workMode === 'calibration' }" @click="setWorkMode('calibration')"><b>参数率定</b><span>连续时段或洪水事件率定</span></button>
-      <p v-if="calculationHandoff" class="handoff-note">条件来自：{{ calculationHandoff.sourceLabel }}，已恢复原作业设置，需复核后重新执行。</p>
+      <button type="button" :class="{ active: workMode === 'calibration' && calMode === 'event' && !cal.fixedEventSimulation }" @click="chooseOperation('event')"><b>场次自动率定</b></button>
+      <button type="button" :class="{ active: workMode === 'calibration' && calMode === 'continuous' }" @click="chooseOperation('continuous')"><b>连续自动率定</b></button>
+      <button type="button" :class="{ active: cal.fixedEventSimulation && workMode === 'calibration' }" @click="chooseOperation('eventSimulation')"><b>场次模拟</b></button>
+      <button type="button" :class="{ active: workMode === 'simulation' }" @click="setWorkMode('simulation')"><b>连续模拟</b></button>
+      <p v-if="calculationHandoff" class="handoff-note">来源：{{ calculationHandoff.sourceLabel }}</p>
     </div>
 
     <div class="calibration-layout" :class="{ 'simulation-mode': workMode === 'simulation' }">
       <aside class="panel panel-pad setting-panel">
         <h2 class="panel-title">{{ workMode === 'simulation' ? '连续模拟设置' : '率定设置' }}</h2>
-        <p class="intro">{{ workMode === 'simulation' ? '设置时段、初始状态和输出步长。' : calMode === 'continuous' ? '设置评价时段与参数搜索方案。' : '选择断面、洪水场次和评价指标。' }}</p>
+
 
         <template v-if="workMode === 'calibration'">
-        <div class="mode-tabs" aria-label="率定方式">
+        <div v-show="workflowStep === 'scheme' || !app.backendCase">
+        <div v-if="!app.backendCase" class="mode-tabs" aria-label="率定方式">
           <button type="button" :class="{ active: calMode === 'event' }" @click="calMode = 'event'">洪水场次</button>
-          <button type="button" :class="{ active: calMode === 'continuous' }" @click="calMode = 'continuous'">连续时段</button>
+          <button type="button" :class="{ active: calMode === 'continuous' }" @click="calMode = 'continuous'">连续自动率定</button>
         </div>
 
         <div class="form-group-title">资料与对象</div>
         <div class="data-list" aria-label="率定资料">
           <div><span>水文资料</span><b>{{ activeDataset.hydrology }}</b></div>
           <div><span>降水资料</span><b>{{ activeDataset.precipitation }}</b></div>
-          <div><span>预热期</span><span class="data-inline-control"><input class="data-inline-input" type="number" min="1" :value="cal.warmupDays" :disabled="Boolean(cal.scienceVersionId)" aria-label="预热期天数" @change="cal.setSimulationField('warmupDays', $event.target.value)" /> 天{{ cal.candidateWarmupHours != null ? ' · 原任务实际值' : cal.scienceVersionId ? ' · 科学预设' : '' }}</span></div>
+          <div v-if="cal.statePolicy !== 'continuous-origin'"><span>预热期</span><span class="data-inline-control"><input class="data-inline-input" type="number" min="1" :value="cal.warmupDays" :disabled="Boolean(cal.scienceVersionId)" aria-label="预热期天数" @change="cal.setSimulationField('warmupDays', $event.target.value)" /> 天</span></div>
           <div v-if="app.basinId === 'nananxi-xufan'"><span>蒸散发</span><b>{{ petLabel }}</b></div>
         </div>
 
         <div class="field">
-          <label for="cal-section">率定对象</label>
+          <label for="cal-section">{{ cal.fixedEventSimulation ? '模拟断面' : '率定断面' }}</label>
           <select id="cal-section" class="input" :value="cal.section" @change="cal.setSection($event.target.value)">
             <option v-for="name in calSections" :key="name" :value="name">{{ name }}</option>
           </select>
@@ -62,8 +68,9 @@
         <p v-if="cal.sourcePlan?.operation === 'search'" class="source-candidate-note" role="status">已恢复原方案的洪水划分、起始参数和搜索设置。确认率定后才会执行 {{ cal.maxEvaluations }} 次评价；人工试算请采用已算出的参数方案。</p>
         <p v-else-if="cal.originalPlanChanged" class="source-candidate-note" role="status">原方案已调整，请复核洪水划分、搜索范围和汇流方案；结果将按当前设置计算。</p>
         <template v-if="app.backendCase">
-          <div class="field"><label for="science-version">科学配置版本</label><select id="science-version" class="input" :value="cal.scienceVersionId || ''" :disabled="cal.running" @change="selectScienceVersion($event.target.value)"><option value="">当前明确条件 · 提交时登记</option><option v-for="row in scienceVersions" :key="row.scienceVersionId" :value="row.scienceVersionId">{{ row.name }}</option></select><small v-if="scienceError" class="field-note warn-text">{{ scienceError }}</small></div>
-          <div class="field"><label for="cal-state-policy">状态计算方式</label><select id="cal-state-policy" class="input" :value="cal.statePolicy" :disabled="cal.running || Boolean(cal.scienceVersionId)" @change="cal.setScienceField('statePolicy', $event.target.value)"><option value="independent-warmup">物理洪水组独立预热</option><option value="continuous-origin">从连续原点计算</option></select><small class="field-note">{{ cal.scienceVersionId ? '采用所选科学版本的状态配置。' : '重叠窗口先合并，每组共享一条连续轨迹。' }}</small></div>
+          <div class="field"><label for="science-version">蒸散发与初始蓄水</label><select id="science-version" class="input" :value="cal.scienceVersionId || ''" :disabled="cal.running" @change="selectScienceVersion($event.target.value)"><option value="">按本次条件设置</option><option v-for="row in scienceVersions" :key="row.scienceVersionId" :value="row.scienceVersionId">{{ row.name }}</option></select><small v-if="scienceError" class="field-note warn-text">{{ scienceError }}</small></div>
+          <details class="method-note"><summary>起算与状态方式</summary><div class="field"><label for="cal-state-policy">状态计算方式</label><select id="cal-state-policy" class="input" :value="cal.statePolicy" :disabled="cal.running || Boolean(cal.scienceVersionId)" @change="cal.setScienceField('statePolicy', $event.target.value)"><option value="independent-warmup">各评价期或洪水组独立预热</option><option value="continuous-origin">从统一起点连续演算</option></select></div></details>
+          <div v-if="cal.statePolicy === 'continuous-origin'" class="field"><label for="continuous-origin">连续起点</label><input id="continuous-origin" class="input" type="datetime-local" v-model="cal.continuousOrigin" :disabled="cal.running" step="3600" /></div>
           <div v-if="calMode === 'event' && !cal.scienceVersionId" class="field"><label for="cal-pet-mode">场次蒸散发</label><select id="cal-pet-mode" class="input" :value="cal.evaporationMode" :disabled="cal.running" @change="cal.setScienceField('evaporationMode', $event.target.value)"><option value="constant-zero">0 mm/h · 明确假设</option><option value="monthly-climatology-assumption">逐月给定值 · 非实测</option></select></div>
         </template>
 
@@ -74,7 +81,6 @@
             <div><span>验证</span><b>{{ validationEvents.length }} 场</b></div>
             <div><span>独立检验</span><b>{{ independentEvents.length }} 场</b></div>
           </div>
-          <p class="section-note">先在下方洪水台账设置用途，再执行率定。</p>
           <div v-if="app.backendCase" class="physical-group-note" :class="{ warn: physicalGrouping.conflicts.length }" aria-label="物理洪水分组检查"><b>{{ physicalGrouping.groupCount }} 个物理洪水组 · {{ physicalGrouping.uniqueHours }} 个唯一小时</b><span>率定 {{ physicalGrouping.counts.calibration }} 组 · 验证 {{ physicalGrouping.counts.validation }} 组 · 独检 {{ physicalGrouping.counts.independentTest }} 组</span><p v-if="physicalGrouping.conflicts.length" role="status">{{ physicalConflict }}</p><small v-else>目标按组等权，重叠小时只评价一次。</small></div>
           <div class="field">
             <label for="cal-event">当前过程</label>
@@ -98,7 +104,6 @@
             <div class="field"><label for="ind-start">独立检验开始（可选）</label><input id="ind-start" class="input" type="datetime-local" :value="cal.independentStart" @change="cal.setPeriod('independentStart', $event.target.value)" /></div>
             <div class="field"><label for="ind-end">独立检验结束</label><input id="ind-end" class="input" type="datetime-local" :value="cal.independentEnd" @change="cal.setPeriod('independentEnd', $event.target.value)" /></div>
           </div>
-          <p class="section-note">各时段独立预热，预热段不参与评价；仅率定期参与参数寻优。</p>
         </template>
 
         <div v-if="showLakeBalance" class="lake-balance">
@@ -112,7 +117,9 @@
           <p>用于检验入湖水量与湖位变化是否协调。</p>
         </div>
 
-        <div class="form-group-title">拟合评价</div>
+        </div>
+        <div v-show="workflowStep === 'conditions' || !app.backendCase">
+        <details :open="!cal.fixedEventSimulation" class="evaluation-settings"><summary>{{ cal.fixedEventSimulation ? '评价指标' : '率定目标' }}</summary>
         <div class="objective-list">
           <label class="objective-row"><span><input type="checkbox" :checked="cal.criteria.metrics.nse" @change="cal.setObjectiveMetric('nse', $event.target.checked)" /> 纳什效率系数（NSE）</span><span>权重 <input :value="cal.criteria.weights.nse" type="number" min="0" max="1" step="0.05" @change="cal.setObjectiveWeight('nse', $event.target.value)" /></span></label>
           <label v-if="app.backendCase" class="objective-row"><span><input type="checkbox" :checked="cal.criteria.metrics.kge" @change="cal.setObjectiveMetric('kge', $event.target.checked)" /> Kling–Gupta 效率（KGE）</span><span>权重 <input :value="cal.criteria.weights.kge" type="number" min="0" max="1" step="0.05" @change="cal.setObjectiveWeight('kge', $event.target.value)" /></span></label>
@@ -120,13 +127,15 @@
           <label class="objective-row"><span><input type="checkbox" :checked="cal.criteria.metrics.time" @change="cal.setObjectiveMetric('time', $event.target.checked)" /> 峰现时间误差</span><span>权重 <input :value="cal.criteria.weights.time" type="number" min="0" max="1" step="0.05" @change="cal.setObjectiveWeight('time', $event.target.value)" /></span></label>
           <label class="objective-row"><span><input type="checkbox" :checked="cal.criteria.metrics.volume" @change="cal.setObjectiveMetric('volume', $event.target.checked)" /> {{ cal.criteria.waterBalanceMetric === 'PBIAS' ? '水量偏差（PBIAS）' : '水量相对误差' }}</span><span>权重 <input :value="cal.criteria.weights.volume" type="number" min="0" max="1" step="0.05" @change="cal.setObjectiveWeight('volume', $event.target.value)" /></span></label>
         </div>
-        <p class="weight-status" :class="{ warn: !objectiveWeightValid }">已选指标权重合计 {{ objectiveWeightTotal.toFixed(2) }}，应为 1.00。</p>
+        <p v-if="!objectiveWeightValid" class="weight-status warn">权重合计 {{ objectiveWeightTotal.toFixed(2) }}，请调整为 1.00。</p>
         <div class="threshold-grid">
           <div class="field"><label for="peak-tolerance">洪峰误差阈值</label><input id="peak-tolerance" class="input" type="number" :value="cal.criteria.tolerances.peakPercent" @change="cal.setObjectiveTolerance('peakPercent', $event.target.value)" /></div>
           <div class="field"><label for="time-tolerance">峰现误差阈值</label><input id="time-tolerance" class="input" type="number" :value="cal.criteria.tolerances.peakTimeHours" @change="cal.setObjectiveTolerance('peakTimeHours', $event.target.value)" /></div>
         </div>
         <details v-if="app.backendCase && cal.calibrationTarget !== 'routing'" class="method-note"><summary>评价与参数换算</summary>合格率按 NSE≥0.5 统计；物理洪水组内唯一小时计算指标，各组等权。KI/KG 由日退水参数换算。{{ cal.calibrationTarget === 'joint' ? '产流、坡面与河道同时搜索；KC/C 按所选联合预设。' : 'KC、C 与河网参数固定。' }}</details>
+        </details>
 
+        <template v-if="!cal.fixedEventSimulation">
         <div class="form-group-title">搜索设置</div>
         <div v-if="app.backendCase?.routingSearchParameterDefinitions" class="field">
           <label for="calibration-target">率定参数组</label>
@@ -151,43 +160,56 @@
         </div>
         <p class="method-note">{{ activeAlgorithm?.note }}</p>
         <SearchPlanSummary v-if="app.backendCase" :rows="previewSearchRows" :budget="cal.maxEvaluations" :original-source="cal.sourcePlan?.operation === 'search'" :state-policy="cal.statePolicy" :continuous-origin="cal.continuousOrigin" :required-input="cal.requiredInputBundleVersionId" :actual-warmup-hours="Number(cal.warmupDays) * 24" :pet-label="petLabel" :science="cal.scienceDescriptor" :routing-version="app.selectedRoutingVersionId" :groups="calMode === 'event' ? physicalGrouping : null" />
+        </template>
 
         <div class="action-row">
-          <button class="btn primary" type="button" :disabled="!calculationCanRun" @click="startCalibration">{{ cal.running ? '正在提交' : (app.basinId === 'nananxi-xufan' ? '确认率定任务' : '开始率定') }}</button>
+          <button class="btn primary" type="button" :disabled="cal.fixedEventSimulation ? !manualCanRun : !calculationCanRun" @click="cal.fixedEventSimulation ? startManualTrial() : startCalibration()">{{ cal.running ? '正在计算' : cal.fixedEventSimulation ? '开始场次模拟' : calMode === 'continuous' ? '开始连续自动率定' : '开始场次自动率定' }}</button>
           <button v-if="cal.running" class="btn" type="button" @click="cal.cancelCalibration()">停止任务</button>
           <button v-else class="btn" type="button" @click="cal.resetParams()">恢复参数方案</button>
         </div>
-        <p v-if="!calculationCanRun && !cal.running" class="run-message warn">{{ calculationBlockReason }}</p>
+        <p v-if="!calculationCanRun && !cal.running && !cal.fixedEventSimulation" class="run-message warn">{{ calculationBlockReason }}</p>
         <p v-if="requestStatus" class="run-message request-status">{{ requestStatus }}</p>
+        </div>
+        <button v-if="app.backendCase && workflowStep === 'scheme'" class="btn primary" type="button" @click="workflowStep = 'conditions'">下一步：计算条件</button>
         </template>
 
         <template v-else>
+          <div v-show="workflowStep === 'scheme' || !app.backendCase">
           <div class="form-group-title">资料与对象</div>
           <div class="data-list">
             <div><span>输入资料</span><b>{{ activeDataset.hydrology }}</b></div>
             <div><span>降水驱动</span><b>{{ activeDataset.precipitation }}</b></div>
-            <div><span>蒸散发</span><b>{{ app.backendCase ? '逐月蒸散发假设 · 非实测' : app.basinId === 'nananxi-xufan' ? '连续资料待补充' : '随资料目录读取' }}</b></div>
+            <div><span>蒸散发</span><b>{{ app.backendCase ? petLabel : app.basinId === 'nananxi-xufan' ? '连续资料待补充' : '随资料目录读取' }}</b></div>
           </div>
           <div class="field"><label for="simulation-section">模拟对象</label><select id="simulation-section" class="input" :value="cal.section" @change="cal.setSection($event.target.value)"><option v-for="name in calSections" :key="name" :value="name">{{ name }}</option></select></div>
           <div class="field"><label for="simulation-start">开始时间</label><input id="simulation-start" class="input" type="datetime-local" step="3600" :value="cal.simulationStart" @change="cal.setSimulationField('simulationStart', $event.target.value)" /></div>
           <div class="field"><label for="simulation-end">结束时间</label><input id="simulation-end" class="input" type="datetime-local" step="3600" :value="cal.simulationEnd" @change="cal.setSimulationField('simulationEnd', $event.target.value)" /></div>
-          <div class="field"><label for="simulation-warmup">预热期（天）</label><input id="simulation-warmup" class="input" type="number" min="1" :value="cal.warmupDays" :disabled="Boolean(cal.scienceVersionId)" @change="cal.setSimulationField('warmupDays', $event.target.value)" /></div>
-          <div class="field"><label for="simulation-state">初始状态版本</label><input id="simulation-state" class="input" :value="cal.initialStateVersionId" @change="cal.setSimulationField('initialStateVersionId', $event.target.value)" /></div>
-          <div class="field"><label for="simulation-step">输出时间步长</label><select id="simulation-step" class="input" :value="cal.outputStepHours" @change="cal.setSimulationField('outputStepHours', $event.target.value)"><option :value="1">1小时</option><option v-if="!app.backendCase" :value="3">3小时</option><option v-if="!app.backendCase" :value="6">6小时</option></select></div>
-          <div v-if="cal.visibleSimulationResult" class="simulation-result-card">
-            <span>末时刻状态版本</span><b>{{ cal.visibleSimulationResult.endStateVersionId }}</b>
-            <small>{{ cal.visibleSimulationResult.completedAt }} · 可作为下一时段起算状态</small>
-            <small v-if="cal.visibleSimulationResult.isCurrent === false">条件已修改：此状态和结果对应上次冻结请求，不是当前方案。</small>
-            <small v-if="cal.visibleSimulationResult.resultSource === 'model-backend'">计算资料：{{ frozenInputBundleVersionId(cal.visibleSimulationResult) }}</small>
-            <button class="btn" type="button" @click="saveSimulationState">保存为起算状态</button>
+          <div v-if="!cal.initialStateVersionId && !cal.continuousOrigin" class="field"><label for="simulation-warmup">预热期（天）</label><input id="simulation-warmup" class="input" type="number" min="0" step="any" :value="cal.warmupDays" :disabled="Boolean(cal.scienceVersionId)" @change="cal.setSimulationField('warmupDays', $event.target.value)" /></div>
+          <div v-else-if="!cal.initialStateVersionId" class="field"><label for="simulation-origin">连续起点</label><input id="simulation-origin" class="input" type="datetime-local" step="3600" :value="cal.continuousOrigin" @change="cal.setScienceField('continuousOrigin', $event.target.value)" /></div>
+          <button v-if="app.backendCase" class="btn primary" type="button" @click="workflowStep = 'conditions'">下一步：计算条件</button>
           </div>
-          <div class="action-row">
-            <button class="btn primary" type="button" :disabled="!calculationCanRun" @click="startSimulation">{{ cal.running ? '正在提交' : (app.basinId === 'nananxi-xufan' ? '确认模拟任务' : '开始连续模拟') }}</button>
+          <div v-show="workflowStep === 'conditions' || !app.backendCase">
+          <div class="field"><label for="simulation-parameters">参数方案</label><select id="simulation-parameters" class="input" :value="cal.paramVersion" :disabled="cal.running || parameterLoading" @change="applyParameterVersion($event.target.value)"><option v-for="version in versionOptions" :key="version" :value="version">{{ parameterVersionLabel(version) }}</option></select></div>
+          <details><summary>起算与输出条件</summary><div class="field"><label for="simulation-state">起算检查点</label><input id="simulation-state" class="input" :value="cal.initialStateVersionId" @change="cal.setSimulationField('initialStateVersionId', $event.target.value)" /></div>
+          <div class="field"><label for="simulation-step">输出时间步长</label><select id="simulation-step" class="input" :value="cal.outputStepHours" @change="cal.setSimulationField('outputStepHours', $event.target.value)"><option :value="1">1小时</option><option v-if="!app.backendCase" :value="3">3小时</option><option v-if="!app.backendCase" :value="6">6小时</option></select></div></details>
+          </div>
+          <div v-if="cal.visibleSimulationResult" v-show="workflowStep === 'results' || !app.backendCase" class="simulation-result-card">
+            <span>模拟末状态</span><b>{{ cal.visibleSimulationResult.stateTime || cal.visibleSimulationResult.endTime }}</b>
+            <small v-if="cal.visibleSimulationResult.isCurrent === false">计算条件已变更</small>
+            <details><summary>状态来源</summary><small>{{ cal.visibleSimulationResult.endStateVersionId }}</small><small>{{ cal.visibleSimulationResult.completedAt }}</small></details>
+            <button class="btn" type="button" @click="saveSimulationState">{{ cal.visibleSimulationResult.resultSource === 'model-backend' ? '查看模拟状态' : '保存为起算状态' }}</button>
+          </div>
+          <div v-show="workflowStep === 'conditions' || !app.backendCase" class="action-row">
+            <button class="btn primary" type="button" :disabled="!calculationCanRun" @click="startSimulation">{{ cal.running ? '正在提交' : '开始连续模拟' }}</button>
             <button v-if="cal.running" class="btn" type="button" @click="cal.cancelCalibration()">停止任务</button>
           </div>
-          <p v-if="!calculationCanRun && !cal.running" class="run-message warn">{{ calculationBlockReason }}</p>
+          <p v-if="!calculationCanRun && !cal.running && (workflowStep === 'conditions' || !app.backendCase)" class="run-message warn">{{ calculationBlockReason }}</p>
         </template>
         <TaskStatusPanel :task="activeTask" />
+        <SearchProgress :optimizer="cal.running ? null : matchingCalibrationResult?.optimizer" :progress="activeTask?.searchProgress" />
+        <TaskStatusPanel v-if="bestStateTask" :task="bestStateTask" />
+        <button v-if="workMode === 'calibration' && workflowStep === 'results' && cal.runResult?.bestParameters && !cal.fixedEventSimulation" class="btn primary" :disabled="cal.running" @click="useBestSimulation">采用最佳参数进行模拟</button>
+        <button v-if="workMode === 'calibration' && workflowStep === 'results' && cal.runResult?.stateCalculation?.endStateVersionId" class="btn" @click="openBestState">查看最佳参数模拟状态</button>
         <p class="run-message" :class="{ warn: cal.runStatus === 'invalid' }" aria-live="polite">{{ cal.runMessage }}</p>
       </aside>
 
@@ -215,11 +237,11 @@
             <label><input type="checkbox" v-model="componentVisibility.glacier" /> 冰川融水</label>
             <label><input type="checkbox" v-model="componentVisibility.baseflow" /> 地下径流</label>
           </div>
-          <p v-if="isModelInputWorkspace && isNananxiHistory" class="input-quality-note" :class="{ warn: inputProcessError || eventQuality?.model_input_ready === false }" aria-live="polite">
+          <p v-if="isModelInputWorkspace && isNananxiHistory && !backendHydrograph" class="input-quality-note" :class="{ warn: inputProcessError || eventQuality?.model_input_ready === false }" aria-live="polite">
             {{ inputProcessLoading ? '正在核对所选资料版本与洪水场次…' : inputProcessError || eventQualityLabel }}
           </p>
-          <details v-if="backendHydrograph && processResult" class="result-provenance" :class="{ warn: frozenInputBundleVersionId(processResult) !== app.selectedInputBundleVersionId }">
-            <summary>{{ frozenInputBundleVersionId(processResult) === app.selectedInputBundleVersionId ? '计算资料与当前选择一致' : '历史成果 · 计算资料不同于当前选择' }}</summary>
+          <details v-if="backendHydrograph && processResult" class="result-provenance" :class="{ warn: !inputResultUsesSelection(processResult, app) }">
+            <summary>{{ inputResultUsesSelection(processResult, app) ? '计算资料与条件' : '历史成果 · 资料来源不同于当前选择' }}</summary>
             <dl><dt>任务编号</dt><dd>{{ processResult.taskId }}</dd><dt>计算输入</dt><dd>{{ frozenInputBundleVersionId(processResult) }}</dd><dt>当前选择</dt><dd>{{ app.selectedInputBundleVersionId }}</dd></dl>
           </details>
           <div class="hydro">
@@ -247,6 +269,7 @@
 
         <div class="below-grid" :class="{ 'single-result': workMode === 'simulation' || calMode === 'continuous' }">
           <section v-if="workMode === 'calibration' && calMode === 'event'" class="panel events-panel">
+            <details v-if="app.backendCase" class="event-window-editor"><summary>登记或修订洪水窗口</summary><form @submit.prevent="registerSchemeWindow"><label>洪水编号<input class="input" v-model.trim="windowDraft.id" required pattern="[A-Za-z0-9_-]+" /></label><label>开始<input class="input" v-model="windowDraft.start" type="datetime-local" step="3600" required /></label><label>结束<input class="input" v-model="windowDraft.end" type="datetime-local" step="3600" required /></label><button class="btn" :disabled="cal.running">保存到本方案</button></form><p>计算时自动读取雨流资料并检查完整性；已有成果保留原窗口。</p></details>
             <div class="event-panel-head">
               <div>
                 <h2>洪水场次台账</h2>
@@ -400,15 +423,15 @@
         </div>
       </main>
 
-      <aside v-if="workMode === 'calibration'" class="panel panel-pad parameter-panel">
-        <p class="parameter-intro">{{ app.backendCase ? '人工试调 / 自动率定起始参数' : '参数调整后，过程线同步更新。' }}</p>
-        <div v-if="app.backendCase?.manualCalibration" class="manual-trial-actions">
+      <aside class="panel panel-pad parameter-panel">
+        <p class="parameter-intro">{{ app.backendCase ? workMode === 'simulation' || cal.fixedEventSimulation ? '模拟参数' : '率定起始参数' : '参数调整后，过程线同步更新。' }}</p>
+        <div v-if="workMode === 'calibration' && app.backendCase?.manualCalibration && !cal.fixedEventSimulation" class="manual-trial-actions">
           <button class="btn primary block" type="button" :disabled="!manualCanRun" @click="startManualTrial">{{ cal.running ? '正在计算…' : '试算并叠加' }}</button>
           <p v-if="parameterConstraint" role="status">{{ parameterConstraint }}</p>
           <span v-else>固定当前参数计算，保留历次过程线</span>
         </div>
-        <SearchSpaceEditor v-if="app.backendCase?.searchParameterDefinitions" :key="`${cal.calibrationTarget}:${cal.jointProfile}`" :model-value="activeSearchSelection" :definitions="activeSearchDefinitions" :params="activeSearchParameters" :routing="cal.calibrationTarget === 'routing'" :joint="cal.calibrationTarget === 'joint'" :title="cal.calibrationTarget === 'joint' ? '产流搜索参数' : ''" :disabled="cal.running" :error="runoffSearchError" @update:model-value="updateSearchSelection" />
-        <SearchSpaceEditor v-if="cal.calibrationTarget === 'joint'" title="坡面与河道搜索参数" routing joint :model-value="cal.routingSearchParameters" :definitions="jointRoutingDefinitions" :params="routingCoordinates" :disabled="cal.running" :error="routingSearchError" @update:model-value="cal.setRoutingSearchParameters" />
+        <SearchSpaceEditor v-if="workMode === 'calibration' && app.backendCase?.searchParameterDefinitions && !cal.fixedEventSimulation" :key="`${cal.calibrationTarget}:${cal.jointProfile}`" :model-value="activeSearchSelection" :definitions="activeSearchDefinitions" :params="activeSearchParameters" :routing="cal.calibrationTarget === 'routing'" :joint="cal.calibrationTarget === 'joint'" :title="cal.calibrationTarget === 'joint' ? '产流搜索参数' : ''" :disabled="cal.running" :error="runoffSearchError" @update:model-value="updateSearchSelection" />
+        <SearchSpaceEditor v-if="workMode === 'calibration' && cal.calibrationTarget === 'joint' && !cal.fixedEventSimulation" title="坡面与河道搜索参数" routing joint :model-value="cal.routingSearchParameters" :definitions="jointRoutingDefinitions" :params="routingCoordinates" :disabled="cal.running" :error="routingSearchError" @update:model-value="cal.setRoutingSearchParameters" />
         <div v-if="app.hasLakeBalance" class="param-groups" aria-label="参数分组">
           <button v-for="group in parameterGroups" :key="group.key" type="button" :class="{ active: paramGroup === group.key }" @click="paramGroup = group.key">{{ group.label }}</button>
         </div>
@@ -427,6 +450,8 @@
 </template>
 
 <script setup>
+import ModelSchemeBar from '@/components/model/ModelSchemeBar.vue'
+import { saveModelScheme, prepareSchemeInputs } from '@/services/modelSchemeService'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -464,14 +489,16 @@ import {
   reviewSimulationParameter
 } from '@/services/parameterLibraryService'
 import TaskStatusPanel from '@/components/tasks/TaskStatusPanel.vue'
+import SearchProgress from '@/components/params/SearchProgress.vue'
 import ContextStatusMetric from '@/components/common/ContextStatusMetric.vue'
 import { projectDataForContext } from '@/services/caseAvailabilityService'
 import { finiteInputValue, loadModelInputCatalog, loadModelInputEvent, usesModelInputService } from '@/services/modelInputService'
 import { observedModelProcess, modelEventStatistics } from '@/services/modelInputPresentation'
-import { frozenInputBundleVersionId } from '@/services/inputProductService'
+import { frozenInputBundleVersionId, inputResultUsesSelection } from '@/services/inputProductService'
 import { hydrologyText, hydrologyNumber, parameterSchemeLabel } from '@/services/hydrologyPresentation'
 import { trialConditions, changedParameters, TRIAL_COLORS } from '@/services/manualCalibrationService'
-import { modelApi, loadScienceVersions } from '@/services/modelBackendService'
+import { modelApi, loadScienceVersions, normalizeBackendTask } from '@/services/modelBackendService'
+import { simulationDraft } from '@/services/resultSimulationService'
 import { currentInputFloodEvents } from '@/services/backendEventCatalogService'
 
 const cal = useCalibrationStore()
@@ -563,7 +590,7 @@ async function replayOriginalPlan() {
 }
 const petLabel = computed(() => cal.scienceVersionId
   ? `${cal.scienceDescriptor?.name || '登记科学配置'} · ${cal.scienceDescriptor?.petMode === 'CONSTANT_ZERO_EXPLICIT_REQUEST' ? '0 mm/h' : '版本 PET'}`
-  : cal.calibrationMode === 'event' && cal.evaporationMode !== 'monthly-climatology-assumption' ? '0 mm/h · 明确假设' : '逐月给定值 · 非实测')
+  : workMode.value === 'calibration' && cal.calibrationMode === 'event' && cal.evaporationMode !== 'monthly-climatology-assumption' ? '0 mm/h · 明确假设' : '逐月给定值 · 非实测')
 const routingCoordinates = computed(() => routingSearchCoordinates(routingRecord.value?.parameters))
 const jointProfiles = computed(() => app.backendCase?.jointSearchProfiles || [
   { id: 'reference-16', label: '原范围 16 变量 · KC/C 可变' },
@@ -618,8 +645,22 @@ const parameterConstraint = computed(() => {
 })
 const manualCanRun = computed(() => app.backendCase?.manualCalibration && !cal.running && !parameterLoading.value && !cal.sourcePlan && !routingReferenceWarning.value && !parameterConstraint.value
   && (cal.calibrationMode !== 'event' || !physicalConflict.value) && !(cal.scienceVersionId && (scienceError.value || scienceLoading.value))
-  && cal.executionAvailability.ready && cal.validateCalibration().errors.every(error => error.includes('次评价')))
+  && cal.executionAvailability.ready && cal.validateCalibration({ manual: true }).errors.every(error => error.includes('次评价')))
 const calMode = ref(cal.calibrationMode)
+const workflowStep = ref('scheme'), schemeBar = ref(null), preparationIssues = ref([])
+const windowDraft = reactive({ id: '', start: '', end: '' })
+function restoreSchemeView() { calMode.value = cal.calibrationMode; workMode.value = cal.operationMode; workflowStep.value = 'scheme'; preparationIssues.value = []; requestStatus.value = '' }
+function registerSchemeWindow() {
+  if (!windowDraft.id || windowDraft.start >= windowDraft.end) return ElMessage.warning('请填写洪水编号及有效起止时段。')
+  const existing = cal.schemeWindows.find(row => row.id === windowDraft.id && row.sourceBundleVersionId === app.selectedInputBundleVersionId)
+  const row = { ...existing, ...windowDraft, sourceBundleVersionId: app.selectedInputBundleVersionId, eventId: windowDraft.id, name: windowDraft.id, purpose: existing?.purpose || '未使用', status: 'active', runtimeRegistered: false, registeredStatus: null, revision: (existing?.revision || 0) + 1 }
+  if (existing) Object.assign(existing, row); else cal.schemeWindows.push(row)
+  cal.saveCurrentWorkspace(); ElMessage.success('洪水窗口已保存到方案，计算时自动检查资料。')
+}
+function excludePreparationIssues() { cal.setEventPurposes(preparationIssues.value.map(row => ({ id: row.eventId, purpose: '未使用' }))); preparationIssues.value = []; workflowStep.value = 'scheme' }
+async function saveSchemeDraft() {
+  try { if (!cal.modelSchemeName?.trim()) throw new Error('请先为方案命名。'); const request = buildCalibrationRequest({ app, calibration: cal, operationMode: workMode.value, events: registeredRuntimeEvents.value }); await saveModelScheme(cal, request); await schemeBar.value?.refresh(); ElMessage.success('方案已保存，历史计算条件保持原样。') } catch (error) { ElMessage.warning(error.message) }
+}
 const workMode = ref(cal.operationMode || 'calibration')
 const calculationHandoff = computed(() => app.workContext.handoff?.targetPage === 'calibration' ? app.workContext.handoff : null)
 const chartMode = ref('process')
@@ -651,6 +692,22 @@ const registeredParameterVersionId = ref(null)
 let historicalEventRequestId = 0
 let observationCatalogRequestId = 0
 const activeTask = computed(() => cal.activeTaskId ? tasks.taskById(cal.activeTaskId) : null)
+const bestStateTask = computed(() => cal.runResult?.stateCalculationTaskId ? tasks.taskById(cal.runResult.stateCalculationTaskId) : null)
+async function useBestSimulation() {
+  try {
+    const result = cal.runResult
+    const request = simulationDraft(result.frozenRequest || activeTask.value?.request, result, bestStateTask.value?.request)
+    request.inputs.bundleVersionId = request.inputs.sourceBundleVersionId || app.selectedInputBundleVersionId
+    cal.loadFromTaskConfig(request.runType === 'simulation' ? 'continuousSimulation' : 'eventSimulation', normalizeBackendTask({ runConfig: request }).runConfig)
+    if (request.routing?.versionId) app.updateWorkContext({ selectedRoutingVersionId: request.routing.versionId })
+    workMode.value = cal.operationMode
+    workflowStep.value = 'conditions'
+  } catch (failure) { ElMessage.error(failure.message) }
+}
+function openBestState() {
+  app.prepareHandoff('state', { sourcePage: 'calibration', sourceLabel: '最佳参数连续模拟', stateVersionId: cal.runResult.stateCalculation.endStateVersionId, sourceTaskId: cal.runResult.stateCalculationTaskId })
+  router.push('/state')
+}
 const caseData = computed(() => projectDataForContext(app.activeContext, app.projectData, { loading: app.projectDataLoading, error: app.projectDataError }))
 const isModelInputWorkspace = computed(() => usesModelInputService(app.activeContext))
 const eventQualityLabel = computed(() => {
@@ -690,7 +747,7 @@ const calculationCanRun = computed(() => {
   if (cal.running || !cal.executionAvailability.ready || !cal.sectionId) return false
   if (parameterLoading.value || (cal.requiredInputBundleVersionId && app.selectedInputBundleVersionId !== cal.requiredInputBundleVersionId)) return false
   if (['queued', 'running', 'cancelling'].includes(activeTask.value?.status)) return false
-  if (workMode.value === 'calibration' && (searchError.value || parameterConstraint.value)) return false
+  if (parameterConstraint.value || (workMode.value === 'calibration' && searchError.value)) return false
   if (workMode.value === 'calibration' && calMode.value === 'event' && (physicalConflict.value || physicalGrouping.value.errors.length)) return false
   if (workMode.value === 'calibration' && !objectiveWeightValid.value) return false
   if (workMode.value === 'calibration' && calMode.value === 'event') return calibrationEvents.value.length > 0 && validationEvents.value.length > 0
@@ -701,7 +758,8 @@ const calculationBlockReason = computed(() => {
   if (!cal.executionAvailability.ready) return cal.executionAvailability.reason
   if (parameterLoading.value) return '正在核对候选所需资料版本'
   if (cal.requiredInputBundleVersionId && app.selectedInputBundleVersionId !== cal.requiredInputBundleVersionId) return `当前候选要求资料 ${cal.requiredInputBundleVersionId}，请重新选择该候选`
-  if (workMode.value === 'calibration' && (parameterConstraint.value || searchError.value)) return parameterConstraint.value || searchError.value
+  if (parameterConstraint.value) return parameterConstraint.value
+  if (workMode.value === 'calibration' && searchError.value) return searchError.value
   if (workMode.value === 'calibration' && calMode.value === 'event' && (physicalConflict.value || physicalGrouping.value.errors.length)) return physicalConflict.value || physicalGrouping.value.errors[0]
   if (workMode.value === 'calibration' && !objectiveWeightValid.value) return '已选评价指标的权重合计需为 1.00。'
   if (workMode.value === 'calibration' && calMode.value === 'event' && (!calibrationEvents.value.length || !validationEvents.value.length)) return '请至少各登记一场率定洪水和验证洪水。'
@@ -732,7 +790,7 @@ const fixtureAlgorithms = [
 
 const algorithms = computed(() => isModelInputWorkspace.value ? app.backendCase?.algorithms || [] : fixtureAlgorithms)
 const activeDataset = computed(() => isModelInputWorkspace.value
-  ? { hydrology: app.modelScale === '1km' ? '徐畈控制断面 · 整编逐时流量' : '该尺度不提供本次计算', precipitation: app.modelScale === '1km' ? hydrologyText(app.selectedInputProduct?.name || '徐畈控制区 · 登记网格雨量') : '该尺度不提供本次计算' }
+  ? { hydrology: app.modelScale === '1km' ? '徐畈控制断面 · 整编逐时流量' : '该尺度不提供本次计算', precipitation: app.modelScale === '1km' ? cal.rainfallMethod === 'stationIdw' ? '站点雨量 · 自动插值' : hydrologyText(app.selectedInputProduct?.name || '徐畈控制区 · 登记网格雨量') : '该尺度不提供本次计算' }
   : app.hasLakeBalance
   ? { hydrology: '逐时入湖断面流量与湖位资料', precipitation: app.activeModelScheme.forcing?.name || '逐时降水资料' }
   : {
@@ -765,13 +823,13 @@ const shownParamDefs = computed(() => {
   const group = parameterGroups.find((item) => item.key === paramGroup.value)
   return group ? activeParamDefs.value.filter((item) => group.keys.includes(item.key)) : activeParamDefs.value
 })
-const activeEvents = computed(() => currentInputFloodEvents(cal.events, { registeredOnly: isModelInputWorkspace.value,
-  selectedBundleVersionId: app.selectedInputBundleVersionId, registeredBundleVersionId: cal.backendInputBundleVersionId }))
+const activeEvents = computed(() => cal.schemeEvents)
 const retainedInputEvents = computed(() => isModelInputWorkspace.value ? cal.events.filter(event => event.runtimeRegistered !== true) : [])
 const eventYears = computed(() => [...new Set(activeEvents.value.map((event) => dayjs(event.start).year()))].sort((a, b) => b - a))
-const registeredRuntimeEvents = computed(() => isModelInputWorkspace.value ? activeEvents.value.filter((event) => event.runtimeRegistered === true) : activeEvents.value)
-const eligibleEvents = computed(() => selectCalibrationCandidates(registeredRuntimeEvents.value, { method: 'all-valid' }))
+const registeredRuntimeEvents = computed(() => activeEvents.value)
+const eligibleEvents = computed(() => registeredRuntimeEvents.value.filter(row => row.status !== 'inactive' && row.status !== 'draft'))
 const candidateEvents = computed(() => selectCalibrationCandidates(registeredRuntimeEvents.value, {
+  allowUnprepared: true,
   method: eventSelectionMethod.value,
   topN: eventTopN.value,
   peakThreshold: eventPeakThreshold.value,
@@ -1109,8 +1167,7 @@ function formatEventPeriod(event) {
 }
 
 function compactEventName(event) {
-  if (event.sourceFloodNo) return String(event.sourceFloodNo)
-  return dayjs(event.start).format('YYYYMMDD')
+  return String(event.sourceFloodNo || event.eventId || event.id || dayjs(event.start).format('YYYYMMDD'))
 }
 
 function floodDisplayName(event) {
@@ -1245,6 +1302,13 @@ function setWorkMode(mode) {
   workMode.value = mode
   cal.setOperationMode(mode)
 }
+function chooseOperation(mode) {
+  cal.fixedEventSimulation = mode === 'eventSimulation'
+  if (!cal.fixedEventSimulation && !algorithms.value.some(row => row.id === cal.algorithm)) cal.algorithm = algorithms.value[0]?.id || cal.algorithm
+  calMode.value = mode === 'continuous' ? 'continuous' : 'event'
+  setWorkMode('calibration')
+  cal.saveCurrentWorkspace()
+}
 
 async function startCalibration() {
   if (!calculationCanRun.value) {
@@ -1277,7 +1341,7 @@ async function startSimulation() {
     ElMessage.warning(result.errors.join('；'))
     return
   }
-  ElMessage.success(`连续模拟完成，末状态 ${result.result.endStateVersionId}`)
+  ElMessage.success('连续模拟完成。')
 }
 
 async function startManualTrial() {
@@ -1306,6 +1370,7 @@ async function prepareBackendTask(operationMode, manual = false) {
   }) } catch (error) { ElMessage.warning(error.message); return }
   if (manual) {
     request.calibration.evaluationMode = 'manual'
+    if (cal.fixedEventSimulation) request.calibration.simulationOnly = true
     delete request.calibration.searchParameters
     delete request.calibration.routingSearchParameters
     delete request.calibration.target
@@ -1316,18 +1381,33 @@ async function prepareBackendTask(operationMode, manual = false) {
   const requestedInputKey = app.inputSelectionKey
   requestStatus.value = ''
   try {
+    if (!cal.modelSchemeName?.trim()) throw new Error('请先在页面上方为方案命名。')
+    const scheme = await saveModelScheme(cal, request)
+    await schemeBar.value?.refresh()
+    request.scheme = { id: scheme.id, revision: scheme.revision }
+    requestStatus.value = '正在自动检查并准备计算资料…'
+    const prepared = await prepareSchemeInputs(request, cal.rainfallMethod, row => { requestStatus.value = `${row.stageLabel} · ${Math.round(row.progress || 0)}%` })
+    if (app.contextKey !== requestedContextKey || app.inputSelectionKey !== requestedInputKey) throw new Error('工作区或资料来源已切换，请在原方案重新计算。')
+    preparationIssues.value = prepared.issues || []
+    if (preparationIssues.value.length) { workflowStep.value = 'scheme'; throw new Error('资料检查有待处理项，请核对页面上方汇总。') }
+    request.inputs.bundleVersionId = prepared.bundleVersionId
+    request.lineage.inputBundleVersionId = prepared.bundleVersionId
+    request.inputs.sourceBundleVersionId = scheme.definition.inputs.bundleVersionId
+    request.inputs.preparationTaskId = prepared.taskId
+    request.inputs.rainfallMethod = cal.rainfallMethod
+    workflowStep.value = 'results'
     const outcome = await cal.runBackendRequest(request)
-    if (app.contextKey !== requestedContextKey || app.inputSelectionKey !== requestedInputKey) return
+    if (app.contextKey !== requestedContextKey) return
     if (!outcome.ok) throw new Error(outcome.errors.join('；'))
     registeredParameterVersionId.value = outcome.result.parameterVersionId || null
-    requestStatus.value = `任务 ${outcome.task.taskId} 已完成。`
+    requestStatus.value = '计算完成'
     ElMessage.success('计算完成')
   } catch (error) {
     if (app.contextKey !== requestedContextKey || app.inputSelectionKey !== requestedInputKey) return
     requestStatus.value = error?.message || String(error)
     ElMessage.error(requestStatus.value)
   } finally {
-    if (cal.contextKey === requestedContextKey) cal.running = false
+    if (cal.contextKey === requestedContextKey) { cal.running = false; cal.saveCurrentWorkspace() }
   }
 }
 
@@ -1390,19 +1470,23 @@ function saveSimulationState() {
   app.setStateVersion(saved.id)
   app.prepareHandoff('state', {
     sourcePage: 'calibration',
-    sourceLabel: `连续模拟 ${result.taskId}`,
+    sourceLabel: cal.modelSchemeName || '连续模拟',
     issueTime: saved.time,
     inputBundleVersionId: saved.inputBundleVersionId,
     parameterVersionId: saved.parameterVersionId,
     stateVersionId: saved.id,
     sourceTaskId: result.taskId
   })
-  ElMessage.success(`末状态已保存：${saved.id}`)
+  if (result.resultSource !== 'model-backend') ElMessage.success('末状态已保存。')
   router.push('/state')
 }
 </script>
 
 <style scoped>
+.evaluation-settings{margin-bottom:16px}.evaluation-settings>summary{cursor:pointer;color:#315e60;font-size:13px;font-weight:600;padding:8px 0}
+.stage-scheme .calibration-layout,.stage-results .calibration-layout{grid-template-columns:minmax(260px,320px) minmax(0,1fr)}.stage-conditions .calibration-layout{grid-template-columns:minmax(300px,1fr) minmax(300px,1fr)}
+@media(max-width:900px){.stage-scheme .calibration-layout,.stage-results .calibration-layout,.stage-conditions .calibration-layout{grid-template-columns:1fr}}
+.workflow-steps{display:flex;gap:0;margin:16px 0;border-bottom:1px solid #cfddd5}.workflow-steps button{border:0;background:none;padding:12px 20px;color:#65786d;font:inherit;cursor:pointer}.workflow-steps .active{color:#18674e;border-bottom:3px solid #248765}.preparation-issues{padding:18px;background:#fff7ed;border:1px solid #dbc6a3;font-size:13px}.preparation-issues small{display:block;margin-top:6px}.event-window-editor{padding:14px;font-size:12px}.event-window-editor form{display:flex;gap:8px;flex-wrap:wrap;align-items:end}.event-window-editor label{display:grid;gap:5px}.stage-scheme .process-panel,.stage-scheme .result-panel,.stage-scheme .parameter-panel,.stage-conditions .process-panel,.stage-conditions .events-panel,.stage-conditions .result-panel,.stage-results .events-panel,.stage-results .parameter-panel{display:none}.stage-results .setting-panel>h2{display:none}.stage-results .body{grid-template-columns:280px minmax(0,1fr)}.stage-conditions .analysis-column{display:none}.stage-conditions .body{grid-template-columns:minmax(300px,1fr) minmax(300px,1fr)}.stage-scheme .below-grid{grid-template-columns:1fr}.stage-results .below-grid{grid-template-columns:1fr}@media(max-width:900px){.stage-results .body,.stage-conditions .body{grid-template-columns:1fr}}
 .manual-trial-actions { padding: 12px; margin-bottom: 12px; border: 1px solid #bad7d6; border-radius: 8px; background: #f1f8f7; }
 .manual-trial-actions button { width: 100%; }
 .manual-trial-actions span, .manual-trial-actions p { display: block; margin: 7px 0 0; color: #426c70; font-size: 11px; }
@@ -1415,11 +1499,12 @@ function saveSimulationState() {
 .trial-change { flex: 1 1 130px; min-width: 0; overflow-wrap: anywhere; color: #586f7a; font-variant-numeric: tabular-nums; }
 .trial-score { font-variant-numeric: tabular-nums; color: #176c75; }
 .view-cal {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   min-height: 100%;
 }
+.view-cal > * { flex-shrink: 0; }
 
 .continuous-process-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
 .continuous-process-tabs button { padding: 7px 18px; border: 1px solid #cfdddf; background: #f5f9fa; color: #526b77; font: inherit; cursor: pointer; }

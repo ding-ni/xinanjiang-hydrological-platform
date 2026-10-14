@@ -38,6 +38,7 @@ def run_search(specs, config, initial, evaluate, candidate_params, resolved, sea
         best = candidate_params(copy.deepcopy(initial), outcome['best_parameters'])
         valid = sum(row.get('loss') is not None and math.isfinite(row['loss']) for row in outcome['history'])
         return best, {**outcome, 'strategy': 'joint', 'evaluations': completed,
+                      'terminationReason': 'BUDGET_EXHAUSTED' if completed >= total else 'SEARCH_SPACE_EXHAUSTED',
                       'validEvaluations': valid, 'invalidEvaluations': completed - valid,
                       'baselineReevaluated': False, 'initializationPolicy': 'SOURCE_INITIAL_CANDIDATES',
                       'consumedConfiguration': consumed,
@@ -52,6 +53,7 @@ def run_search(specs, config, initial, evaluate, candidate_params, resolved, sea
             raise ValueError('当前参数未得到有效评价值')
         progress(80, '人工试调 · 当前参数计算完成')
         return best, {'algorithm': 'FIXED_PARAMETERS', 'strategy': 'manual',
+                      'terminationReason': 'FIXED_PARAMETERS_EVALUATED',
                       'best_parameters': resolved(best), 'best_loss': loss, 'evaluations': 1,
                       'history': [{'evaluation': 1, 'kind': 'manual', 'loss': loss,
                                    'parameters': resolved(best)}], 'stages': []}

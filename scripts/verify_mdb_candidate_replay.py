@@ -13,25 +13,34 @@ from server import TaskManager
 from science_context import model_implementation_identity
 
 
-def verify(output):
+def verify(output, source_runtime=None, isolated_runtime=None, all_events=False):
     import pandas as pd
     import numpy as np
     current = model_implementation_identity()['modelImplementationSHA256']
-    candidates = [read_json(path) for path in (RUNTIME / 'parameters').glob('*.json')]
+    source_root = Path(source_runtime or RUNTIME).resolve()
+    candidates = [read_json(path) for path in (source_root / 'parameters').glob('*.json')]
     candidate = next(row for row in candidates if row.get('candidateKind') == 'frozen-calibration'
                      and row.get('requiredSpatialTargetPolicy') == 'LEGACY_CLOSED_RING_VERTEX_MEAN'
                      and not row.get('requiresInputRegistration')
-                     and row.get('lineage', {}).get('modelImplementationSHA256') == current)
-    manager = TaskManager(RUNTIME / 'tasks')
+                     and (not all_events or row.get('originalCalibrationPlan'))
+                     and (isolated_runtime or row.get('lineage', {}).get('modelImplementationSHA256') == current))
+    runtime = Path(isolated_runtime).resolve() if isolated_runtime else RUNTIME
+    if isolated_runtime:
+        import shutil
+        if runtime.exists(): raise ValueError('隔离重放目录须为新目录')
+        runtime.mkdir(parents=True)
+        for part in ('inputs', 'input-tasks', 'routing-versions', 'science-versions', 'parameters'):
+            if (source_root / part).exists(): shutil.copytree(source_root / part, runtime / part)
+    manager = TaskManager(runtime / 'tasks')
     try:
         bundle = manager.products.resolve(candidate['requiredInputBundleVersionId'])
         catalog = case_catalog(bundle)['cases']['nananxi-xufan:1km']
-        selected = [dict(row) for row in catalog['events'] if row['id'] in {'xf-31210811', 'xf-31220317'}]
-        if len(selected) != 2:
+        selected = [dict(row) for row in catalog['events'] if all_events or row['id'] in {'xf-31210811', 'xf-31220317'}]
+        if not selected or not all_events and len(selected) != 2:
             raise ValueError('Required real flood windows are missing')
         selected.sort(key=lambda row: row['start'])
-        for row, purpose in zip(selected, ('率定', '验证')):
-            row['purpose'] = purpose
+        for index, row in enumerate(selected):
+            row['purpose'] = '率定' if index == 0 else '验证'
         request = {'runType': 'calibration', 'context': candidate['context'],
                    'inputs': {'bundleVersionId': bundle['bundleVersionId'], 'evaporation': {'mode': 'science-version'}},
                    'routing': {'versionId': candidate['routingCandidate']['routingVersionId']},
@@ -42,8 +51,12 @@ def verify(output):
                                    'statePolicy': candidate['statePolicy'], 'continuousOrigin': candidate['continuousOrigin'],
                                    'optimizer': {'algorithm': 'FIXED_PARAMETERS', 'maxEvaluations': 1, 'populationSize': 4},
                                    'objectives': {'metrics': {'nse': True}, 'weights': {'nse': 1}}}}
+        if all_events:
+            from original_calibration_plan import build_original_request
+            request = build_original_request(candidate['parameterVersionId'], runtime, 'fixed-replay', manager.products)
+            selected = request['period']['events']
         task = manager.submit(request)
-        deadline = time.monotonic() + 180
+        deadline = time.monotonic() + 600
         while time.monotonic() < deadline:
             status = manager.get(task['taskId'])
             if status['status'] not in {'queued', 'running'}:
@@ -72,7 +85,8 @@ def verify(output):
                   'sourceReferenceComparisons': comparisons, 'productionEligible': False,
                   'maximumAllowedDifferenceM3s': 1e-6,
                   'sourceReferenceMatched': all(row['maxDifferenceFromSourceM3s'] <= 1e-6 for row in comparisons),
-                  'scope': 'REAL_MDB_TWO_WINDOWS_NO_OPTIMIZATION_NOT_NEW_GENERALIZATION_EVIDENCE'}
+                  'eventCount': len(selected), 'modelImplementationSHA256': current,
+                  'scope': 'REAL_MDB_FIXED_PARAMETERS_ALL_REGISTERED_EVENTS' if all_events else 'REAL_MDB_TWO_WINDOWS_NO_OPTIMIZATION_NOT_NEW_GENERALIZATION_EVIDENCE'}
         write_json(Path(output) / 'MDB候选重放.json', report)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report['sourceReferenceMatched'] else 1
@@ -83,5 +97,8 @@ def verify(output):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', default=str(ROOT / '开发产物/后端升级验收_20261012'))
+    parser.add_argument('--source-runtime')
+    parser.add_argument('--isolated-runtime')
+    parser.add_argument('--all-events', action='store_true')
     args = parser.parse_args()
-    raise SystemExit(verify(args.output))
+    raise SystemExit(verify(args.output, args.source_runtime, args.isolated_runtime, args.all_events))

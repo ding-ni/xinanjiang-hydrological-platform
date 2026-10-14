@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { trialConditions } from '@/services/manualCalibrationService'
+import { recoverableCalculation } from '@/services/taskPresentation'
 import { physicalFloodGroups } from '@/services/calibrationSubmissionService'
 import {
   DEFAULT_PARAMS,
@@ -16,7 +17,7 @@ import { registerCalibrationResult, parameterLibraryFor } from '@/services/param
 import { useStateStore } from '@/stores/state'
 import { modelApi, normalizeBackendTask } from '@/services/modelBackendService'
 import { saveBusinessDraft } from '@/services/workspaceService'
-import { mergeBackendFloodEvents, registeredBackendEventSelection } from '@/services/backendEventCatalogService'
+import { mergeBackendFloodEvents, registeredBackendEventSelection, currentInputFloodEvents } from '@/services/backendEventCatalogService'
 import { cloneWorkspaceValue, restoreWorkspaceEventRecords } from '@/services/workspaceSnapshotService'
 import { DEFAULT_INPUT_BUNDLE_VERSION_ID, frozenInputBundleVersionId, inputResultUsesSelection } from '@/services/inputProductService'
 import { visibleWorkspaceResult } from '@/services/savedModelResultService'
@@ -302,6 +303,7 @@ function createWorkspace(context) {
     params,
     baseline: { ...params },
     operationMode: 'calibration',
+    modelSchemeId: null, modelSchemeRevision: 0, modelSchemeLatestRevision: 0, modelSchemeName: '', schemeWindows: [], rainfallMethod: 'reuse', fixedEventSimulation: false, idwPower: null, minimumStations: null, stationSourceId: null,
     simulationStart: isSelinco ? '2026-06-01T00:00' : isNananxi ? '2024-01-01T00:00' : '',
     simulationEnd: isSelinco ? '2026-06-06T00:00' : isNananxi ? '2024-12-31T23:00' : '',
     warmupDays: isSelinco ? 30 : 90,
@@ -323,6 +325,7 @@ function createWorkspace(context) {
 }
 
 const WORKSPACE_FIELDS = [
+  'modelSchemeId', 'modelSchemeRevision', 'modelSchemeLatestRevision', 'modelSchemeName', 'schemeWindows', 'rainfallMethod', 'fixedEventSimulation', 'idwPower', 'minimumStations', 'stationSourceId',
   'domainId',
   'modelScale',
   'modelConfigId',
@@ -478,12 +481,17 @@ export const useCalibrationStore = defineStore('calibration', {
       }
     },
     eventCounts(state) {
-      return state.events.filter((event) => event.status === 'active' && (!state.backendContractVersion || event.runtimeRegistered === true)).reduce((counts, event) => {
+      return this.schemeEvents.filter((event) => event.status === 'active').reduce((counts, event) => {
         if (event.purpose === '率定') counts.calibration += 1
         if (event.purpose === '验证') counts.validation += 1
         if (event.purpose === '独立检验') counts.independent += 1
         return counts
       }, { calibration: 0, validation: 0, independent: 0 })
+    },
+    schemeEvents(state) {
+      return currentInputFloodEvents(state.events, { registeredOnly: Boolean(state.backendContractVersion),
+        selectedBundleVersionId: useAppStore().selectedInputBundleVersionId, registeredBundleVersionId: state.backendInputBundleVersionId,
+        schemeWindows: state.schemeWindows || [] })
     },
     activeEventCount(state) {
       return state.events.filter((event) => event.status !== 'inactive').length
@@ -492,6 +500,7 @@ export const useCalibrationStore = defineStore('calibration', {
       if (state.operationMode === 'simulation') {
         return state.running ? '模拟中' : this.visibleSimulationResult ? '模拟完成' : '待模拟'
       }
+      if (state.fixedEventSimulation) return state.running ? '模拟中' : this.visibleRunResult?.simulationOnly ? '模拟完成' : state.dirty ? '设置已调整' : '待模拟'
       if (state.runStatus === 'complete' && !this.visibleRunResult) return '历史示例已隔离'
       return {
         ready: '待率定',
@@ -577,19 +586,19 @@ export const useCalibrationStore = defineStore('calibration', {
       workspace.runStatus = isCurrent ? 'complete' : 'needs-run'
       if (request.runType === 'simulation') {
         workspace.simulationResult = { ...result, frozenRequest: JSON.parse(JSON.stringify(request)), inputBundleVersionId: frozenInputBundleVersionId(request), completedAt: task.completedAt, startTime: request.period.startTime, endTime: request.period.endTime, isCurrent }
-        workspace.runMessage = `真实连续模拟完成，末状态 ${result.endStateVersionId}；仅供诊断。`
+        workspace.runMessage = '连续模拟完成，流量与状态已保存。'
       } else if (request.runType === 'calibration') {
         if (result.calibrationTarget !== 'routing' && !workspace.trialRecords.some(row => row.taskId === task.taskId)) {
           workspace.trialRecords.push({ taskId: task.taskId, conditions: trialConditions(request, result),
             parameterVersionId: result.parameterVersionId, parameters: { ...result.bestParameters },
             completedAt: task.completedAt, manual: result.evaluationMode === 'manual', visible: true })
         }
-        const version = registerCalibrationResult({ projectData, projectId: request.context.projectId, resolutionId: request.context.resolutionId,
+        const version = result.simulationOnly ? { id: request.calibration.initialParameterVersionId } : registerCalibrationResult({ projectData, projectId: request.context.projectId, resolutionId: request.context.resolutionId,
           activeContext: resolveDomainContext(request.context.projectId, { modelScale: request.context.resolutionId, configId: request.context.modelConfigId }),
           request, result, taskId: task.taskId })
         workspace.runCount += 1
-        workspace.runResult = { ...result, frozenRequest: JSON.parse(JSON.stringify(request)), inputBundleVersionId: frozenInputBundleVersionId(request), metrics: result.hydrograph.metrics, peak: result.hydrograph.peak, peakTime: result.hydrograph.peakTime, score: 0, grade: result.evaluationMode === 'manual' ? '人工试调完成' : '率定完成', completedAt: task.completedAt, isCurrent }
-        if (isCurrent && request.period.mode === 'event' && !result.hydrographs?.[workspace.eventId]) {
+        workspace.runResult = { ...result, frozenRequest: JSON.parse(JSON.stringify(request)), inputBundleVersionId: frozenInputBundleVersionId(request), metrics: result.hydrograph.metrics, peak: result.hydrograph.peak, peakTime: result.hydrograph.peakTime, score: 0, grade: result.simulationOnly ? '场次模拟完成' : result.evaluationMode === 'manual' ? '人工试调完成' : '率定完成', completedAt: task.completedAt, isCurrent }
+        if (request.period.mode === 'event' && !result.hydrographs?.[workspace.eventId]) {
           const selected = request.period.events.find((event) => result.hydrographs?.[event.id])
           if (selected) {
             workspace.eventId = selected.id
@@ -597,7 +606,7 @@ export const useCalibrationStore = defineStore('calibration', {
             workspace.eventEnd = selected.end
           }
         }
-        workspace.runMessage = `${result.evaluationMode === 'manual' ? '试调完成' : '率定完成'} · 参数 ${version.id}`
+        workspace.runMessage = result.simulationOnly ? '场次模拟完成。' : result.evaluationMode === 'manual' ? '试调完成。' : '率定完成。'
       }
       if (workspace.dirty) workspace.runMessage += ' 计算期间条件已修改；此结果对应提交时的冻结条件，请重新计算新方案。'
       if (!matchesInput) workspace.runMessage += ` 输入 ${frozenInputBundleVersionId(request)} 与当前工作区不同，历史结果未重新标注。`
@@ -618,6 +627,21 @@ export const useCalibrationStore = defineStore('calibration', {
           useStateStore().hydrateBackendStates(states)
           if (useAppStore().contextKey === key) useAppStore().projectData.backendParameterVersions = versions
           this.applyBackendResult(request, result, completed, projectData)
+          if (result.stateCalculationTaskId) {
+            const workspace = this.contextKey === key ? this : this.workspaces[key]
+            workspace.running = true; workspace.runMessage = '参数搜索已完成，正在保存最佳参数对应的连续状态。'
+            try {
+              const stateTask = await tasks.waitForTask(result.stateCalculationTaskId)
+              if (!['completed', 'archived'].includes(stateTask?.status)) throw new Error(stateTask?.errorMessage || '状态保存未完成')
+              const stateResult = await tasks.getResult(stateTask.taskId)
+              useStateStore().hydrateBackendStates((await modelApi('states')).states)
+              if (workspace.runResult?.taskId === task.taskId) workspace.runResult.stateCalculation = stateResult
+              workspace.runMessage = '率定完成，最佳参数对应的流量与状态已保存。'
+            } catch (failure) {
+              if (workspace.runResult?.taskId === task.taskId) workspace.runResult.stateCalculationError = failure.message
+              workspace.runMessage = `率定计算已完成；状态保存失败：${failure.message}。请按最佳参数独立模拟。`
+            } finally { workspace.running = false; if (this.contextKey === key) this.saveCurrentWorkspace() }
+          }
           return { ok: true, result, task: completed }
         } catch (error) {
           const workspace = this.contextKey === key ? this : this.workspaces[key]
@@ -652,9 +676,13 @@ export const useCalibrationStore = defineStore('calibration', {
     async recoverBackendTasks() {
       const tasks = useTasksStore()
       await tasks.refresh()
-      const rows = tasks.tasksForContext(this.contextKey).filter((row) => row.resultSource === 'model-backend' && ['eventCalibration', 'continuousCalibration', 'continuousSimulation'].includes(row.runType))
-      const task = rows.find((row) => row.taskId === this.activeTaskId) || (!this.activeTaskId ? rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] : null)
-      if (!task || backendWaits.has(task.taskId) || this.runResult?.taskId === task.taskId || this.simulationResult?.taskId === task.taskId) return
+      const rows = tasks.tasksForContext(this.contextKey).filter((row) => row.resultSource === 'model-backend' && ['eventCalibration', 'eventSimulation', 'continuousCalibration', 'continuousSimulation'].includes(row.runType))
+      const task = recoverableCalculation(rows, this)
+      if (task && backendWaits.has(task.taskId)) return
+      if (!task || this.runResult?.taskId === task.taskId || this.simulationResult?.taskId === task.taskId) {
+        if (!task || !['queued', 'running', 'cancelling'].includes(task.status)) { this.running = false; this.saveCurrentWorkspace() }
+        return
+      }
       if (['queued', 'running', 'cancelling'].includes(task.status)) {
         this.activeTaskId = task.taskId
         this.running = true
@@ -764,6 +792,10 @@ export const useCalibrationStore = defineStore('calibration', {
       this.saveCurrentWorkspace()
     },
     loadFromTaskConfig(runType, config = {}) {
+      this.stationSourceId = config.inputs?.stationSourceId || null
+      this.fixedEventSimulation = runType === 'eventSimulation' || Boolean(config.calibration?.simulationOnly)
+      if (config.criteria || config.calibration?.objectives) this.criteria = clonePlain(config.criteria || config.calibration.objectives)
+      this.paramVersion = config.calibration?.initialParameterVersionId || config.parameterVersionId || this.paramVersion
       this.optimizerSettings = clonePlain(config.optimizerSettings || {})
       this.sourcePlan = clonePlain(config.sourcePlan || null)
       this.sourcePlanRequestTemplate = this.sourcePlan ? clonePlain(config) : null
@@ -790,8 +822,8 @@ export const useCalibrationStore = defineStore('calibration', {
         this.operationMode = 'simulation'
         this.simulationStart = String(config.startTime || this.simulationStart).replace(' ', 'T')
         this.simulationEnd = String(config.endTime || this.simulationEnd).replace(' ', 'T')
-        this.warmupDays = Number(config.warmupDays) || this.warmupDays
-        this.initialStateVersionId = config.stateVersionId || this.initialStateVersionId
+        if (Number.isFinite(config.warmupDays)) this.warmupDays = config.warmupDays
+        this.initialStateVersionId = config.stateVersionId || null
         this.outputStepHours = Number(config.outputStepHours) || this.outputStepHours
         this.simulationResult = null
         this.runMessage = '已从运行档案带入连续模拟条件，请复核后执行。'
@@ -806,9 +838,10 @@ export const useCalibrationStore = defineStore('calibration', {
         this.calibrationTarget = config.calibrationTarget || config.calibration?.target || 'runoff'
         this.routingSearchParameters = clonePlain(config.routingSearchParameters ?? config.calibration?.routingSearchParameters ?? null)
         this.searchSeed = config.searchSeed ?? 42
-        if (config.warmupDays) this.warmupDays = config.warmupDays
+        if (Number.isFinite(config.warmupDays)) this.warmupDays = config.warmupDays
         if (Array.isArray(config.events)) {
           const selected = new Map(config.events.map((row) => [row.id, row]))
+          for (const row of config.events) if (!this.events.some(event => event.id === row.id)) this.events.push(normalizeFloodEvent({ ...row, runtimeRegistered: false, status: 'active' }))
           this.events = this.events.map((row) => normalizeFloodEvent({ ...row, ...(selected.get(row.id) || {}),
             purpose: selected.get(row.id)?.purpose || '未使用', status: row.status, runtimeRegistered: row.runtimeRegistered,
             registeredStatus: row.registeredStatus }))
@@ -829,7 +862,7 @@ export const useCalibrationStore = defineStore('calibration', {
       this.dirty = true
       this.saveCurrentWorkspace()
     },
-    markNeedsRun(message = '设置已更新，请重新率定。') {
+    markNeedsRun(message = '计算条件已更新。') {
       if (!backendWaits.has(this.activeTaskId)) this.running = false
       this.runStatus = 'needs-run'
       this.runMessage = this.originalPlanChanged ? `原方案已调整。${message}` : message
@@ -854,12 +887,12 @@ export const useCalibrationStore = defineStore('calibration', {
       if (definition) normalized = Math.min(definition.max, Math.max(definition.min, normalized))
       this.detachOriginalPlan()
       this.params[key] = definition?.step < 1 ? +normalized.toFixed(this.backendContractVersion ? 8 : 3) : +normalized.toFixed(1)
-      this.markNeedsRun('参数已调整，请重新率定。')
+      this.markNeedsRun('参数已调整')
       this.saveCurrentWorkspace()
     },
     resetParams() {
       this.params = { ...this.baseline }
-      this.markNeedsRun('已恢复参数方案，请重新率定。')
+      this.markNeedsRun('已恢复参数方案')
     },
     async loadVersion(version) {
       if (this.backendContractVersion) {
@@ -916,7 +949,7 @@ export const useCalibrationStore = defineStore('calibration', {
       this.paramVersion = base
       this.params = { ...preset }
       this.baseline = { ...preset }
-      this.markNeedsRun('已切换参数方案，请重新率定。')
+      this.markNeedsRun('已切换参数方案')
     },
     async restoreOriginalPlan(version, operation = 'search') {
       if (this.running) return false
@@ -961,6 +994,12 @@ export const useCalibrationStore = defineStore('calibration', {
       const normalized = mode === 'continuous' ? 'continuous' : 'event'
       if (this.calibrationMode === normalized) return
       this.calibrationMode = normalized
+      if (normalized === 'continuous' && !this.scienceVersionId && !this.sourcePlan) {
+        this.statePolicy = 'continuous-origin'
+        if (!this.continuousOrigin && this.calibrationStart) {
+          this.continuousOrigin = new Date(Date.parse(`${this.calibrationStart.replace(' ', 'T')}Z`) - Number(this.warmupDays) * 86400000).toISOString().slice(0, 16)
+        }
+      }
       this.markNeedsRun('率定方式已调整，请重新率定。')
     },
     setEvent(id, start = null, end = null) {
@@ -980,7 +1019,7 @@ export const useCalibrationStore = defineStore('calibration', {
       }
     },
     setEventPurpose(id, purpose) {
-      const event = this.events.find((item) => item.id === id)
+      const event = this.schemeEvents.find((item) => item.id === id)
       if (!event || event.status === 'inactive' || !FLOOD_EVENT_PURPOSES.includes(purpose)) return
       if (event.purpose === purpose) return
       this.detachOriginalPlan()
@@ -991,7 +1030,7 @@ export const useCalibrationStore = defineStore('calibration', {
     setEventPurposes(assignments = []) {
       const byId = new Map(assignments.map((item) => [item.id, item.purpose]))
       let changed = 0
-      this.events.forEach((event) => {
+      this.schemeEvents.forEach((event) => {
         const purpose = byId.get(event.id)
         if (event.status === 'inactive' || !purpose || !FLOOD_EVENT_PURPOSES.includes(purpose) || event.purpose === purpose) return
         event.purpose = purpose
@@ -1274,7 +1313,7 @@ export const useCalibrationStore = defineStore('calibration', {
       this[key] = value
       this.markNeedsRun('率定时段已调整，请重新率定。')
     },
-    validateCalibration() {
+    validateCalibration({ manual = false } = {}) {
       const errors = []
       const selected = Object.keys(this.criteria.metrics).filter((key) => this.criteria.metrics[key])
       const totalWeight = selected.reduce((sum, key) => sum + Number(this.criteria.weights[key] || 0), 0)
@@ -1284,8 +1323,8 @@ export const useCalibrationStore = defineStore('calibration', {
       if (this.calibrationMode === 'event') {
         const counts = this.eventCounts
         if (!counts.calibration) errors.push('至少选择一场率定洪水')
-        if (!counts.validation) errors.push('至少选择一场验证洪水')
-        const physical = physicalFloodGroups(this.events.filter(row => row.status === 'active' && (!this.backendContractVersion || row.runtimeRegistered === true)))
+        if (!manual && !counts.validation) errors.push('至少选择一场验证洪水')
+        const physical = physicalFloodGroups(this.schemeEvents.filter(row => row.status === 'active'))
         if (physical.conflicts.length) errors.push(`重叠洪水不能跨用途：${physical.conflicts.map(group => group.memberEventIds.join('、')).join('；')}`)
         if (physical.errors.length) errors.push(physical.errors[0])
       } else {
@@ -1295,11 +1334,11 @@ export const useCalibrationStore = defineStore('calibration', {
         if (this.independentStart || this.independentEnd) windows.push(['独立检验', this.independentStart, this.independentEnd])
         for (const [label, start, end] of windows) {
           if (!start || !end || !Number.isFinite(Date.parse(start)) || !Number.isFinite(Date.parse(end)) || start >= end) errors.push(`${label}期开始须早于结束`)
-          if (this.backendContractVersion && (Date.parse(end) - Date.parse(start)) > 366 * 86400000) errors.push(`${label}期单段不超过一年`)
           if (this.backendContractVersion && ([start, end].some(value => !/T\d{2}:00(?::00)?$/.test(value || '')))) errors.push(`${label}期请选择整点`)
         }
         const ordered = [...windows].sort((a, b) => a[1].localeCompare(b[1]))
         if (ordered.some((row, index) => index > 0 && ordered[index - 1][2] >= row[1])) errors.push('率定、验证与独立检验时段不能重叠')
+        if (windows.some((row, index) => index > 0 && windows[index - 1][2] >= row[1])) errors.push('各评价期须按率定、验证、独立检验的时间顺序排列')
       }
       if (this.backendContractVersion) {
         const minimum = this.searchStrategy === 'staged' ? (this.algorithm === 'DIFFERENTIAL_EVOLUTION' ? 10 : 4) : (this.algorithm === 'DIFFERENTIAL_EVOLUTION' ? 4 : 1)
@@ -1455,7 +1494,7 @@ export const useCalibrationStore = defineStore('calibration', {
         completedAt: formatRunTime()
       }
       this.runStatus = 'complete'
-      this.runMessage = `连续模拟完成，末时刻状态：${result.endStateVersionId}`
+      this.runMessage = '连续模拟完成，流量与状态已保存。'
       return { ok: true, result: this.simulationResult, task: completed }
     },
     async cancelCalibration() {

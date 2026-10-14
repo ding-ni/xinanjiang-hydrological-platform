@@ -103,6 +103,14 @@ class WorkspaceTests(unittest.TestCase):
     def test_backup_restore_database_drafts_and_numerical_files(self):
         root = self.root / 'work'
         database = HydroDatabase(root)
+        from model_schemes import ModelSchemes, input_definition
+        from test_unified_backend import simulation
+        schemes = ModelSchemes(database)
+        request = simulation()
+        from input_products import DEFAULT_BUNDLE_VERSION_ID
+        request['inputs']['bundleVersionId'] = DEFAULT_BUNDLE_VERSION_ID
+        scheme = schemes.save({'name': '备份方案', 'definition': input_definition(request), 'calculationDraft': request})
+        schemes.defaults({'idwPower': 3, 'minimumStations': 2})
         DraftRepository(database).save({'key': 'hydro_calibration_workspaces_v1', 'value': {'workspaces': {'a': {'note': '原始备注'}}}, 'revision': 0})
         write_json(root / 'tasks/JOB-a/status.json', {'status': 'completed'})
         write_json(root / 'states/STATE-JOB-a.json', {'land': {'WU': [1.23456789]}})
@@ -112,6 +120,9 @@ class WorkspaceTests(unittest.TestCase):
         restore_backup(backup['path'], restored)
         self.assertEqual(workspace_identity(root), workspace_identity(restored))
         self.assertEqual(DraftRepository(HydroDatabase(restored)).list(), DraftRepository(database).list())
+        restored_schemes = ModelSchemes(HydroDatabase(restored))
+        self.assertEqual(restored_schemes.get(scheme['id']), scheme)
+        self.assertEqual(restored_schemes.defaults(), schemes.defaults())
         self.assertEqual(read_json(restored / 'states/STATE-JOB-a.json'), {'land': {'WU': [1.23456789]}})
         self.assertGreater(len(checked['files']), 2)
         with self.assertRaises(ValueError): restore_backup(backup['path'], restored)

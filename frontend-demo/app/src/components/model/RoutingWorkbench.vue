@@ -1,28 +1,19 @@
 <template>
-  <div class="routing-workbench">
-    <form class="version-bar" @submit.prevent="$emit('register')">
+  <div class="routing-workbench" :class="{ 'query-only': queryOnly }">
+    <form v-if="!queryOnly" class="version-bar" @submit.prevent="$emit('register')">
       <label class="version-field">已登记汇流版本<select class="input" :value="editVersion" :disabled="disabled" @change="requestVersion"><option v-for="row in versions" :key="row.routingVersionId" :value="row.routingVersionId">{{ row.name }}</option></select></label>
       <button type="button" class="btn" :disabled="disabled || dirty || editVersion === selectedVersionId || !parameters" @click="$emit('select')"><Check class="tool-icon" />选用此版本</button>
       <label class="name-field">新版本名称<input class="input" :value="name" :disabled="disabled" maxlength="120" required placeholder="例如：徐畈洪水汇流方案" @input="$emit('update:name', $event.target.value)" /></label>
       <button class="btn primary" :disabled="disabled || !parameters"><Plus class="tool-icon" />登记新版本</button>
     </form>
-    <div class="workbench-status"><span :class="dirty ? 'draft' : 'saved'">{{ dirty ? '参数已修改 · 待登记' : editVersion === selectedVersionId ? '当前计算方案' : '已登记方案' }}</span><span>{{ units.length }} 个汇流单元</span><span>{{ reaches.length }} 条河段</span><span>{{ overrideCount }} 个单元采用独立 K</span><div class="status-tools"><button class="btn icon-button" title="恢复当前版本参数" aria-label="恢复当前版本参数" :disabled="disabled || !dirty" @click="$emit('reset')"><RefreshLeft /></button><button class="btn icon-button" title="导出汇流参数 JSON" aria-label="导出汇流参数 JSON" :disabled="!parameters" @click="$emit('export', dirty ? { name, parentVersionId: editVersion, parameters, draft: true } : versions.find(row => row.routingVersionId === editVersion))"><Download /></button><button class="btn icon-button" title="导出空间产品 JSON" aria-label="导出空间产品 JSON" :disabled="!spatial" @click="$emit('spatial-export')"><MapLocation /></button></div></div>
+    <div v-if="!queryOnly" class="workbench-status"><span :class="dirty ? 'draft' : 'saved'">{{ dirty ? '参数已修改 · 待登记' : editVersion === selectedVersionId ? '当前计算方案' : '已登记方案' }}</span><span>{{ units.length }} 个汇流单元</span><span>{{ reaches.length }} 条河段</span><span>{{ overrideCount }} 个单元采用独立 K</span><div class="status-tools"><button class="btn icon-button" title="恢复当前版本参数" aria-label="恢复当前版本参数" :disabled="disabled || !dirty" @click="$emit('reset')"><RefreshLeft /></button><button class="btn icon-button" title="导出汇流参数 JSON" aria-label="导出汇流参数 JSON" :disabled="!parameters" @click="$emit('export', dirty ? { name, parentVersionId: editVersion, parameters, draft: true } : versions.find(row => row.routingVersionId === editVersion))"><Download /></button><button class="btn icon-button" title="导出空间产品 JSON" aria-label="导出空间产品 JSON" :disabled="!spatial" @click="$emit('spatial-export')"><MapLocation /></button></div></div>
     <div class="routing-layout">
       <div class="map-workspace">
-        <div class="map-view-switch" role="group" aria-label="空间关系视图">
-          <button type="button" :aria-pressed="!showGridRouting" :class="{ active: !showGridRouting }" @click="showGridRouting = false">河网与汇流单元</button>
-          <button type="button" :aria-pressed="showGridRouting" :class="{ active: showGridRouting }" :disabled="!spatial?.gridRouting" @click="showGridRouting = true">1 km 网格去向</button>
-        </div>
-        <template v-if="showGridRouting && spatial?.gridRouting">
-          <GridRoutingRelation :product="spatial.gridRouting" @reach="focusGridReach" />
-        </template>
-        <template v-else>
           <div ref="mapHost" class="topology-map" aria-label="真实流域拓扑地图"></div>
           <div class="map-caption"><span><i class="legend river" />南安溪河网</span><span><i class="legend unit" />汇流单元出口</span><span><i class="legend control" />徐畈断面</span><button class="btn sm" :disabled="!pointCoordinates" @click="$emit('point', pointCoordinates)"><Location class="tool-icon" />查询选定点</button></div>
           <div v-if="pointCoordinates" class="point-coordinate" role="status">选定点 {{ pointCoordinates[0].toFixed(6) }}° E / {{ pointCoordinates[1].toFixed(6) }}° N</div>
-        </template>
       </div>
-      <div class="parameter-workspace">
+      <div v-if="!queryOnly" class="parameter-workspace">
         <div class="parameter-heading"><h3>汇流参数</h3><span>逐小时</span></div>
         <div class="parameter-modes" role="tablist" aria-label="汇流参数分区"><button v-for="mode in modes" :key="mode.id" role="tab" :aria-selected="parameterMode === mode.id" :class="{ active: parameterMode === mode.id }" @click="parameterMode = mode.id">{{ mode.label }}</button></div>
         <fieldset v-if="parameters" :disabled="disabled" class="parameter-fields">
@@ -59,13 +50,12 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { Check, Download, Location, MapLocation, Plus, RefreshLeft, Search } from '@element-plus/icons-vue'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import GridRoutingRelation from '@/components/model/GridRoutingRelation.vue'
 import { effectiveSlopeK, filterRoutingRows, routingIsStable, routingMapCoordinates, setUnitOverride, slopeComponents } from '@/services/routingPresentation'
 
-const props = defineProps({ spatial: Object, parameters: Object, versions: { type: Array, default: () => [] }, editVersion: String, selectedVersionId: String, name: String, disabled: Boolean, visible: Boolean })
+const props = defineProps({ spatial: Object, queryOnly: Boolean, queriedPoint: Array, parameters: Object, versions: { type: Array, default: () => [] }, editVersion: String, selectedVersionId: String, name: String, disabled: Boolean, visible: Boolean })
 const emit = defineEmits(['version', 'update:name', 'register', 'select', 'reset', 'export', 'spatial-export', 'point'])
 const modes = [{ id: 'global', label: '全域默认' }, { id: 'units', label: '汇流单元' }, { id: 'reaches', label: '河段参数' }]
-const parameterMode = ref('global'), unitSearch = ref(''), reachSearch = ref(''), selectedUnitId = ref(''), selectedReach = ref(''), mapHost = ref(null), pointCoordinates = ref(null), showGridRouting = ref(false)
+const parameterMode = ref('global'), unitSearch = ref(''), reachSearch = ref(''), selectedUnitId = ref(''), selectedReach = ref(''), mapHost = ref(null), pointCoordinates = ref(null)
 let map = null, disposed = false, drawRevision = 0
 const units = computed(() => props.spatial?.topology.units || [])
 const reaches = computed(() => props.spatial?.topology.reaches || [])
@@ -99,14 +89,17 @@ function focusGridReach(link) {
   focusReach(link.reachId)
 }
 watch(pointCoordinates, drawSelectedPoint)
+watch(() => props.queriedPoint, coordinates => {
+  if (props.queryOnly || coordinates) pointCoordinates.value = coordinates || null
+})
 watch(filteredUnits, rows => { if (!rows.some(row => row.unit_id === selectedUnitId.value)) selectedUnitId.value = rows[0]?.unit_id || '' }, { immediate: true })
-watch(selectedUnit, row => { if (row) focusReach(row.reach_id) })
+watch(selectedUnit, row => { if (row && !props.queryOnly) focusReach(row.reach_id) })
 async function drawMap() {
   const token = ++drawRevision
   map?.remove()
   map = null
   await nextTick()
-  if (disposed || token !== drawRevision || showGridRouting.value || !props.spatial || !mapHost.value) return
+  if (disposed || token !== drawRevision || !props.spatial || !mapHost.value) return
   const product = props.spatial
   map = new maplibregl.Map({ container: mapHost.value, style: { version: 8, sources: {}, layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#f3f6f3' } }] }, center: product.topology.reaches[0].startLonLat, zoom: 11 })
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
@@ -136,29 +129,22 @@ async function drawMap() {
         focusReach(id)
         parameterMode.value = 'units'
       } else pointCoordinates.value = [Number(event.lngLat.lng.toFixed(7)), Number(event.lngLat.lat.toFixed(7))]
+      drawSelectedPoint()
+      if (props.queryOnly) emit('point', pointCoordinates.value)
     })
     current.on('mouseenter', 'nodes', () => { current.getCanvas().style.cursor = 'pointer' })
     current.on('mouseleave', 'nodes', () => { current.getCanvas().style.cursor = '' })
-    focusReach(selectedReach.value || selectedUnit.value?.reach_id)
+    if (!props.queryOnly) focusReach(selectedReach.value || selectedUnit.value?.reach_id)
     drawSelectedPoint()
   })
 }
 watch(() => props.spatial, drawMap, { immediate: true })
-watch(showGridRouting, async showingGrid => {
-  if (showingGrid) {
-    drawRevision++
-    map?.remove()
-    map = null
-    return
-  }
-  await nextTick()
-  if (!disposed && props.spatial) drawMap()
-})
 watch(() => props.visible, () => nextTick(() => map?.resize()))
 onBeforeUnmount(() => { disposed = true; drawRevision++; map?.remove() })
 </script>
 
 <style scoped>
+.query-only .routing-layout{grid-template-columns:1fr}.query-only .workbench-status{display:none}
 .point-coordinate{font-size:11px;color:#786638;font-variant-numeric:tabular-nums;line-height:1.5;overflow-wrap:anywhere}
 .routing-workbench{min-width:0}.version-bar{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin-bottom:14px}.version-field{flex:1 1 230px}.name-field{flex:1 1 210px}label{display:flex;flex-direction:column;gap:7px;font-size:12px;color:#58655b;min-width:0}.input{border-color:#d1dad2;color:#28382d}.tool-icon{width:16px;height:16px;flex-shrink:0}.workbench-status{display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:12px 0;font-size:12px;color:#69766c;border-top:1px solid #e1e7e1}.saved{color:#287156;font-weight:700}.draft{color:#a16514;font-weight:700}.status-tools{display:flex;gap:6px;margin-left:auto}.icon-button{width:32px;height:32px;min-height:32px;padding:7px;flex-shrink:0}.icon-button svg{width:16px;height:16px}.routing-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,440px);gap:24px;min-width:0}.map-workspace,.parameter-workspace{min-width:0}.map-workspace{display:flex;flex-direction:column}.topology-map{width:100%;height:478px;border:1px solid #d4ddd4;background:#f3f6f3}.map-caption{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 0;color:#637066;font-size:11px}.map-caption .btn{margin-left:auto}.legend{display:inline-block;width:8px;height:8px;margin-right:6px}.legend.river{background:#2797ba;height:3px;vertical-align:middle}.legend.unit{background:#376b57;border-radius:50%}.legend.control{background:#bc4149;border-radius:50%}.parameter-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.parameter-heading h3{font-size:15px;margin:0;color:#263b2e}.parameter-heading>span{font-size:11px;color:#7d897f}.parameter-modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));background:#eef2ed;padding:3px;gap:3px;border-radius:5px;margin-bottom:16px}.parameter-modes button{padding:8px 4px;border:0;background:transparent;color:#5c6b5f;cursor:pointer;font-size:12px;border-radius:3px}.parameter-modes button.active{background:#fff;color:#216a4b;font-weight:700;box-shadow:0 1px 3px #243c2915}.parameter-fields{margin:0;padding:0;border:0;min-width:0}.global-parameters h4,.unit-heading h4{font-size:13px;margin:0 0 16px;color:#344c3a}.slope-row{display:flex;flex-direction:row;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #e8ede8;font-size:13px;color:#344c3a}.slope-row small{margin-left:10px;font-size:11px;color:#809087}.numeric-field{display:flex;align-items:center;gap:8px;width:142px}.numeric-field>span{color:#819086;font-size:11px}.numeric-field .input{font-variant-numeric:tabular-nums;width:118px}.input:disabled{background:#f4f6f3;color:#7b867e}.parameter-facts{display:grid;grid-template-columns:1fr 1fr;gap:20px 16px;padding-top:30px;font-size:12px}.parameter-facts>div{display:grid;gap:8px}.parameter-facts span{color:#7c8a7e}.parameter-facts b{font-weight:600;color:#364c3d}.search-field{position:relative;margin-bottom:12px}.search-field .input{padding-left:32px}.search-field .tool-icon{position:absolute;top:10px;left:10px;color:#869789}.unit-selector select{height:110px;padding:4px}.unit-selector option{padding:6px;font-size:12px}.unit-heading{display:flex;align-items:center;gap:14px;margin-top:16px}.unit-heading h4{margin:0}.unit-heading>span{font-size:12px;color:#7b887e}.unit-heading .btn{margin-left:auto}.unit-id{display:block;font-size:10px;color:#8b968d;margin:5px 0 14px;overflow-wrap:anywhere}.unit-component{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid #e8ede8}.override-toggle{flex-direction:row;align-items:center;gap:8px;font-size:12px;color:#34513e}.override-toggle input{accent-color:#297658;margin:0}.override-toggle small{display:block;font-size:10px;color:#859288;margin-top:4px}.table-scroll{max-height:365px;overflow:auto}.table{font-size:12px}.table th{position:sticky;top:0;background:#f0f4ee;padding:10px 6px;color:#586b5c;z-index:1}.table td{padding:8px 6px}.table small{display:block;font-size:10px;color:#8a958d;margin-top:4px;white-space:nowrap}.table .compact{width:70px;height:32px;padding:0 5px;font-size:12px}.reach-name{border:0;padding:0;background:none;color:#325e48;font-weight:600;font-size:12px;cursor:pointer}.table tr.selected td{background:#edf5ee}.table tr.unstable td{background:#fff4e3}.stability-warning{font-size:11px;color:#a15f18;line-height:1.6}.empty{font-size:12px;color:#8a948a;padding:20px 0}@media(min-width:1650px){.routing-layout{grid-template-columns:minmax(0,1fr) 460px}.topology-map{height:520px}}@media(max-width:1000px){.routing-layout{grid-template-columns:1fr}.topology-map{height:340px}.parameter-workspace{padding-top:14px;border-top:1px solid #e1e7e1}.table-scroll{max-height:360px}}@media(max-width:600px){.version-bar{gap:10px}.version-bar label{flex-basis:100%}.version-bar>.btn{flex:1 1 auto}.workbench-status{gap:8px 12px}.status-tools{margin-left:0}.topology-map{height:300px}.map-caption{gap:8px;font-size:10px}.map-caption .btn{margin-left:0}.routing-layout{gap:12px}.table .compact{width:63px}.numeric-field{width:124px}.numeric-field .input{width:100px}}
 .map-view-switch{display:flex;gap:3px;align-self:flex-start;margin:0 0 9px;padding:3px;border:1px solid #dce5dc;background:#edf2ec;border-radius:4px}.map-view-switch button{padding:7px 11px;border:0;border-radius:3px;background:transparent;color:#617164;font-size:11px;cursor:pointer}.map-view-switch button.active{background:#fff;color:#25674a;font-weight:700;box-shadow:0 1px 3px #263d2c18}.map-view-switch button:disabled{opacity:.5;cursor:not-allowed}@media(max-width:600px){.map-view-switch{max-width:100%}.map-view-switch button{padding:7px 8px;font-size:10px}}

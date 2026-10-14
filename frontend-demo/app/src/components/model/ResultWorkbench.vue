@@ -1,39 +1,42 @@
 <template>
   <section class="result-workbench" aria-label="成果工作台">
-    <div class="result-heading"><div><span class="eyebrow">计算成果</span><h3>{{ saved.name || task.runTypeLabel }}</h3><p>{{ task.taskId }}</p></div><div class="actions"><button class="btn" @click="downloadJson">完整结果 JSON</button><button class="btn" :disabled="busy" @click="downloadReports">报告包 ZIP</button></div></div>
+    <div class="result-heading"><div><span class="eyebrow">计算成果</span><h3>{{ saved.name || task.runTypeLabel }}</h3></div><div class="actions"><button v-if="canSimulate" class="btn primary" @click="$emit('simulate', task, result)">采用最佳参数进行模拟</button><button class="btn" :disabled="busy" @click="downloadReports">导出报告</button></div></div>
     <div class="workbench-layout">
       <div class="result-main">
         <SpatialResults v-if="result.spatial" :task-id="task.taskId" :product="result.spatial" />
         <SearchPlanResult v-if="result.searchPlan" :plan="result.searchPlan" />
+        <SearchProgress :optimizer="result.optimizer" />
         <p v-if="result.routingCandidate" class="parameter-diff">成果汇流方案：{{ result.routingCandidate.name }}</p>
         <div v-if="periods.length" class="process-toolbar"><label>查看时段 <select v-model="periodId" class="input" aria-label="成果时段"><option v-for="row in periods" :key="row.id" :value="row.id">{{ row.label }}</option></select></label><button class="btn" @click="exportProcess">逐时过程 CSV</button><button class="btn" @click="exportSummary">{{ isForecast ? '预报摘要 CSV' : '评价汇总 CSV' }}</button></div>
         <template v-if="hydrograph">
           <div v-if="isForecast" class="hydro-metrics"><div><span>预报洪峰 (m³/s)</span><b>{{ num(hydrograph.peak) }}</b></div><div><span>峰现时刻</span><b>{{ hydrograph.peakTime?.replace('T', ' ') }}</b></div><div><span>预报时段水量 (万 m³)</span><b>{{ num(hydrograph.volume / 1e4) }}</b></div><div><span>累计面雨量 (mm)</span><b>{{ num(rainTotal) }}</b></div></div>
           <div v-else class="hydro-metrics"><div><span>纳什效率系数 NSE</span><b>{{ num(hydrograph.metrics?.nse, 3) }}</b></div><div><span>模拟洪峰 (m³/s)</span><b>{{ num(hydrograph.peak) }}</b></div><div><span>洪峰相对误差 (%)</span><b>{{ num(hydrograph.metrics?.peakErr) }}</b></div><div><span>峰现时间误差 (h)</span><b>{{ num(hydrograph.metrics?.timeErrH) }}</b></div><div><span>洪量相对误差 (%)</span><b>{{ num(hydrograph.metrics?.volErr) }}</b></div></div>
           <div class="result-chart"><HydrographChart v-if="isForecast" :hydrograph="hydrograph" :show-prev="false" /><CalibrationProcessChart v-else :hydrograph="hydrograph" :forcing="hydrograph.forcing || {}" :visible-components="{}" :comparisons="comparisonCurves" :current-curve="{ label: saved.name || '当前模拟', color: '#bb592f' }" /></div>
-          <div v-if="!isForecast" class="comparison-toolbar"><label>对比成果 <select v-model="compareId" class="input" aria-label="对比成果"><option value="">不叠加</option><option v-for="row in candidates" :key="row.taskId" :value="row.taskId">{{ metadata[row.taskId]?.name || `${row.runTypeLabel} · ${row.taskId.slice(-8)}` }}</option></select></label><span v-if="comparisonLoading">读取过程…</span><span v-else-if="compareId">{{ compareError || comparisonNotice || '同条件过程对比' }}</span></div>
+          <div v-if="!isForecast" class="comparison-toolbar"><label>对比成果 <select v-model="compareId" class="input" aria-label="对比成果"><option value="">不叠加</option><option v-for="row in candidates" :key="row.taskId" :value="row.taskId">{{ calculationName(row, metadata) }}</option></select></label><span v-if="comparisonLoading">读取过程…</span><span v-else-if="compareId">{{ compareError || comparisonNotice || (conditionDifferences ? `条件差异：${conditionDifferences}` : '同条件过程对比') }}</span></div>
           <p v-if="comparisonCurves.length" class="parameter-diff">{{ parameterDiff || '两次计算的产流参数相同' }}</p>
           <div v-if="comparisonCurves.length" class="comparison-metrics">对比成果：NSE {{ num(compareHydro.metrics?.nse, 3) }} · 洪峰 {{ num(compareHydro.peak) }} m³/s · 洪量误差 {{ num(compareHydro.metrics?.volErr) }}%</div>
         </template>
         <div v-else-if="!result.spatial" class="result-snapshot"><h4>{{ task.runType === 'stateImport' ? '状态文件已入库' : '计算成果已保存' }}</h4><p v-if="result.stateTime">状态时刻 {{ result.stateTime.replace('T', ' ') }} · {{ result.gridCount }} 个网格</p><button class="btn primary" @click="$emit('open', task)">{{ task.runType === 'stateImport' ? '打开状态库' : '打开计算工作区' }}</button></div>
         <section v-if="parameterRows.length" class="parameter-section"><div class="section-heading"><h4>产流参数</h4><button class="btn" @click="exportParameters">参数表 CSV</button></div><div class="parameter-grid"><div v-for="row in parameterRows" :key="row.key"><span>{{ row.label }} <i>{{ row.key }}</i></span><b :title="String(row.value)">{{ Number.isFinite(row.value) ? Number(row.value.toPrecision(7)) : row.value }} <small>{{ row.unit === '1' ? '' : row.unit === '1/hour' ? 'h⁻¹' : row.unit }}</small></b></div></div></section>
       </div>
-      <aside class="result-notes"><form @submit.prevent="save"><h4>成果整理</h4><label>名称<input v-model="draft.name" class="input" aria-label="成果名称" maxlength="80" :disabled="saving" /></label><label>分组<input v-model="draft.collection" class="input" aria-label="成果分组" maxlength="40" list="result-groups" :disabled="saving" /><datalist id="result-groups"><option v-for="group in groups" :key="group" :value="group" /></datalist></label><label>备注<textarea v-model="draft.notes" class="input" aria-label="成果备注" rows="5" maxlength="2000" :disabled="saving" /></label><label class="favorite"><input v-model="draft.favorite" type="checkbox" :disabled="saving" />收藏成果</label><button class="btn primary" :disabled="saving || !dirty">{{ saving ? '保存中…' : '保存整理' }}</button><span role="status">{{ savedMessage }}</span></form><p v-if="error" class="error" role="alert">{{ error }}</p><details><summary>版本信息</summary><dl><dt>参数版本</dt><dd>{{ result.parameterVersionId || result.lineage?.parameterVersionId || '—' }}</dd><dt>输入版本</dt><dd>{{ result.lineage?.inputBundleVersionId || '—' }}</dd><dt>汇流版本</dt><dd>{{ result.lineage?.routingVersionId || '—' }}</dd></dl></details></aside>
+      <aside class="result-notes"><form @submit.prevent="save"><h4>成果整理</h4><label>名称<input v-model="draft.name" class="input" aria-label="成果名称" maxlength="80" :disabled="saving" /></label><label>分组<input v-model="draft.collection" class="input" aria-label="成果分组" maxlength="40" list="result-groups" :disabled="saving" /><datalist id="result-groups"><option v-for="group in groups" :key="group" :value="group" /></datalist></label><label>备注<textarea v-model="draft.notes" class="input" aria-label="成果备注" rows="5" maxlength="2000" :disabled="saving" /></label><label class="favorite"><input v-model="draft.favorite" type="checkbox" :disabled="saving" />收藏成果</label><button class="btn primary" :disabled="saving || !dirty">{{ saving ? '保存中…' : '保存整理' }}</button><span role="status">{{ savedMessage }}</span></form><p v-if="error" class="error" role="alert">{{ error }}</p><details><summary>追溯与完整结果</summary><dl><dt>计算编号</dt><dd>{{ task.taskId }}</dd><dt>参数版本</dt><dd>{{ result.parameterVersionId || result.lineage?.parameterVersionId || '—' }}</dd><dt>输入版本</dt><dd>{{ result.lineage?.inputBundleVersionId || '—' }}</dd><dt>汇流版本</dt><dd>{{ result.lineage?.routingVersionId || '—' }}</dd></dl><button class="btn" @click="downloadJson">完整结果 JSON</button></details></aside>
     </div>
   </section>
 </template>
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+import SearchProgress from '@/components/params/SearchProgress.vue'
 import CalibrationProcessChart from '@/components/charts/CalibrationProcessChart.vue'
 import HydrographChart from '@/components/charts/HydrographChart.vue'
 import SpatialResults from '@/components/model/SpatialResults.vue'
 import SearchPlanResult from '@/components/params/SearchPlanResult.vue'
 import { modelApi } from '@/services/modelBackendService'
-import { comparisonReason, csv, downloadText, hydrographCsv, resultPeriods, summaryRows, SUMMARY_HEADER } from '@/services/resultPresentation'
+import { comparisonAvailability, comparisonDifferences, matchingResultPeriod, calculationName, csv, downloadText, hydrographCsv, resultPeriods, summaryRows, SUMMARY_HEADER } from '@/services/resultPresentation'
 import { changedParameters } from '@/services/manualCalibrationService'
 const props = defineProps({ task: Object, result: Object, tasks: Array, metadata: Object, definitions: Array })
-const emit = defineEmits(['saved', 'open'])
+const emit = defineEmits(['saved', 'open', 'simulate'])
+const canSimulate = computed(() => ['eventCalibration', 'continuousCalibration'].includes(props.task.runType) && Boolean(props.result.bestParameters))
 const blank = () => ({ name: '', collection: '', notes: '', favorite: false, revision: 0 })
 const saved = computed(() => props.metadata[props.task.taskId] || blank())
 const draft = ref(blank()), saving = ref(false), savedMessage = ref(''), error = ref(''), busy = ref(false)
@@ -44,11 +47,12 @@ const isForecast = computed(() => props.result.runType === 'forecast')
 const rainTotal = computed(() => (hydrograph.value?.forcing?.precipitation || []).reduce((sum, value) => sum + value, 0))
 const groups = computed(() => [...new Set(Object.values(props.metadata).map(row => row.collection).filter(Boolean))].sort())
 const dirty = computed(() => ['name', 'collection', 'notes', 'favorite'].some(key => draft.value[key] !== saved.value[key]))
-const candidates = computed(() => props.tasks.filter(row => row.taskId !== props.task.taskId && row.resultSource === 'model-backend' && ['completed', 'archived'].includes(row.status) && ['eventCalibration', 'continuousCalibration', 'continuousSimulation', 'stateInitialization', 'stateContinuation'].includes(row.runType)))
+const candidates = computed(() => props.tasks.filter(row => row.taskId !== props.task.taskId && row.resultSource === 'model-backend' && ['completed', 'archived'].includes(row.status) && ['eventCalibration', 'eventSimulation', 'continuousCalibration', 'continuousSimulation', 'stateInitialization', 'stateContinuation'].includes(row.runType)))
 const compareTask = computed(() => candidates.value.find(row => row.taskId === compareId.value))
-const compareHydro = computed(() => resultPeriods(compareResult.value || {}).find(row => row.id === periodId.value)?.hydrograph)
-const comparisonNotice = computed(() => !compareResult.value ? '' : comparisonReason(props.task.request, compareTask.value?.request, hydrograph.value, compareHydro.value))
-const comparisonCurves = computed(() => compareTask.value && compareHydro.value && !comparisonNotice.value ? [{ taskId: compareId.value, label: props.metadata[compareId.value]?.name || `对比 · ${compareId.value.slice(-8)}`, color: '#18857a', hydrograph: compareHydro.value }] : [])
+const compareHydro = computed(() => matchingResultPeriod(compareResult.value || {}, periodId.value, hydrograph.value))
+const comparisonNotice = computed(() => !compareResult.value ? '' : comparisonAvailability(props.task.request, compareTask.value?.request, hydrograph.value, compareHydro.value))
+const conditionDifferences = computed(() => comparisonDifferences(props.task.request, compareTask.value?.request))
+const comparisonCurves = computed(() => compareTask.value && compareHydro.value && !comparisonNotice.value ? [{ taskId: compareId.value, label: calculationName(compareTask.value, props.metadata), color: '#18857a', hydrograph: compareHydro.value }] : [])
 const parameters = computed(() => props.result.bestParameters || props.result.parameters || {})
 const parameterDiff = computed(() => changedParameters(compareResult.value?.bestParameters || compareResult.value?.parameters, parameters.value))
 const parameterRows = computed(() => Object.entries(parameters.value).map(([key, value]) => ({ key, value, ...(props.definitions || []).find(row => row.key === key) })))

@@ -1,7 +1,7 @@
 <template>
   <section class="view-state">
     <div class="metric-strip">
-      <div class="metric"><span>当前状态</span><b :title="state.activeInitialState.id">{{ isModelState ? state.activeInitialState.id.slice(-8) : state.activeInitialState.id }}</b></div>
+      <div class="metric"><span>当前状态</span><b :title="state.activeInitialState.id">{{ isModelState ? '模拟蓄水状态' : state.activeInitialState.id }}</b></div>
       <div class="metric"><span>状态时刻</span><b>{{ state.activeInitialState.time }}</b></div>
       <div class="metric"><span>来源断面</span><b>{{ state.activeInitialState.sourceSection }}</b></div>
       <div class="metric"><span>状态用途</span><b>{{ state.activeInitialState.analysisStatus }}</b></div>
@@ -39,12 +39,12 @@
     </div>
 
     <section class="panel panel-pad state-task-panel" :class="{ 'has-task': activeTask }">
-      <p v-if="state.pendingHandoff" class="state-source-note">条件来自：{{ state.pendingHandoff.sourceLabel }} · {{ state.pendingHandoff.issueTime }}，将按当前栅格配置执行。</p>
+      <p v-if="state.pendingHandoff" class="state-source-note">来源：{{ state.pendingHandoff.sourceLabel }} · {{ state.pendingHandoff.issueTime }}</p>
       <div class="state-task-form">
         <div>
           <span class="task-label">状态计算</span>
           <div class="mode-switch">
-            <button type="button" :class="{ active: stateTaskMode === 'initialization' }" @click="stateTaskMode = 'initialization'">生成初始状态</button>
+            <button type="button" :class="{ active: stateTaskMode === 'initialization' }" @click="stateTaskMode = 'initialization'">进阶初始化</button>
             <button type="button" :class="{ active: stateTaskMode === 'continuation' }" @click="stateTaskMode = 'continuation'">续算状态</button>
           </div>
         </div>
@@ -70,7 +70,7 @@
 
     <template v-if="state.domainInitialStates.length && (isModelState || stateAvailability.ready)">
     <div v-if="isModelState" class="time-toolbar panel" aria-label="真实逐时网格回放">
-      <div class="time-title"><strong>{{ state.activeInitialState.checkpoint?.importProvenance ? '导入状态快照' : '已计算状态回放' }}</strong><span>{{ state.activeInitialState.checkpoint?.importProvenance ? state.activeInitialState.time : replayCatalog ? `${replayCatalog.times.length} 个时刻` : replayError || '正在读取过程' }} · 输入 {{ frozenInputBundleVersionId(state.activeInitialState.checkpoint || state.activeInitialState) }}</span></div>
+      <div class="time-title"><strong>{{ state.activeInitialState.checkpoint?.importProvenance ? '导入状态' : '状态演变' }}</strong><span>{{ state.activeInitialState.checkpoint?.importProvenance ? state.activeInitialState.time : replayCatalog ? `${replayCatalog.times.length} 个时刻` : replayError || '正在读取过程' }}</span></div>
       <select v-if="replayCatalog" class="input time-input" v-model="replayTime" aria-label="状态回放时刻">
         <option v-for="time in replayCatalog.times" :key="time" :value="time">{{ time.replace('T', ' ') }}</option>
       </select>
@@ -326,6 +326,9 @@ watch(() => app.workContext, (workContext) => {
   const handoff = state.prepareFromWorkContext(workContext)
   if (handoff?.issueTime) stateTargetTime.value = handoff.issueTime.replace(' ', 'T')
 }, { immediate: true, deep: true })
+watch(() => [app.workContext.handoff?.targetPage, app.workContext.stateVersionId, state.domainInitialStates.length], ([target, id]) => {
+  if (target === 'state' && id && state.adoptedVersion !== id && state.domainInitialStates.some(row => row.id === id)) loadNode(id)
+}, { immediate: true })
 
 watch([() => state.activeInitialState.id, stateTaskMode], () => {
   if (isModelState.value && stateTaskMode.value === 'continuation' && continuationStartTime.value) {
@@ -543,6 +546,11 @@ function loadNode(id) {
 }
 
 async function prepareContinuation() {
+  const bundle = frozenInputBundleVersionId(state.activeInitialState.checkpoint || state.activeInitialState)
+  if (isModelState.value && bundle !== app.selectedInputBundleVersionId) {
+    try { await app.selectInputBundleVersion(bundle) }
+    catch (failure) { ElMessage.error(`无法采用该检查点的原始计算资料：${failure.message}`); return }
+  }
   stateTaskMode.value = 'continuation'
   if (!dayjs(stateTargetTime.value).isValid() || dayjs(stateTargetTime.value).isBefore(dayjs(continuationStartTime.value))) {
     stateTargetTime.value = continuationStartTime.value

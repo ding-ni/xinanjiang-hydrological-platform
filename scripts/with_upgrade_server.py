@@ -112,8 +112,13 @@ def main():
                 receipt['testPortClosed'] = not listening(args.port)
                 (output / 'server-receipt.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
                 raise RuntimeError('Owned test process did not stop; inspect saved process receipt')
+            deadline = time.monotonic() + 5
+            while listening(args.port) and time.monotonic() < deadline:
+                time.sleep(.1)
             receipt['testPortClosed'] = not listening(args.port)
             (output / 'server-receipt.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
+            if not receipt['testPortClosed']:
+                raise RuntimeError('Test port remains open; inspect saved process receipt')
 
 
 if __name__ == '__main__':

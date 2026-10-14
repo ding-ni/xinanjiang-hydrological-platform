@@ -80,8 +80,22 @@ def load_hourly_forcing(bundle, grids, start, requested_end, require_complete=Tr
     audit["nonfinite_counts_by_hour"] = nonfinite_by_hour.tolist()
     if require_complete and not bool(ready.all()):
         first = times[np.flatnonzero(~ready)[0]].isoformat()
-        raise ValueError(f"实际所需强迫时段缺测，拒绝模拟：{int((~ready).sum())}小时，首个{first}")
+        intervals = missing_intervals(times, ready)
+        detail = '; '.join(f"{row['start']} 至 {row['end']}（{row['hours']}小时）" for row in intervals[:8])
+        raise ValueError(f"计算时段降雨缺测{int((~ready).sum())}小时，起于{first}。{detail}")
     return times, values, counts, audit
 
 
-__all__ = ["load_hourly_forcing"]
+def missing_intervals(times, valid):
+    intervals, first = [], None
+    for index, accepted in enumerate(valid):
+        if not accepted and first is None:
+            first = index
+        if first is not None and (accepted or index == len(valid) - 1):
+            stop = index if accepted else index + 1
+            intervals.append({'start': times[first].isoformat(), 'end': times[stop - 1].isoformat(), 'hours': stop - first})
+            first = None
+    return intervals
+
+
+__all__ = ["load_hourly_forcing", "missing_intervals"]

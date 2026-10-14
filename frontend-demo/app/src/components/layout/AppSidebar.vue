@@ -24,7 +24,7 @@ const mainNav = [
   { path: '/realtime', name: 'realtime', label: '雨水情', icon: DataAnalysis },
   { path: '/data', name: 'data', label: '水文资料库', icon: Coin },
   { path: '/calibration', name: 'calibration', label: '率定与模拟', icon: TrendCharts },
-  { path: '/state', name: 'state', label: '起算状态', icon: Timer },
+  { path: '/state', name: 'state', label: '模拟状态', icon: Timer },
   { path: '/forecast', name: 'forecast', label: '洪水预报', icon: TrendCharts },
   { path: '/diagnostics', name: 'diagnostics', label: '模型诊断', icon: Operation },
   { path: '/archive', name: 'archive', label: '成果管理', icon: FolderOpened },

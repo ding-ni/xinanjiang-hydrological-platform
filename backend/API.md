@@ -1,5 +1,19 @@
 # Unified model API / schema 2.0
 
+## 命名方案与自动资料准备（1.12.0）
+
+- `GET /model-schemes` 返回工作区方案。`POST /model-schemes` 保存 `name/definition/calculationDraft`，已有方案附带 `id/revision` 做并发校验。输入定义改变产生修订；仅计算草稿改变更新当前草稿。
+- `GET /model-schemes/{id}?revision=N` 返回指定修订及 `latestRevision/revisions`。计算请求附带 `scheme:{id,revision}`，服务核验输入定义并冻结方案关联到 `lineage`。
+- `POST /scheme-preparations` 提交 `operation:schemeInput`、来源 `parentBundleVersionId`、`period`、`rainfallMethod`（`reuse/stationIdw`）、`statePolicy/continuousOrigin`，以及可选 `stationSourceId/idwPower/minimumStations/science/evaporation`。返回现有资料队列任务；同条件复用。读取 `/input-tasks/{id}` 与 `/result` 获取进度、问题及登记输入；登记由后台完成。
+- 准备结果 `issues` 汇总降雨、流量与蒸散发缺口，包含 `missingIntervals/flowMissingIntervals/petMissingIntervals`。用户洪水窗口在服务端核验并保存为自动输入目录；没有问题时计算请求带上 `inputs.sourceBundleVersionId/preparationTaskId/bundleVersionId/rainfallMethod`，服务再次校验准备条件。
+- `GET/POST /preparation-defaults` 管理工作区默认 `idwPower/minimumStations`。本地站点内容摘要参与输入缓存身份；资料更新会要求重新准备。原MDB与旧SQLite来源不静默混合。
+- `GET/POST /station-network?bundleVersionId=...&sourceId=...` 读取或保存来源站网：`stations:[{id,lon,lat}]`、`flowStation`。`sourceId` 可选登记来源或 `LOCAL_OBSERVATIONS`，省略时使用当前资料的原始来源。MDB默认读取该输入的冻结站网；登记站点JSON的流量使用明确父输入，标记 `PARENT_INPUT`。来源站网保存在SQL，并随方案修订及准备任务冻结；站网或原记录改变后不会复用旧准备结果。
+- 场次固定模拟使用 `runType:calibration`、`evaluationMode:manual` 与 `simulationOnly:true`，任务类型为 `eventSimulation`；只计算一次，参数不自动优化。
+- “采用最佳参数进行模拟”从冻结请求与完整最佳产汇流参数生成草稿；保留原资料和科学条件，不提交任务。连续率定优先采用最佳状态子任务的连续起点。成果对比可叠加同流域、时段重合的计算，并列出降雨、汇流及起算条件差异。
+- 共享起点连续率定完成后返回 `stateCalculationTaskId`，对应最佳参数固定连续模拟；逐时状态与末状态沿原状态接口读取。保存失败返回 `stateCalculationError`，不会伪造状态。
+- 河道 `pointQuery` 可带 `riverOnly:true`；返回 `location.clicked/queried/distanceM/reachId`。控制断面直接读取来源流量，中间点执行拓扑切分；相同冻结来源和点位查询在服务端复用。
+- 备份包含SQL方案修订及任务关联；旧方案记录与接口保留兼容。`GET /database/window` 和 `/export` 可指定 `sourceId`，未指定且存在同小时来源冲突时拒绝混用。
+
 ## 人工降雨情景预报（1.8.0）
 
 - `GET /forecast-rain` 返回 `products`。`POST /forecast-rain` 精确接收 `name/contextKey/issueTime/hourlyRainfallMm`；南安溪1km、本地整点、1–72项、0–1000mm。保存后返回不可变 `QPF-*`、`manifestSHA256`、逐时序列和累计量；相同内容重复登记返回同一版本。
@@ -16,7 +30,7 @@
 Use the existing `POST /tasks` or `/calibration-tasks`, with `runType: "calibration"` and `period.mode: "continuous"`.
 Supply `calibrationStart/calibrationEnd`, `validationStart/validationEnd`, optional `independentStart/independentEnd`, and `warmupDays` in `period`.
 The server freezes canonical `period.windows` (IDs `CALIBRATION`, `VALIDATION`, `INDEPENDENT`) and removes event-only fields and event-set lineage.
-Each scoring interval is disjoint, inclusive, local hourly time, at most 366 days. Each interval independently warms up from the parameter-dependent template; no parent checkpoint is accepted.
+Scoring intervals are chronological, disjoint, inclusive local hourly times. Calendar caps are removed; actual input coverage is checked with annual block reads. The platform defaults to `continuous-origin`: each candidate rebuilds its own trajectory from one origin, including all intervening hours. `independent-warmup` remains an explicit advanced option. No parent checkpoint is accepted for parameter search.
 Continuous PET is explicitly `inputs.evaporation.mode: "monthly-climatology-assumption"`.
 
 `calibration.optimizer.strategy` is `joint` (default) or `staged`; `seed` is an unsigned 32-bit integer (default 42).
@@ -90,7 +104,7 @@ Minimal simulation:
 }
 ```
 
-Omitted params use catalog reference; overrides accept only finite native names/bounds. `WM>WUM+WLM`, `KI+KG<0.98`, warmup 1–365 days, local whole-hour timestamps, 1960–2024 and ≤366-day windows are enforced. Actual hourly file and outlet observation coverage are still required. Browser URLs never select server filesystem inputs.
+Omitted params use catalog reference; overrides accept only finite native names/bounds. `WM>WUM+WLM`, `KI+KG<0.98`, warmup 1–365 days and local whole-hour timestamps are enforced. Calendar years and simulation spans follow actual hourly coverage; source-import size limits remain independent. Browser URLs never select server filesystem inputs.
 
 `stateInitialization` uses no parent; Vue requests the target hour after 7-day warmup. `stateContinuation` requires a successfully completed or archived parent, starts exactly one hour later, and matches context/grid/parameters. Both submission and worker verify the state version against the source task/result/checkpoint and input digest. Failed, cancelled, running or mismatched state artifacts are rejected. Older successful contextKey-only results are checked against their full frozen request. Checkpoints retain complete land and routing memories, not means alone.
 
@@ -317,7 +331,7 @@ Metadata is stored in the additive `state_metadata` SQL table. Saving a name or 
 
 `calibration.target` 新增 `joint`，对应产流、三分量坡面和河道联合搜索。`jointProfile` 为 `reference-16`（含KC/C）或 `fixed-kc-c-14`（当前KC/C固定）；`searchParameters` 指产流范围，`routingSearchParameters` 指三坡面K、`muskingum_k_scale`、`muskingum_x`。河段K倍数相对于提交时选定的汇流版本。所有路径继续由后端登记，客户端不能传入文件路径。
 
-`calibration.statePolicy` 支持 `independent-warmup` 和 `continuous-origin`；后者可携带本地整点 `continuousOrigin`。模拟请求的 `period.continuousOrigin` 用于重放已冻结原点；父状态续算不另指定原点。连续原点与首个请求时刻不能超过十年。场次PET可显式选 `constant-zero`、`monthly-climatology-assumption`，或用 `inputs.evaporation.mode=science-version` 和 `science.versionId` 选择不可变科学配置。
+`calibration.statePolicy` 支持 `independent-warmup` 和 `continuous-origin`；后者可携带本地整点 `continuousOrigin`。模拟请求的 `period.continuousOrigin` 用于重放已冻结原点；父状态续算不另指定原点。连续跨度按实际资料覆盖检查，取消十年上限。场次PET可显式选 `constant-zero`、`monthly-climatology-assumption`，或用 `inputs.evaporation.mode=science-version` 和 `science.versionId` 选择不可变科学配置。
 
 `GET /api/model/science-versions` 返回登记科学条件及当前实现摘要；`GET /api/model/science-versions/{id}` 导出经校验的完整依赖闭包。入队时冻结 `lineage.modelImplementationSHA256/scienceConfigurationSHA256/petConfigurationSHA256`。末状态携带同样身份和 `scienceSnapshot`。缺身份的历史状态继续可读，跨实现续算需要重新初始化。
 

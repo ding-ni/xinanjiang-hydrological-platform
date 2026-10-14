@@ -2,6 +2,20 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { trialConditions, changedParameters, alignedTrialSeries } from '../src/services/manualCalibrationService.js'
 import { catchupWindow, compatibleCatchupState } from '../src/services/stateCatchupService.js'
+import { buildCalibrationRequest } from '../src/services/calibrationSubmissionService.js'
+
+test('saving a fixed event simulation draft keeps fixed parameters and cannot restore an optimizer run', () => {
+  const draft = buildCalibrationRequest({ app: { basinId: 'nananxi-xufan', modelScale: '1km', projectData: { backend: {} } },
+    calibration: { calibrationMode: 'event', fixedEventSimulation: true, calibrationTarget: 'joint', params: { SM: 20 }, criteria: {},
+      searchParameters: { SM: { minimum: 10, maximum: 30 } }, routingSearchParameters: { RS_k_hours: { minimum: 1, maximum: 2 } } },
+    operationMode: 'calibration', events: [] })
+  assert.equal(draft.calibration.simulationOnly, true)
+  assert.equal(draft.calibration.evaluationMode, 'manual')
+  assert.deepEqual(draft.calibration.initialParameters, { SM: 20 })
+  assert.equal(draft.calibration.searchParameters, undefined)
+  assert.equal(draft.calibration.routingSearchParameters, undefined)
+  assert.equal(draft.calibration.target, undefined)
+})
 
 const request = { context: { contextKey: 'basin:1km' }, inputs: { bundleVersionId: 'input-v1', evaporation: { mode: 'constant-zero' } },
   routing: { versionId: 'routing-v1' }, period: { mode: 'event', warmupDays: 7, events: [{ id: 'A', start: '2017-06-01', end: '2017-06-02', purpose: '率定', revision: 1 }] },

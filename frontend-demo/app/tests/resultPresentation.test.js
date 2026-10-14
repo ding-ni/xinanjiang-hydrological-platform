@@ -12,7 +12,7 @@ test('every calibration period is selectable and simulation has one real period'
 })
 test('comparison permits changed parameters but checks forcing, state, routing and exact timestamps', () => {
   assert.equal(comparisonReason(request, { ...request, parameters: { SM: 60 } }, h, h), '')
-  for (const mutate of [r => r.inputs.bundleManifestSHA256 = 'other', r => r.lineage.routingManifestSHA256 = 'other', r => r.period.warmupDays = 2, r => r.period.initialStateVersionId = 'state']) {
+  for (const mutate of [r => r.inputs.bundleManifestSHA256 = 'other', r => r.lineage.routingManifestSHA256 = 'other', r => r.period.warmupDays = 2, r => r.period.initialStateVersionId = 'state', r => r.period.continuousOrigin = '2016-01-01', r => r.science = { versionId: 'other' }]) {
     const b = structuredClone(request); mutate(b); assert.notEqual(comparisonReason(request, b, h, h), '')
   }
   assert.notEqual(comparisonReason(request, request, h, { ...h, forecast: [...h.forecast].reverse() }), '')

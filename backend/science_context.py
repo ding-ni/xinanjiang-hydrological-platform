@@ -309,7 +309,7 @@ class ScienceVersions:
         event_zero = mode == 'constant-zero' or (mode is None and request.get("runType") == "calibration" and request.get("period", {}).get("mode") == "event")
         pet = {"mode": "CONSTANT_ASSUMPTION", "value_mm_h": 0.0, "production_eligible": False, "provenance": "Explicit event calibration zero PET assumption"} if event_zero else self.model / "config/pet_forcing_assumed_monthly.json"
         state_path = self.model / 'config/state_initialization_config.json'
-        default_strategy = 'continuous-origin' if (request.get('initialization') or {}).get('strategy') == 'CONTINUOUS' else 'independent-warmup'
+        default_strategy = 'continuous-origin' if (request.get('initialization') or {}).get('strategy') == 'CONTINUOUS' or request.get('period', {}).get('continuousOrigin') else 'independent-warmup'
         policy = {'strategy': (request.get('calibration') or {}).get('statePolicy', default_strategy),
                   'warmupHours': int(read_json(state_path).get('fixed_warmup_hours', 168))}
         if policy['strategy'] == 'continuous-origin':

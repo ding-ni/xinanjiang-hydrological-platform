@@ -15,7 +15,8 @@ export function frozenInputBundleVersionId(record = {}) {
 }
 
 export function inputResultUsesSelection(record, source) {
-  return frozenInputBundleVersionId(record) === selectedInputBundleVersionId(source)
+  const request = record.frozenRequest || record
+  return (request.inputs?.sourceBundleVersionId || frozenInputBundleVersionId(record)) === selectedInputBundleVersionId(source)
 }
 
 export function sourceJsonTemplate() {

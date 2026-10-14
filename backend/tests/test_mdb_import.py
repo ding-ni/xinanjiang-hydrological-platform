@@ -233,7 +233,7 @@ class ImportRegistrationTests(unittest.TestCase):
         service._initialize()
         _, values, _, _ = load_hourly_forcing(bundle, service.grids, "2018-01-01T00:00", "2018-01-01T02:00")
         self.assertEqual(values[:, 0].tolist(), [0, 2, 3])
-        with self.assertRaisesRegex(ValueError, "实际所需强迫时段缺测"):
+        with self.assertRaisesRegex(ValueError, "计算时段降雨缺测"):
             load_hourly_forcing(bundle, service.grids, "2017-12-31T23:00", "2018-01-01T02:00")
         result = service.window("2018-01-01T03:00", "2018-01-01T05:00")
         self.assertEqual(result["product"]["cells"][0]["values"], [4, None, None])
@@ -248,7 +248,7 @@ class ImportRegistrationTests(unittest.TestCase):
         displayed = service.window("2018-01-01T00:00", "2018-01-01T03:00")
         self.assertEqual(displayed["summary"]["reportingStationCount"], [1, 1, 1, 0])
         self.assertEqual(displayed["product"]["cells"][0]["values"], [0, 2, 3, None])
-        with self.assertRaisesRegex(ValueError, "实际所需强迫时段缺测"):
+        with self.assertRaisesRegex(ValueError, "计算时段降雨缺测"):
             load_hourly_forcing(bundle, service.grids, "2018-01-01T00:00", "2018-01-01T03:00")
 
     def test_source_replay_preserves_float64_and_keeps_other_registered_products(self):

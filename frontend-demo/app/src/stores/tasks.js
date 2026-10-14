@@ -27,6 +27,7 @@ function writeRemoteTasks(tasks) {
 function remoteRunType(request, fallback) {
   if (fallback === 'forecast') return 'forecast'
   if (request?.runType === 'simulation' || fallback === 'continuousSimulation') return 'continuousSimulation'
+  if (request?.calibration?.simulationOnly || fallback === 'eventSimulation') return 'eventSimulation'
   return request?.period?.mode === 'continuous' || fallback === 'continuousCalibration'
     ? 'continuousCalibration'
     : 'eventCalibration'

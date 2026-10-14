@@ -24,6 +24,9 @@ export function comparisonReason(left, right, leftHydro, rightHydro) {
     evaporation: request.inputs?.evaporation,
     warmupDays: request.period?.warmupDays,
     parent: request.period?.initialStateVersionId || null,
+    statePolicy: request.calibration?.statePolicy || null,
+    continuousOrigin: request.calibration?.continuousOrigin || request.period?.continuousOrigin || null,
+    science: request.science?.versionId || request.lineage?.scienceVersionId || null,
     initialization: request.initialization || null,
   })
   const a = conditions(left || {}), b = conditions(right || {})
@@ -34,6 +37,37 @@ export function comparisonReason(left, right, leftHydro, rightHydro) {
   if (JSON.stringify(leftHydro.obs) !== JSON.stringify(rightHydro.obs)
       || JSON.stringify(leftHydro.forcing?.precipitation) !== JSON.stringify(rightHydro.forcing?.precipitation)) return '实测流量或降雨过程不同'
   return ''
+}
+
+export function comparisonAvailability(left, right, leftHydro, rightHydro) {
+  if (!leftHydro?.forecast?.length || !rightHydro?.forecast?.length) return '所选成果没有对应流量过程'
+  if (JSON.stringify(canonical(left?.context)) !== JSON.stringify(canonical(right?.context))) return '所选成果属于其他计算流域'
+  const times = new Set(leftHydro.forecast.map(row => row.time))
+  if (!rightHydro.forecast.some(row => times.has(row.time))) return '两次计算没有重合时段'
+  return ''
+}
+
+export function comparisonDifferences(left = {}, right = {}) {
+  const fields = [
+    ['降雨资料', r => [r.inputs?.bundleManifestSHA256, r.inputs?.bundleVersionId]],
+    ['汇流条件', r => [r.routing, r.lineage?.routingManifestSHA256]],
+    ['蒸散发与初态', r => [r.science, r.inputs?.evaporation, r.initialization]],
+    ['起算方式', r => [r.period?.warmupDays, r.period?.initialStateVersionId, r.period?.continuousOrigin || r.calibration?.continuousOrigin, r.calibration?.statePolicy]],
+  ]
+  return fields.filter(([, read]) => JSON.stringify(canonical(read(left))) !== JSON.stringify(canonical(read(right)))).map(([name]) => name).join('、')
+}
+
+export function matchingResultPeriod(result, id, hydrograph) {
+  const periods = resultPeriods(result)
+  const exact = periods.find(row => row.id === id)
+  if (exact) return exact.hydrograph
+  const times = new Set((hydrograph?.forecast || []).map(row => row.time))
+  return periods.map(row => ({ ...row, overlap: (row.hydrograph.forecast || []).filter(point => times.has(point.time)).length }))
+    .sort((a, b) => b.overlap - a.overlap).find(row => row.overlap)?.hydrograph
+}
+
+export function calculationName(task, metadata = {}) {
+  return metadata[task?.taskId]?.name || [task?.lineage?.schemeName || '历史计算', task?.runTypeLabel, task?.createdAt?.replace('T', ' ').slice(0, 16)].filter(Boolean).join(' · ')
 }
 
 export function csv(rows) {

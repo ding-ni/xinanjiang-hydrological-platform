@@ -47,13 +47,21 @@ class ContinuousContractTests(unittest.TestCase):
     def test_rejects_overlap_inclusive_edges_missing_and_invalid_times(self):
         cases = [dict(validationStart='2017-06-19T23:00'), dict(independentEnd=None),
                  dict(calibrationStart='2017-06-19T00:30'), dict(validationStart='2017-06-20T00:00Z'),
-                 dict(calibrationStart='2010-01-01T00:00'), dict(independentEnd='2025-01-01T00:00'),
                  dict(initialStateVersionId='STATE-JOB-existing'), dict(windows=[])]
         for updates in cases:
             with self.subTest(updates=updates), self.assertRaises(ValueError):
                 request = continuous_request()
                 request['period'].update(updates)
                 normalize_request(request, case_catalog())
+
+    def test_calendar_does_not_replace_actual_coverage_validation(self):
+        request = continuous_request()
+        request['period'].update(calibrationStart='2010-01-01T00:00', independentEnd='2026-01-01T00:00')
+        self.assertEqual(normalize_request(request, case_catalog())['period']['windows'][-1]['end'], '2026-01-01T00:00:00')
+        request['period'].update(calibrationStart='2018-01-01T00:00', calibrationEnd='2018-01-02T00:00')
+        request['period']['independentEnd'] = '2017-06-21T23:00'
+        with self.assertRaisesRegex(ValueError, '顺序'):
+            normalize_request(request, case_catalog())
 
     def test_rejects_wrong_pet_and_search_config(self):
         for changes in ({'strategy': 'unknown'}, {'maxEvaluations': 9}, {'seed': True}, {'seed': 4294967296}):
@@ -125,6 +133,46 @@ class SearchTests(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get('XAJ_TEST_REAL_MODEL') == '1', 'Opt-in real model numerical regression')
 class ContinuousNumericalTests(unittest.TestCase):
+    def test_shared_trajectory_is_candidate_specific_and_held_out_is_not_optimized(self):
+        import numpy as np
+        import pandas as pd
+        from worker import ModelJob, kernels
+        with tempfile.TemporaryDirectory() as temp, patch('worker.RUNTIME', Path(temp)):
+            request = continuous_request(staged=False)
+            request['period']['warmupDays'] = 30  # shared origin overrides the independent-period warmup
+            request['calibration'].update(statePolicy='continuous-origin', continuousOrigin='2017-06-18T00:00')
+            def make(name):
+                folder = Path(temp) / 'tasks' / name
+                write_json(folder / 'request.json', normalize_request(request, case_catalog()))
+                write_json(folder / 'status.json', {'taskId': name})
+                return ModelJob(folder, publish_parameters=False)
+            job = make('JOB-shared')
+            original_load = job.load
+            def exact_interval(rows, warmup):
+                self.assertEqual(warmup, 24 if rows[0]['event_id'] == 'CONTINUOUS-TRAJECTORY' else 0)
+                return original_load(rows, warmup)
+            original = kernels.route_event_fast
+            initial = []
+            def tracked(event, params, routing, router, mapping, state):
+                initial.append((state, {key: values.copy() for key, values in state.items()}))
+                self.assertEqual(event.times[0], pd.Timestamp('2017-06-18T00:00'))
+                self.assertEqual(event.times[-1], pd.Timestamp('2017-06-21T23:00'))
+                return original(event, params, routing, router, mapping, state)
+            with patch.object(kernels, 'route_event_fast', side_effect=tracked), patch.object(job, 'load', side_effect=exact_interval):
+                result = job.calibrate()
+            self.assertEqual(result['actualWarmupHours'], 24)
+            self.assertEqual(len(initial), 5)  # four search candidates, one frozen best trajectory
+            self.assertEqual(len({id(state) for state, _ in initial}), 5)
+            for state, snapshot in initial:
+                for key in state:
+                    np.testing.assert_array_equal(state[key], snapshot[key])
+            other = make('JOB-shared-held-out')
+            other.observed.loc['2017-06-20':'2017-06-21'] *= 3
+            changed = other.calibrate()
+            self.assertEqual(changed['bestParameters'], result['bestParameters'])
+            self.assertEqual(changed['optimizer'], result['optimizer'])
+            self.assertNotEqual(changed['validationMetrics']['nse'], result['validationMetrics']['nse'])
+
     def test_real_stages_isolate_validation_and_match_vendor(self):
         import numpy as np
         import pandas as pd

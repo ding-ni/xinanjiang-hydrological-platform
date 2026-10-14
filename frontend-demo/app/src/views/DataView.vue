@@ -20,7 +20,6 @@
         <button v-for="item in tabs" :key="item.id" :class="{ active: tab === item.id }" @click="tab = item.id">{{ item.label }}</button>
       </nav>
 
-      <p v-if="tab === 'observations'" class="section-intro">查询测站原始雨量、水位和流量。这里保存的是站点实测记录；网格降雨在“模型计算资料”中查看。</p>
       <div v-if="tab === 'observations'" class="observation-workspace">
         <aside class="station-browser">
           <div class="segmented" aria-label="水文要素"><button v-for="(v, key) in variables" :key="key" :class="{ active: variable === key }" @click="changeVariable(key)">{{ v.label }}</button></div>
@@ -33,18 +32,18 @@
         </aside>
         <main class="observation-main">
           <form class="query-toolbar" @submit.prevent="queryWindow">
+            <label>资料来源<select class="input" v-model="sourceId"><option value="">历年资料</option><option v-for="item in sources" :key="item.id" :value="item.id">{{ item.id }}</option></select></label>
             <label>起始时间<input class="input" type="datetime-local" v-model="start" step="3600" required aria-label="资料起始时间" /></label>
             <label>结束时间<input class="input" type="datetime-local" v-model="end" step="3600" required aria-label="资料结束时间" /></label>
             <button class="btn primary" :disabled="busy || !stationId"><Search />查询</button>
             <button class="btn" type="button" title="导出完整查询时段的逐小时记录" aria-label="导出全部逐时资料" :disabled="busy || !result || queryChanged" @click="exportSeries"><Download />导出全部逐时资料</button>
           </form>
-          <p class="query-note">可查询跨年时段。统计覆盖完整查询范围，逐时过程分段显示；导出包含所选时段的全部小时。</p>
           <div v-if="result && !queryChanged" class="series-content">
             <div class="series-title"><h2>{{ result.station.name }} · {{ variables[result.variable].label }}过程</h2><span>{{ result.unit }}</span></div>
             <p class="query-range">完整查询时段：{{ timeLabel(result.range?.start || start) }} → {{ timeLabel(result.range?.end || end) }}</p>
             <div class="series-summary"><span>有效 <b>{{ result.valid }}</b> / {{ result.expected }} 小时</span><span>缺测 <b :class="{ caution: result.missing }">{{ result.missing }}</b> 小时</span><span>最大值 <b>{{ value(result.maximum) }}</b> {{ result.unit }}</span><span v-if="result.variable === 'rain'">有效记录累计 <b>{{ value(result.total) }}</b> mm</span></div>
             <div v-if="result.display" class="display-toolbar" aria-label="逐时显示时段">
-              <span>当前逐时显示：{{ timeLabel(result.display.start) }} → {{ timeLabel(result.display.end) }}<small>每段最多366天，原始小时值保留</small></span>
+              <span>显示时段：{{ timeLabel(result.display.start) }} → {{ timeLabel(result.display.end) }}</span>
               <div v-if="result.expected > result.display.limitHours" class="display-actions">
                 <button class="btn" :disabled="busy || !result.display.hasPrevious" @click="showDisplayPeriod(-1)"><ArrowLeft />上一时段</button>
                 <span>{{ Math.floor(result.display.offsetHours / result.display.limitHours) + 1 }} / {{ Math.ceil(result.expected / result.display.limitHours) }} 段</span>
@@ -67,51 +66,32 @@
       </section>
 
       <section v-else-if="tab === 'processing'" class="processing-section">
-        <InputProductPanel :prepared-source="registeredSource">
-          <template #station-source>
-            <form class="source-form" @submit.prevent="registerRain">
-              <label>站点资料名称<input class="input" v-model="sourceName" :placeholder="suggestedSourceName" maxlength="120" /></label>
-              <label>开始<input class="input" type="datetime-local" v-model="sourceStart" step="3600" required aria-label="站点雨量开始" /></label>
-              <label>结束<input class="input" type="datetime-local" v-model="sourceEnd" step="3600" required aria-label="站点雨量结束" /></label>
-              <fieldset><legend>来源雨量站</legend><label v-for="station in rainStations" :key="station.id"><input type="checkbox" v-model="sourceStations" :value="station.id" />{{ station.name }}</label></fieldset>
-              <button class="btn primary" :disabled="busy || !sourceStations.length"><Connection />保存站点雨量资料</button>
-            </form>
-            <div v-if="registeredSource" class="source-receipt">已保存站点雨量：{{ registeredSource.name }}；下方空间插值设置已带入该来源。<details><summary>来源编号</summary><code>{{ registeredSource.sourceId }}</code></details></div>
-          </template>
-        </InputProductPanel>
+        <InputSourceRecords />
       </section>
 
-      <details class="saved-conditions" :open="route.query.tab === 'schemes'">
-        <summary>已保存的计算条件 <span>{{ schemes.length }} 份</span></summary>
-        <p class="query-note">保存一次已完成计算的时段、资料版本和计算设置，便于按原条件重新计算。它不生成雨量或洪水资料，也不代替参数、状态及成果的保存；率定类条件重新计算时会重新搜索参数。</p>
-        <div class="section-toolbar"><RouterLink class="btn" to="/calibration">率定与模拟<ArrowRight /></RouterLink><RouterLink class="btn" to="/archive">任务与成果<ArrowRight /></RouterLink></div>
-        <form class="scheme-form" @submit.prevent="saveScheme"><div class="scheme-field"><label for="scheme-task">已完成的计算</label><select id="scheme-task" class="input" v-model="schemeTask" required><option value="" disabled>选择计算任务</option><option v-for="task in reusableTasks" :key="task.taskId" :value="task.taskId">{{ task.runTypeLabel }} · {{ task.createdAt }} · {{ task.taskId.slice(-8) }}</option></select></div><label>条件名称<input class="input" v-model="schemeName" maxlength="80" required /></label><button class="btn primary" :disabled="busy || !schemeTask"><Collection />保存计算条件</button></form>
-        <div class="records-scroll"><table class="table"><thead><tr><th>条件名称</th><th>计算类型</th><th>保存时间</th><th>来源任务</th><th>操作</th></tr></thead><tbody><tr v-for="scheme in schemes" :key="scheme.id"><td><b>{{ scheme.name }}</b></td><td>{{ schemeType(scheme) }}</td><td>{{ scheme.createdAt }}</td><td><code>{{ scheme.sourceTaskId }}</code></td><td><button class="btn" :disabled="busy" @click="runScheme(scheme)"><VideoPlay />按原条件重新计算</button></td></tr><tr v-if="!schemes.length"><td colspan="5">完成一次率定、模拟或状态计算后，可保存该次计算的条件。</td></tr></tbody></table></div>
-      </details>
     </template>
   </section>
 </template>
 
 <script setup>
 import { computed, ref, onBeforeUnmount, watch } from 'vue'
-import { Refresh, FolderChecked, Search, Download, ArrowLeft, ArrowRight, Connection, Collection, VideoPlay } from '@element-plus/icons-vue'
-import { ElMessageBox } from 'element-plus'
+import { Refresh, FolderChecked, Search, Download, ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useMonitorStore } from '@/stores/monitor'
 import { modelApi, modelBackendEnabled } from '@/services/modelBackendService'
 import BaseChart from '@/components/charts/BaseChart.vue'
-import InputProductPanel from '@/components/config/InputProductPanel.vue'
-import { initialObservationWindow, observationHour, observationTime, stationRainfallName } from '@/services/observationWindowPresentation.js'
+import InputSourceRecords from '@/components/config/InputSourceRecords.vue'
+import { initialObservationWindow, observationHour, observationTime } from '@/services/observationWindowPresentation.js'
 
 const app = useAppStore()
 const monitor = useMonitorStore()
 const route = useRoute()
 const available = computed(() => app.basinId === 'nananxi-xufan' && modelBackendEnabled())
-const tabs = [{ id: 'observations', label: '实测资料' }, { id: 'events', label: '洪水目录' }, { id: 'processing', label: '模型计算资料' }]
+const tabs = [{ id: 'observations', label: '实测资料' }, { id: 'events', label: '洪水目录' }, { id: 'processing', label: '资料来源与处理记录' }]
 const variables = { rain: { label: '降雨量', color: '#287ab4' }, level: { label: '水位', color: '#177c72' }, flow: { label: '流量', color: '#bb633e' } }
 const tab = ref(route.query.tab === 'inputs' ? 'processing' : tabs.some(item => item.id === route.query.tab) ? route.query.tab : 'observations'), busy = ref(false), error = ref(''), message = ref('')
-const summary = ref(null), stations = ref([]), events = ref([]), tasks = ref([]), schemes = ref([])
+const summary = ref(null), stations = ref([]), events = ref([]), sources = ref([]), sourceId = ref('')
 const variable = ref('rain'), stationId = ref(''), stationSearch = ref(''), eventSearch = ref('')
 const start = ref(''), end = ref(''), result = ref(null), page = ref(0), resultQuery = ref('')
 if (typeof route.query.station === 'string') stationId.value = route.query.station
@@ -121,21 +101,15 @@ if (observationHour(route.query.end) != null) {
   end.value = observationTime(last)
   start.value = observationTime(last - 23)
 }
-const sourceName = ref(''), sourceStart = ref(start.value), sourceEnd = ref(end.value)
-const sourceStations = ref([])
-const registeredSource = ref(null), schemeTask = ref(''), schemeName = ref('')
 let revision = 0, disposed = false
 onBeforeUnmount(() => { disposed = true; revision++ })
 const number = (v) => Number(v || 0).toLocaleString('zh-CN')
 const value = (v) => v == null ? '—' : Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 3 })
 const timeLabel = v => String(v || '').replace('T', ' ')
-const suggestedSourceName = computed(() => stationRainfallName(sourceStart.value, sourceEnd.value))
-const queryKey = computed(() => [stationId.value, variable.value, start.value, end.value].join('|'))
+const queryKey = computed(() => [stationId.value, variable.value, start.value, end.value, sourceId.value].join('|'))
 const queryChanged = computed(() => resultQuery.value !== queryKey.value)
-const rainStations = computed(() => stations.value.filter(s => s.variable === 'rain'))
 const filteredStations = computed(() => stations.value.filter(s => s.variable === variable.value && `${s.name}${s.id}`.includes(stationSearch.value.trim())))
 const filteredEvents = computed(() => events.value.filter(e => `${e.eventId}${e.floodCode}${e.start}`.includes(eventSearch.value.trim())))
-const reusableTasks = computed(() => tasks.value.filter(t => ['completed', 'archived'].includes(t.status) && ['simulation', 'calibration', 'stateInitialization', 'stateContinuation'].includes(t.runConfig?.runType)))
 const pageCount = computed(() => Math.max(1, Math.ceil((result.value?.series.length || 0) / 24)))
 const pagedSeries = computed(() => result.value?.series.slice(page.value * 24, (page.value + 1) * 24) || [])
 const chartOption = computed(() => {
@@ -149,7 +123,7 @@ const chartOption = computed(() => {
     dataZoom: [{ type: 'inside' }, { type: 'slider', height: 18, bottom: 8 }],
     series: [{ name: variables[r.variable].label, type: rain ? 'bar' : 'line', data: r.series.map(s => s.value), showSymbol: false, connectNulls: false, smooth: false, barMaxWidth: 8, lineStyle: { width: 1.8 } }] }
 })
-function params(offsetHours = 0) { return new URLSearchParams({ stationId: stationId.value, variable: variable.value, start: start.value, end: end.value, ...(offsetHours ? { offsetHours } : {}) }) }
+function params(offsetHours = 0) { return new URLSearchParams({ stationId: stationId.value, variable: variable.value, start: start.value, end: end.value, ...(sourceId.value ? { sourceId: sourceId.value } : {}), ...(offsetHours ? { offsetHours } : {}) }) }
 async function act(work) {
   if (!available.value || busy.value) return
   const current = ++revision
@@ -160,17 +134,14 @@ async function act(work) {
 }
 async function load() {
   await act(async valid => {
-    const data = await Promise.all(['summary', 'stations', 'events', 'schemes'].map(p => modelApi(`database/${p}`)))
-    const history = await modelApi('tasks')
+    const data = await Promise.all(['summary', 'stations', 'events', 'sources'].map(p => modelApi(`database/${p}`)))
     if (!valid()) return
-    summary.value = data[0]; stations.value = data[1].stations; events.value = data[2].events; schemes.value = data[3].schemes; tasks.value = history.tasks
+    summary.value = data[0]; stations.value = data[1].stations; events.value = data[2].events; sources.value = data[3].sources
     if (!stations.value.some(s => s.variable === variable.value && s.id === stationId.value)) stationId.value = stations.value.find(s => s.variable === variable.value)?.id || ''
     if (!start.value || !end.value) {
       const window = initialObservationWindow(stations.value.find(s => s.variable === variable.value && s.id === stationId.value), monitor.hasHistoricalObservations ? monitor.currentTimeLabel : app.dataTime)
       if (window) { start.value = window.start; end.value = window.end }
     }
-    if (!sourceStart.value) sourceStart.value = start.value
-    if (!sourceEnd.value) sourceEnd.value = end.value
     if (!stationId.value || !start.value || !end.value) return
     const key = queryKey.value
     const dataWindow = await modelApi(`database/window?${params()}`)
@@ -199,24 +170,10 @@ function exportSeries() {
   const anchor = document.createElement('a'); anchor.href = `${String(import.meta.env.VITE_MODEL_API_BASE).replace(/\/$/, '')}/database/export?${params()}`; anchor.download = 'observations.csv'; anchor.click()
 }
 async function backup() { await act(async valid => { const r = await modelApi('database/backup', { method: 'POST', body: {}, timeoutMs: 180000 }); if (valid()) message.value = `备份已校验：${r.path}` }) }
-async function registerRain() {
-  const body = { name: sourceName.value.trim() || suggestedSourceName.value, stationIds: [...sourceStations.value], start: sourceStart.value, end: sourceEnd.value }
-  await act(async valid => { const r = await modelApi('database/rain-source', { method: 'POST', body }); if (valid()) { registeredSource.value = { ...r, start: body.start, end: body.end }; message.value = '站点雨量资料已保存。请核对整编设置后再生成网格降雨。当前计算资料尚未改变。' } })
-}
-async function saveScheme() {
-  const body = { name: schemeName.value.trim(), taskId: schemeTask.value }
-  await act(async valid => { await modelApi('database/schemes', { method: 'POST', body }); const r = await modelApi('database/schemes'); if (valid()) { schemes.value = r.schemes; message.value = '计算条件已保存，可按原条件重新计算。' } })
-}
-function schemeType(scheme) { return tasks.value.find(task => task.taskId === scheme.sourceTaskId)?.runTypeLabel || '见来源任务' }
-async function runScheme(scheme) {
-  try { await ElMessageBox.confirm(`按“${scheme.name}”保存的时段、资料版本和计算设置新建任务？率定类条件会重新搜索参数。`, '按原条件重新计算', { confirmButtonText: '开始计算', cancelButtonText: '取消' }) } catch { return }
-  await act(async valid => { const r = await modelApi(`database/schemes/${scheme.id}/run`, { method: 'POST', body: {} }); if (valid()) message.value = `计算已提交：${r.taskId}。可在成果管理查看进度。` })
-}
 watch([available, () => app.contextKey], ([enabled], previous) => {
   revision++; busy.value = false; result.value = null
   if (previous) {
-    registeredSource.value = null; sourceStations.value = []; sourceName.value = ''
-    sourceStart.value = ''; sourceEnd.value = ''; start.value = ''; end.value = ''
+    sourceId.value = ''; start.value = ''; end.value = ''
   }
   if (enabled) load()
 }, { immediate: true })

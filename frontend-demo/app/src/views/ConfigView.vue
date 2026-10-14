@@ -31,12 +31,6 @@
       </aside>
 
       <main class="panel panel-pad">
-        <section v-if="isModelInputWorkspace" class="data-contract-card" aria-label="水文作业入口">
-          <div><b>当前模型计算资料</b><span>{{ app.basinName }} · {{ app.activeScaleMeta.label }}</span>
-            <span>{{ app.selectedInputProduct?.name || app.selectedInputBundleVersionId }}</span>
-            <span v-if="inputCatalogError">{{ inputCatalogError }}</span></div>
-          <RouterLink to="/calibration">参数率定 →</RouterLink>
-        </section>
         <template v-if="tab === '水雨情资料'">
           <div class="panel-title-row">
             <h3 class="panel-title">水雨情资料</h3>
@@ -44,15 +38,8 @@
           </div>
           <template v-if="app.basinId === 'nananxi-xufan'">
             <template v-if="isModelInputWorkspace">
-            <p class="hint">资料查询、整编和版本选用统一在水文资料库完成。本页只显示当前资料摘要。</p>
-            <div class="input-summary" aria-label="当前模型计算资料摘要">
-              <b>{{ currentInputPresentation.name }}</b>
-              <span>{{ currentInputPresentation.range }}</span>
-              <small>{{ currentInputPresentation.rangeNote }}</small>
-              <dl><template v-for="row in currentInputContents.rows" :key="row.key"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></template></dl>
-              <RouterLink class="btn primary" to="/data?tab=inputs">进入模型计算资料 →</RouterLink>
-            </div>
-            <p class="hint">选择模型计算资料后，在“率定与模拟”中选取场次和计算条件。选场次只限定计算时段；需要更换降雨资料时才另行整编。</p>
+            <table class="table"><thead><tr><th>水文资料</th><th>覆盖时段</th><th>记录</th></tr></thead><tbody><tr><td>测站雨量</td><td>{{ observationRangeLabel('rain') }}</td><td>{{ nananxiRainStationCount }} 站 · {{ recordCountLabel('rain') }}</td></tr><tr><td>徐畈水位与流量</td><td>{{ observationRangeLabel('river') }}</td><td>{{ recordCountLabel('river') }}</td></tr></tbody></table>
+            <RouterLink class="btn primary" to="/data">查询水文资料</RouterLink>
             </template>
             <template v-else>
             <p class="hint">以下为离线原始资料目录，仅供来源浏览；不代表真实 整编资料 服务或模型计算已接入。</p>
@@ -122,7 +109,6 @@
 
         <template v-else-if="tab === '模型方案'">
           <h3 class="panel-title">分布式模型方案</h3>
-          <details v-if="app.backendCase" class="method-note"><summary>默认降雨处理规则</summary><p>站点雨量按逐小时有效记录作距离反比加权插值。缺测不补零；已有网格降雨可直接复用。修改默认值只影响之后新建的方案，已保存计算保留原条件。</p><div class="form-grid"><div class="field"><label>距离幂次<input class="input" type="number" min="1" max="4" step="0.1" v-model.number="preparationDefaults.idwPower" /></label></div><div class="field"><label>最少有效雨量站<input class="input" type="number" min="1" max="32" v-model.number="preparationDefaults.minimumStations" /></label></div></div><button class="btn" @click="savePreparationDefaults">保存默认处理规则</button></details>
           <p v-if="isModelInputWorkspace" class="hint"><RouterLink to="/diagnostics">编辑坡面与河网汇流参数</RouterLink></p>
           <div class="scheme-summary">
             <div><span>方案</span><b>{{ activeConfig.name }}</b><small>{{ app.backendCase ? '参考参数：' : '' }}{{ activeConfig.version }} · {{ activeConfig.status }}</small></div>
@@ -147,22 +133,17 @@
         <template v-else-if="tab === '流域与站网'">
           <h3 class="panel-title">流域与站网</h3>
           <template v-if="app.basinId === 'nananxi-xufan'">
-            <RouterLink to="/data">查询实测资料 →</RouterLink>
-            <details v-if="app.backendCase" class="workspace-input-settings"><summary>资料设置</summary>
+            <RouterLink class="btn" to="/data">查询实测资料</RouterLink>
+            <details v-if="app.backendCase" class="workspace-input-settings"><summary>维护资料来源与站网</summary>
               <div class="config-grid two">
-                <div class="field"><label for="workspace-input-source">基础计算资料</label><select id="workspace-input-source" class="input" v-model="preparationDefaults.sourceBundleVersionId" @change="savePreparationDefaults"><option v-for="source in app.inputProducts" :key="source.bundleVersionId" :value="source.bundleVersionId">{{ source.name }}</option></select></div>
-                <div class="field"><label for="workspace-rainfall-method">降雨资料</label><select id="workspace-rainfall-method" class="input" v-model="preparationDefaults.rainfallMethod" @change="savePreparationDefaults"><option value="reuse">已有网格降雨</option><option value="stationIdw">站点雨量</option></select></div>
-                <div v-if="preparationDefaults.rainfallMethod === 'stationIdw'" class="field"><label for="workspace-station-source">站点资料</label><select id="workspace-station-source" class="input" v-model="preparationDefaults.stationSourceId" @change="savePreparationDefaults"><option :value="null">基础资料的原始雨量</option><option value="LOCAL_OBSERVATIONS">本地实测资料库</option><option v-for="source in networkSources" :key="source.sourceId" :value="source.sourceId">{{ source.name }}</option></select></div>
+                <div class="field"><label for="workspace-station-source">实测资料来源</label><select id="workspace-station-source" class="input" v-model="preparationDefaults.stationSourceId" @change="savePreparationDefaults"><option :value="null">原资料测站记录</option><option value="LOCAL_OBSERVATIONS">本地实测资料库</option><option v-for="source in networkSources" :key="source.sourceId" :value="source.sourceId">{{ source.name }}</option></select></div>
               </div>
-            </details>
-            <details v-if="app.backendCase" class="station-network"><summary>计算站网</summary>
-              <label>资料来源<select class="input" v-model="networkBundle" @change="loadNetwork"><option v-for="source in app.inputProducts" :key="source.bundleVersionId" :value="source.bundleVersionId">{{ source.name }}</option></select></label>
-              <label>站点来源<select class="input" v-model="networkSource" @change="loadNetwork"><option value="">沿用资料的原始来源</option><option value="LOCAL_OBSERVATIONS">本地实测资料库</option><option v-for="source in networkSources" :key="source.sourceId" :value="source.sourceId">{{ source.name }}</option></select></label>
               <p v-if="networkError" role="alert" class="warn-text">{{ networkError }}</p>
               <template v-if="network"><label>控制断面<span v-if="network.flowStation === 'PARENT_INPUT'">沿用当前资料的实测流量</span><input v-else class="input" v-model.trim="network.flowStation" /></label>
                 <table class="table"><thead><tr><th>雨量站号</th><th>经度</th><th>纬度</th><th></th></tr></thead><tbody><tr v-for="(station, index) in network.stations" :key="index"><td><input class="input" v-model.trim="station.id" /></td><td><input class="input" type="number" step="any" v-model.number="station.lon" /></td><td><input class="input" type="number" step="any" v-model.number="station.lat" /></td><td><button class="btn mini" @click="network.stations.splice(index, 1)">移除</button></td></tr></tbody></table>
                 <div class="btn-row"><button class="btn" @click="network.stations.push({ id: '', lon: null, lat: null })">添加雨量站</button><button class="btn primary" :disabled="networkBusy" @click="saveNetwork">保存站网</button></div>
               </template>
+              <h4>降雨插值</h4><div class="form-grid"><div class="field"><label>距离幂次<input class="input" type="number" min="1" max="4" step="0.1" v-model.number="preparationDefaults.idwPower" /></label></div><div class="field"><label>最少有效雨量站<input class="input" type="number" min="1" max="32" v-model.number="preparationDefaults.minimumStations" /></label></div></div><button class="btn" @click="savePreparationDefaults">保存处理规则</button>
             </details>
             <div class="station-summary">
               <span><b>{{ nananxiStationRows.length }}</b> 个登记站点</span>
@@ -427,7 +408,7 @@ async function saveNetwork() {
   finally { networkBusy.value = false }
 }
 async function savePreparationDefaults() {
-  try { preparationDefaults.value = await modelApi('preparation-defaults', { method: 'POST', body: preparationDefaults.value }); ElMessage.success('默认处理规则已保存。') }
+  try { preparationDefaults.value = await modelApi('preparation-defaults', { method: 'POST', body: preparationDefaults.value }); networkBundle.value = preparationDefaults.value.sourceBundleVersionId; networkSource.value = preparationDefaults.value.stationSourceId || ''; await loadNetwork(); ElMessage.success('资料设置已保存') }
   catch (failure) { ElMessage.error(failure.message) }
 }
 const tabs = ['流域与站网', '模型方案', '参考参数']
@@ -560,10 +541,11 @@ function recordCountLabel(kind) {
 
 onMounted(async () => {
   if (app.backendCase) {
-    networkBundle.value = app.selectedInputBundleVersionId
     try { networkSources.value = (await modelApi('input-sources')).sources } catch (failure) { networkError.value = failure.message }
-    await loadNetwork()
     try { preparationDefaults.value = await modelApi('preparation-defaults') } catch (failure) { ElMessage.warning(failure.message) }
+    networkBundle.value = preparationDefaults.value.sourceBundleVersionId
+    networkSource.value = preparationDefaults.value.stationSourceId || ''
+    await loadNetwork()
   }
   await loadProjectObservationCatalog()
   try {
@@ -1183,4 +1165,6 @@ function onToggleUse(code) {
   .panel-title-row { align-items: flex-start; flex-direction: column; }
   .data-object-note { align-items: flex-start; flex-direction: column; gap: 4px; }
 }
+.view-config :is(label,p,small,summary,td,th,.hint,.nav button,.field label,.status-text,.config-grid span){font-size:14px}
+.view-config :is(.btn,.input,.nav button){min-height:36px;font-size:14px}
 </style>

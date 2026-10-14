@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common import read_json
+from common import read_json, write_json
 from server import TaskManager, InputTaskManager
 from hydrological_operations import HydrologicalOperations, flood_catalog
 from model_schemes import ModelSchemes, input_definition
@@ -17,6 +17,43 @@ from test_unified_backend import simulation, calibration
 
 
 class SchemeEditorTests(unittest.TestCase):
+    def test_state_replay_rejects_changed_flow_and_accepts_roundoff(self):
+        original = {'forecast': [{'time': '2024-07-01T00:00', 'value': 10}]}
+        HydrologicalOperations.assert_same_flow(original, {'forecast': [{'time': '2024-07-01T00:00:00', 'value': 10 + 1e-10}]})
+        for changed in ({'forecast': []}, {'forecast': [{'time': '2024-07-01T01:00', 'value': 10}]}, {'forecast': [{'time': '2024-07-01T00:00', 'value': 11}]}):
+            with self.assertRaisesRegex(ValueError, '原成果不一致'):
+                HydrologicalOperations.assert_same_flow(original, changed)
+    def test_scheme_summary_counts_selected_windows_and_latest_calculation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            schemes = ModelSchemes(HydroDatabase(temporary))
+            row = schemes.create({'name': '洪水整定'})
+            editor = {'events': [{'id': 'A', 'purpose': '率定'}, {'id': 'B', 'purpose': '验证'}, {'id': 'C', 'purpose': '未使用'}],
+                      'schemeWindows': [{'id': 'D', 'purpose': '独立检验'}], 'originalCalibrationPlan': {'planSHA256': 'a' * 64}}
+            schemes.save_editor(row['id'], {'editor': editor})
+            write_json(Path(temporary) / 'operations/OP-test/status.json', {'taskId': 'OP-test', 'status': 'completed', 'createdAt': '2026-10-15T00:00', 'runConfig': {'request': {'scheme': {'id': row['id']}}}})
+            listed = schemes.list()['schemes'][0]
+            self.assertEqual(listed['summary'], {'mode': 'event', 'selectedCount': 3, 'calibration': 1, 'validation': 1, 'independent': 1})
+            self.assertEqual(listed['latestCalculation']['status'], 'completed')
+            self.assertEqual(listed['originalPlanSHA256'], 'a' * 64)
+
+    def test_manual_trial_drops_original_search_lock_and_retains_routing(self):
+        with tempfile.TemporaryDirectory() as temporary, patch('hydrological_operations.ThreadPoolExecutor'):
+            manager = TaskManager(Path(temporary) / 'tasks')
+            manager.operations = HydrologicalOperations(manager, None)
+            try:
+                model = calibration()
+                model['sourcePlan'] = {'operation': 'search'}
+                model['calibration'].update(target='joint', jointProfile='reference-16', searchParameters={'SM': {}}, routingSearchParameters={'RS_k_hours': {}})
+                model['calibration']['optimizer'].update(initializationPolicy='SOURCE_INITIAL_CANDIDATES')
+                routing = model.get('routing')
+                submitted = manager.operations.submit({'operation': 'manualTrial', 'request': model})['runConfig']['request']
+                self.assertNotIn('sourcePlan', submitted)
+                for key in ('target', 'jointProfile', 'searchParameters', 'routingSearchParameters'):
+                    self.assertNotIn(key, submitted['calibration'])
+                self.assertEqual(submitted['calibration']['optimizer'], {'algorithm': 'FIXED_PARAMETERS', 'maxEvaluations': 1})
+                self.assertEqual(submitted.get('routing'), routing)
+            finally:
+                manager.close()
     def test_hindcast_lead_is_checked_against_data_instead_of_a_fixed_year_limit(self):
         with tempfile.TemporaryDirectory() as temporary, patch('hydrological_operations.ThreadPoolExecutor'):
             manager = TaskManager(Path(temporary) / 'tasks')
@@ -95,6 +132,26 @@ class RealOperationTests(unittest.TestCase):
                     expected = result['hydrographs'][event['eventId']]['forecast']
                     actual = replay['hydrograph']['forecast']
                     self.assertEqual(actual, expected)
+                # The original numeric calibration record has no stored state
+                # arrays. Supplement it through the durable fixed-parameter job.
+                source_id = result['primaryTaskId']
+                original = manager.result(source_id)
+                for key in ('eventStates', 'stateCalculationTaskId', 'endStateVersionId'):
+                    original.pop(key, None)
+                write_json(manager.root / source_id / 'result.json', original)
+                replay_job = manager.operations.submit({'operation': 'stateReplay', 'sourceTaskId': source_id, 'context': request['context']})
+                deadline = time.monotonic() + 240
+                while time.monotonic() < deadline:
+                    status = manager.operations.get(replay_job['taskId'])
+                    if status['status'] not in {'queued', 'running'}:
+                        break
+                    time.sleep(.15)
+                self.assertEqual(status['status'], 'completed', status)
+                supplemented = manager.result(source_id)
+                self.assertEqual(supplemented['hydrographs'], result['hydrographs'])
+                self.assertEqual(len(supplemented['eventStates']), len(result['eventStates']))
+                self.assertEqual(manager.operations.submit({'operation': 'stateReplay', 'sourceTaskId': source_id, 'context': request['context']})['taskId'], replay_job['taskId'])
+                self.assertEqual(manager.parameter_schemes.list()['schemes'], [])
                 parameter = manager.parameter_schemes.save({'name': '验收参数', 'sourceTaskId': result['primaryTaskId']})
                 self.assertEqual(parameter['parameters'], result['bestParameters'])
             finally:

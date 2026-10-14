@@ -112,12 +112,14 @@ with sync_playwright() as p:
         expect(page.locator('.scheme-heading h1')).to_have_text(name)
         page.locator('.calculation-history').filter(has_text='历次计算').locator('summary').click()
         page.locator('.history-row').first.click()
-        expect(page.get_by_role('button', name='模拟状态', exact=True)).to_be_visible()
-        page.get_by_role('button', name='模拟状态', exact=True).click()
+        expect(page.get_by_role('button', name='状态分布', exact=True)).to_be_visible()
+        page.get_by_role('button', name='状态分布', exact=True).click()
         page.wait_for_load_state('networkidle')
         expect(page.locator('.state-view')).to_be_visible()
         assert 'operation=' + operation in page.url
         expect(page.locator('.state-view .page-heading')).to_contain_text(name)
+        expect(page.locator('.state-layout .map-panel')).to_be_visible(timeout=15000)
+        expect(page.get_by_label('状态回放时刻')).to_be_visible()
         page.go_back()
         page.wait_for_load_state('networkidle')
         page.locator('.scheme-choice[data-scheme-id="' + retained_scheme_id + '"]').click()
@@ -144,8 +146,10 @@ with sync_playwright() as p:
         page.get_by_role('button', name='人工试调', exact=True).click()
         previous = None
         trial_tasks = set()
-        for value in ['28', '30', '32', '34']:
+        for index, value in enumerate(['28', '30', '32', '34']):
             fill('#parameter-SM', value)
+            if index > 0:
+                page.locator('.routing-tuner>label input').first.fill(str(2 + index))
             operation, result = run('试算', 'manualTrial')
             assert result['evaluationMode'] == 'manual'
             legends = page.locator('.figure-legend').inner_text()

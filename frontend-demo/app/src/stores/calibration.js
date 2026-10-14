@@ -1373,6 +1373,11 @@ export const useCalibrationStore = defineStore('calibration', {
     setCalibrationTarget(value) {
       if (!['runoff', 'routing', 'joint'].includes(value) || this.running) return
       this.detachOriginalPlan()
+      if (value !== this.calibrationTarget) {
+        this.searchParameters = null
+        this.routingSearchParameters = null
+        this.searchParameterOrder = null
+      }
       this.calibrationTarget = value
       if (value !== 'runoff') this.searchStrategy = 'joint'
       this.markNeedsRun('率定参数组已调整。')

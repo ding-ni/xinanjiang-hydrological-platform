@@ -11,7 +11,7 @@ from workspace_backup import restore_backup, verify_backup
 
 
 def database_rows(root, table):
-    path = Path(root) / 'database/hydrology.sqlite3'
+    path = Path(root).resolve() / 'database/hydrology.sqlite3'
     with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as database:
         return sorted(database.execute('SELECT * FROM ' + table).fetchall())
 
@@ -26,7 +26,7 @@ def main():
     assert original['status'] == 'passed'
     backup = Path(original['backup']['path']).resolve()
     manifest = verify_backup(backup)
-    restored = restore_backup(backup, args.destination)
+    restored = restore_backup(backup, Path(args.destination).resolve())
     tables = ['model_schemes', 'model_scheme_revisions', 'station_networks',
               'result_metadata', 'workspace_drafts', 'task_index']
     checked = {}

@@ -50,11 +50,13 @@ with sync_playwright() as p:
         saved = api('model-schemes/' + rows[0]['id'])
         editor = saved['editor']
         assert editor['schemeSourceBundleVersionId'] == expected['request']['inputs']['bundleVersionId']
-        assert editor['schemeRoutingVersionId'] == expected['request']['routing']['versionId']
+        assert editor['schemeRoutingVersionId'] == original['routingCandidate']['routingVersionId']
+        assert not editor.get('sourcePlan')
+        assert not editor.get('optimizerSettings', {}).get('initializationPolicy')
         assert editor['scienceVersionId'] == expected['request']['science']['versionId']
         assert editor['statePolicy'] == expected['request']['calibration']['statePolicy']
         assert editor['continuousOrigin'] == expected['request']['calibration']['continuousOrigin']
-        assert editor['params'] == expected['request']['calibration']['initialParameters']
+        assert editor['params'] == original['bestParameters']
         for key, value in expected['request']['calibration']['objectives'].items():
             assert editor['criteria'][key] == value
         assert editor['maxEvaluations'] == expected['request']['calibration']['optimizer']['maxEvaluations']
@@ -63,6 +65,8 @@ with sync_playwright() as p:
         requested = {row['id']: (row['start'], row['end'], row['purpose']) for row in expected['request']['period']['events']}
         assert actual == requested
         assert len(actual) == 16
+        expect(page.locator('.flood-row')).to_have_count(16)
+        assert page.locator('.pagination').count() == 0
         assert len(api('flood-catalog')['events']) == 226
         assert len(editor['events']) == 226
         assert len(editor['schemeWindows']) == 13
@@ -73,13 +77,13 @@ with sync_playwright() as p:
         for identifier in editor['originalCalibrationPlan']['sourceExcludedEventIds']:
             assert assigned.get(identifier, '未使用') == '未使用'
         check('The full catalogue retains 226 floods; the source sixteen accepted floods and one excluded window remain exact')
-        check('Source rainfall, parameter ranges, routing, evaporation, warmup and purpose assignments are restored together')
+        check('The retained rainfall and assignments open with editable search settings and executable fitted routing')
 
         # The fixed display context is independent from the imported scheme.
         assert 'INPUT-MDB-4b0ebc43b1144d46a2a85b850e9a0528' not in page.locator('.topbar').inner_text()
         page.get_by_role('button', name='← 方案列表', exact=True).click()
-        page.locator('.original-records summary').click()
-        page.locator('.original-records .scheme-choice').click()
+        expect(page.locator('.original-records')).to_have_count(0)
+        page.locator('.scheme-cards .scheme-choice').click()
         expect(page.locator('.scheme-heading h1')).to_have_text(original['name'])
         assert len(api('model-schemes')['schemes']) == 1
         assert len(api('tasks')['tasks']) == task_count

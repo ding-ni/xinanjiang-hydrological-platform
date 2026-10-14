@@ -2,6 +2,7 @@
   <div class="basin-map" ref="rootEl">
     <div class="map-canvas" ref="mapEl" />
     <div v-if="!hasSpatialResources" class="spatial-pending">{{ spatialPendingText }}</div>
+    <div v-else-if="legendMode === 'rain' && (props.layers.qpfGrid || smoothRainEnabled) && !props.stations.some(station => station.type === 'rain' && station.rain1h != null && station.rain1h !== '' && Number.isFinite(Number(station.rain1h)) && Number(station.rain1h) >= 0) && !app.isSelinco" class="rain-empty" role="status">此时刻无雨量记录</div>
     <div v-if="terrainBadge" class="terrain-badge">
       <b>{{ terrainBadge.label }}</b>
       <span v-if="terrainBadge.cellCount">{{ terrainBadge.cellCount.toLocaleString() }} 有效网格</span>
@@ -26,12 +27,11 @@
       </div>
       <div v-if="!app.isSelinco && smoothRainEnabled" class="smooth-rain-legend">
         <span class="smooth-rain-gradient" /><div><span>0</span><span>10</span><span>25</span><span>50+</span></div>
-        <small>{{ usesGridRainSmoothing ? '网格雨量平滑显示（mm/h）' : '离线站点插值示意（mm/h）' }}</small>
-        <small v-if="usesGridRainSmoothing">零雨透明，缺测留空；计算采用原网格。</small>
+        <small>雨量分布（mm/h）</small>
       </div>
       <div v-if="!app.isSelinco && props.layers.qpfGrid" class="smooth-rain-legend">
         <span class="smooth-rain-gradient" /><div><span>0</span><span>10</span><span>25</span><span>50+</span></div>
-        <small>降雨量（mm/h）</small>
+        <small>雨量分布（mm/h）</small>
       </div>
       <div v-if="app.isSelinco" class="legend-symbols">
         <div><i class="sym rain" />降水站</div>
@@ -121,7 +121,7 @@ const emit = defineEmits([
 const app = useAppStore()
 const forbidsStationInterpolation = computed(() => modelBackendEnabled() && app.basinId !== 'selinco')
 const usesGridRainSmoothing = computed(() => props.smoothRainSource === 'model-grid' && app.basinId === 'nananxi-xufan' && app.modelScale === '1km')
-const smoothRainEnabled = computed(() => Boolean(props.layers.smoothRain) && (usesGridRainSmoothing.value || !forbidsStationInterpolation.value))
+const smoothRainEnabled = computed(() => Boolean(props.layers.smoothRain))
 const EMPTY_GEOJSON = { type: 'FeatureCollection', features: [] }
 // Keep the placeholder image valid because MapLibre decodes every image source,
 // even when the corresponding layer is hidden.
@@ -197,6 +197,9 @@ const physicalStateColors = [
   'rgba(255,216,106,0.38)', 'rgba(242,160,58,0.50)', 'rgba(226,75,59,0.60)'
 ]
 const physicalStateFields = {
+  RS: { title: '地表径流 RS (mm)', stops: [0, 1, 2, 5, 10] },
+  RI: { title: '壤中径流 RI (mm)', stops: [0, 0.2, 0.5, 1, 2] },
+  RG: { title: '地下径流 RG (mm)', stops: [0, 0.1, 0.2, 0.5, 1] },
   wu: { title: '上层张力水 WU (mm)', stops: [0, 5, 10, 20, 40] },
   wl: { title: '下层张力水 WL (mm)', stops: [0, 20, 40, 80, 150] },
   wd: { title: '深层张力水 WD (mm)', stops: [0, 30, 60, 100, 200] },
@@ -700,8 +703,8 @@ function ensureLayers(map) {
       type: 'symbol',
       source: 'stations',
       layout: {
-        'text-field': ['get', 'name'],
-        'text-size': 11,
+        'text-field': ['case', ['all', ['==', ['get', 'type'], 'rain'], ['has', 'rain1h'], ['>=', ['coalesce', ['get', 'rain1h'], -1], 0]], ['concat', ['get', 'name'], '\n', ['to-string', ['get', 'rain1h']], ' mm'], ['get', 'name']],
+        'text-size': 14,
         'text-offset': [0, 1.25],
         'text-anchor': 'top',
         'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular']
@@ -730,8 +733,8 @@ function ensureLayers(map) {
       source: 'stations',
       filter: ['==', ['get', 'id'], '701AAJ02'],
       layout: {
-        'text-field': ['get', 'name'],
-        'text-size': 11,
+        'text-field': ['case', ['all', ['has', 'rain1h'], ['>=', ['coalesce', ['get', 'rain1h'], -1], 0]], ['concat', ['get', 'name'], '\n', ['to-string', ['get', 'rain1h']], ' mm'], ['get', 'name']],
+        'text-size': 14,
         'text-anchor': 'top',
         'text-offset': [0, 2],
         'text-allow-overlap': true,
@@ -1013,8 +1016,10 @@ function bindEvents(map) {
 function gridColorExpr(field = 'runoff') {
   const property = physicalStateFields[field] ? field : 'runoff'
   const definition = physicalStateFields[property]
-  return ['interpolate', ['linear'], ['get', property], ...definition.stops
-    .flatMap((value, index) => [value, (definition.colors || physicalStateColors)[index]])]
+  return ['case', ['==', ['typeof', ['get', property]], 'number'],
+    ['interpolate', ['linear'], ['get', property], ...definition.stops
+      .flatMap((value, index) => [value, (definition.colors || physicalStateColors)[index]])],
+    'rgba(0,0,0,0)']
 }
 
 function updateGrid() {
@@ -1517,6 +1522,7 @@ defineExpose({ resetView, zoomBy, getMap: () => mapRef.value })
 .sym.river { width: 14px; height: 3px; border: 0; border-radius: 2px; background: #3e93d8; box-shadow: none; }
 .sym.lake { background: #8fc9dc; border-radius: 2px; }
 .sym.glacier { background: #e8fbff; border-color: #75b8ca; border-radius: 2px; }
+.rain-empty{position:absolute;left:50%;top:12px;transform:translateX(-50%);padding:8px 14px;background:#fffffff0;border:1px solid #dce7e2;border-radius:4px;color:#667d72;font-size:14px;pointer-events:none}
 </style>
 
 <style>

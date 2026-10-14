@@ -16,7 +16,7 @@ class TaskDiagnostics:
         result = self.manager.result(task_id)  # success-only, including archived tasks
         folder = safe_task(self.manager.root, task_id)
         if not (folder / "grid-history.json").is_file():
-            raise FileNotFoundError("该作业未保存逐时网格诊断；旧末状态不能用于重建过程，请创建新模拟任务。")
+            raise FileNotFoundError("该成果尚未保存逐时状态")
         metadata = read_json(folder / "grid-history.json")
         checkpoint = read_json(folder / "checkpoint.json")
         request = read_json(folder / "request.json")

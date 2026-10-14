@@ -70,7 +70,7 @@
       <section v-if="selectedTask?.resultSource === 'model-backend'" class="backend-result-inspector">
         <p v-if="taskResultError" class="warn-text">{{ taskResultError }}</p>
         <template v-if="taskResult">
-          <div class="btn-row"><button v-if="taskResult.stateCalculationTaskId || taskResult.endStateVersionId || taskResult.eventStates?.length" class="btn" @click="openStates">模拟状态</button><button v-if="taskResult.stateCalculationTaskId || taskResult.endStateVersionId" class="btn" @click="router.push({ path: '/diagnostics', query: { source: taskResult.stateCalculationTaskId || selectedTask.taskId } })">河道流量</button><button v-if="taskResult.bestParameters || taskResult.parameters" class="btn" @click="saveNamedParameter()">保存参数</button></div>
+          <div class="btn-row"><button v-if="taskResult.bestParameters || taskResult.parameters || taskResult.endStateVersionId" class="btn" @click="openStates">状态分布</button><button v-if="taskResult.stateCalculationTaskId || taskResult.endStateVersionId" class="btn" @click="router.push({ path: '/diagnostics', query: { source: taskResult.stateCalculationTaskId || selectedTask.taskId } })">河道流量</button><button v-if="taskResult.bestParameters || taskResult.parameters" class="btn" @click="saveNamedParameter()">保存参数</button><button v-if="selectedTask.runConfig?.sourcePlan || selectedTask.runConfig?.originalCalibrationPlan" class="btn" @click="rerunOriginal">原条件重算</button></div>
           <p v-if="taskResult.stateCalculationError" class="warn-text">最佳参数状态保存失败：{{ taskResult.stateCalculationError }}。可按最佳参数独立模拟后查看状态。</p>
           <ResultWorkbench :key="selectedTask.taskId" :task="selectedTask" :result="taskResult" :tasks="contextTasks" :metadata="resultMetadata" :definitions="app.backendCase?.parameterDefinitions || []" @saved="saveResultMetadata" @open="openTask" @simulate="openBestSimulation" />
         </template>
@@ -453,6 +453,17 @@ async function openStates() {
   try {
     router.push({path:'/state',query:{source:selectedTask.value.taskId,label:resultMetadata.value[selectedTask.value.taskId]?.name||selectedTask.value.lineage?.schemeName||selectedTask.value.runTypeLabel}})
   } catch (failure) { ElMessage.warning(failure.message) }
+}
+
+async function rerunOriginal() {
+  try {
+    const config = selectedTask.value.runConfig
+    const source = config.sourcePlan || { parameterVersionId: config.lineage?.parameterVersionId || taskResult.value.parameterVersionId }
+    const payload = await modelApi(`parameter-versions/${encodeURIComponent(source.parameterVersionId)}/original-plan?operation=search`)
+    const operation = await dailyClient.submit({ operation: 'calibration', request: payload.request, rainfallMethod: 'reuse', name: '原条件重算' })
+    await refreshOperations()
+    await inspectDailyOperation(operation.taskId)
+  } catch (failure) { ElMessage.error(failure.message) }
 }
 
 async function saveNamedParameter(task=selectedTask.value){

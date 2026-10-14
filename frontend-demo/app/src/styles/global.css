@@ -16,7 +16,7 @@ body {
   background: var(--bg);
   color: var(--ink);
   font-family: "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "PingFang SC", sans-serif;
-  font-size: 13px;
+  font-size: 14px;
   letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
 }
@@ -26,6 +26,9 @@ input,
 select {
   font: inherit;
 }
+
+:is(.calibration-page,.view-config,.scheme-list,.scheme-heading,.source-records,.state-view,.daily-result) :is(.btn,.input,.text-button,.link){min-height:36px;font-size:14px}
+:is(.calibration-page,.view-config,.scheme-list,.scheme-heading,.source-records,.state-view,.daily-result) :is(label,p,small,summary,td,th){font-size:14px}
 
 button,
 a,

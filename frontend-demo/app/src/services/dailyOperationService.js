@@ -78,12 +78,15 @@ export function resultEntries(result = {}, taskId = '') {
     taskId: row.stateCalculationTaskId || row.taskId, hydrograph: row.hydrograph }))
   const rows = Array.isArray(result.hydrographs) ? result.hydrographs
     : result.hydrographs && typeof result.hydrographs === 'object' ? Object.entries(result.hydrographs).map(([id, hydrograph]) => ({ id, hydrograph }))
-      : Array.isArray(result.events) ? result.events : []
+      : Array.isArray(result.events) && result.events.length ? result.events
+        : Array.isArray(result.eventStates) ? result.eventStates : []
   if (rows.length) return rows.map((row, index) => {
     const id = row.eventId || row.id || row.label || `event-${index}`
     const state = Array.isArray(result.eventStates) ? result.eventStates.find(item => (item.eventId || item.id) === id)
       : result.eventStates?.[id]
-    return { ...row, id, label: row.label || row.name || id, hydrograph: row.hydrograph || row,
+    const window = (result.frozenRequest?.period?.events || result.frozenRequest?.period?.windows || []).find(item => item.id === id)
+    const label = row.label || row.name || state?.label || window?.name || (/^WINDOW-/.test(id) && (row.start || state?.start) ? `${hourText(row.start || state.start)} 洪水` : id)
+    return { ...row, id, label, hydrograph: row.hydrograph || row,
       start:row.start || state?.start, end:row.end || state?.end,
       taskId: row.stateCalculationTaskId || state?.taskId || state?.stateCalculationTaskId || row.taskId || result.stateCalculationTaskId || result.primaryTaskId || taskId,
       endStateVersionId: row.endStateVersionId || state?.endStateVersionId }

@@ -1,18 +1,17 @@
 <template>
-  <details class="search-editor" :open="modelValue !== null">
-    <summary>{{ title || '自动率定参数' }} <span>{{ activeCount }} 项参与搜索</span></summary>
+  <details class="search-editor" open>
+    <summary>{{ title || '率定参数' }} <span>{{ activeCount }} 项参与率定</span></summary>
     <fieldset :disabled="disabled">
       <div class="scope-actions"><button type="button" class="btn" @click="emit('update:modelValue', null)">预设范围</button><template v-if="!routing"><button type="button" class="btn" @click="choose('storage')">仅蓄水产流</button><button type="button" class="btn" @click="choose('sources')">仅水源划分</button></template><button type="button" class="btn" @click="emit('update:modelValue', {})">全部固定</button></div>
       <div class="search-rows">
+        <div class="search-head"><span>参与率定</span><span>起始值</span><span>下限</span><span>上限</span><span>单位</span></div>
         <div v-for="row in definitions" :key="row.key" class="search-row" :class="{ fixed: !enabled(row.key) }">
           <label class="select-parameter"><input type="checkbox" :checked="enabled(row.key)" :disabled="Boolean(row.unavailable)" :aria-label="`${row.key} 参与率定`" @change="toggle(row, $event.target.checked)" /><span><b>{{ row.symbol }}</b> {{ row.label }}</span></label>
-          <div class="search-bounds"><span :title="String(current[row.key])">当前 {{ number(current[row.key]) }}</span><template v-if="enabled(row.key)"><input type="number" class="input" step="any" :min="row.limitMin" :max="row.limitMax" :value="value(row).minimum" :aria-label="`${row.key} 搜索下限`" @change="bound(row, 'minimum', $event.target.value)" /><span>—</span><input type="number" class="input" step="any" :min="row.limitMin" :max="row.limitMax" :value="value(row).maximum" :aria-label="`${row.key} 搜索上限`" @change="bound(row, 'maximum', $event.target.value)" /></template><b v-else class="fixed-label">固定</b><small>{{ row.unit === '1' ? '' : row.unit }}</small></div>
+          <div class="search-bounds"><span :title="String(current[row.key])">{{ number(current[row.key]) }}</span><template v-if="enabled(row.key)"><input type="number" class="input" step="any" :min="row.limitMin" :max="row.limitMax" :value="value(row).minimum" :aria-label="`${row.key} 搜索下限`" @change="bound(row, 'minimum', $event.target.value)" /><input type="number" class="input" step="any" :min="row.limitMin" :max="row.limitMax" :value="value(row).maximum" :aria-label="`${row.key} 搜索上限`" @change="bound(row, 'maximum', $event.target.value)" /></template><b v-else class="fixed-label">固定 {{ number(current[row.key]) }}</b><small>{{ row.unit === '1' ? '—' : row.unit }}</small></div>
         </div>
       </div>
       <p v-for="row in definitions.filter(item => item.unavailable)" :key="row.key" class="space-note">{{ row.unavailable }}</p>
       <p class="space-error" v-if="error" role="status">{{ error }}</p>
-      <p v-if="routing" class="space-note">{{ joint ? '坡面时间与河道参数按所选范围联合搜索；K 倍数以当前所选汇流方案为基准。' : '调整全局坡面汇流时间；产流、河道及单元单列参数保持不变。' }}</p>
-      <p v-else class="space-note">未勾选项采用当前参数；{{ joint ? 'KC/C 是否搜索以联合预设与勾选项为准。' : 'KC、C及汇流参数固定。' }}KΣ,d 与 fG 由当前 KI、KG 换算，搜索后再转换为小时系数。</p>
     </fieldset>
   </details>
 </template>
@@ -46,6 +45,10 @@ function bound(row, key, text) {
 </style>
 
 <style scoped>
-.search-row:not(.fixed) .search-bounds { flex-wrap: wrap; }
-.search-row:not(.fixed) .search-bounds > span:first-child { flex-basis: 100%; margin-bottom: 2px; }
+.search-editor summary,.search-editor summary span,.select-parameter,.select-parameter b,.scope-actions .btn,.space-note,.space-error{font-size:14px}
+.search-head,.search-row{display:grid;grid-template-columns:minmax(180px,1.8fr) minmax(280px,3fr);align-items:center;gap:12px}
+.search-head{grid-template-columns:minmax(180px,1.8fr) repeat(3,minmax(68px,1fr)) 44px;font-size:14px;padding:12px 0;color:#60796b}
+.search-bounds{display:grid;grid-template-columns:repeat(3,minmax(68px,1fr)) 44px;align-items:center;margin:0;gap:10px;font-size:14px}
+.search-bounds>span:first-child{margin:0}.search-bounds .input{width:100%;height:36px;font-size:14px;padding:6px}.fixed-label{grid-column:2/4;font-size:14px}.search-bounds small{font-size:14px}
+@media(max-width:650px){.search-head{display:none}.search-row{grid-template-columns:1fr}.search-bounds{margin-top:8px}.search-bounds .input{min-width:0}}
 </style>

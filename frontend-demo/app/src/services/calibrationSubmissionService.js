@@ -64,17 +64,30 @@ function tailCounts(size) {
 }
 
 export function stratifiedRandomEventSplit(events, seed) {
-  const sorted = physicalFloodGroups(events, { includeUnused: true }).groups
+  const groups = physicalFloodGroups(events, { includeUnused: true }).groups
+  const sorted = groups.filter(group => group.observedPeak != null)
     .sort((a, b) => a.observedPeak - b.observedPeak || a.id.localeCompare(b.id))
+  const strata = []
+  for (let start = 0; start < sorted.length; start += 10) strata.push(sorted.slice(start, start + 10))
+  const unknown = groups.filter(group => group.observedPeak == null)
+  if (unknown.length) strata.push(unknown)
   const assignments = []
-  for (let start = 0; start < sorted.length; start += 10) {
-    const group = shuffleWithSeed(sorted.slice(start, start + 10), `${seed}:${start / 10}`)
+  const assignedGroups = []
+  for (const [index, stratum] of strata.entries()) {
+    const group = shuffleWithSeed(stratum, `${seed}:${index}`)
     const [calibrationCount, validationCount] = group.length === 10 ? [7, 2] : tailCounts(group.length)
     group.forEach((flood, index) => {
-      const purpose = index < calibrationCount ? '率定' : index < calibrationCount + validationCount ? '验证' : '独立检验'
-      for (const event of flood.members) assignments.push({ id: event.id, purpose })
+      assignedGroups.push({ flood, purpose: index < calibrationCount ? '率定' : index < calibrationCount + validationCount ? '验证' : '独立检验' })
     })
   }
+  // Small selections still need three independent uses. Move a complete
+  // physical flood group, never a member of an overlapping group alone.
+  if (assignedGroups.length >= 3) for (const purpose of ['率定', '验证', '独立检验']) {
+    if (assignedGroups.some(row => row.purpose === purpose)) continue
+    const donor = [...assignedGroups].reverse().find(row => assignedGroups.filter(item => item.purpose === row.purpose).length > 1)
+    donor.purpose = purpose
+  }
+  for (const { flood, purpose } of assignedGroups) for (const event of flood.members) assignments.push({ id: event.id, purpose })
   return assignments
 }
 
@@ -105,7 +118,9 @@ export function physicalFloodGroups(events = [], { includeUnused = false } = {})
   for (const group of groups) {
     group.memberEventIds = group.members.map(row => row.eventId || row.id)
     group.uniqueHours = Number.isFinite(group.startMs + group.endMs) ? Math.round((group.endMs - group.startMs) / 3600000) + 1 : 0
-    group.observedPeak = Math.max(...group.members.map(row => Number(row.observedPeak) || 0))
+    const peaks = group.members.filter(row => row.observedPeak != null && String(row.observedPeak).trim() !== '')
+      .map(row => Number(row.observedPeak)).filter(value => Number.isFinite(value) && value >= 0)
+    group.observedPeak = peaks.length ? Math.max(...peaks) : null
     group.purposes = [...new Set(group.members.map(row => row.purpose))]
     group.purpose = group.purposes.length === 1 ? group.purposes[0] : null
     if (!includeUnused && group.purposes.length > 1) conflicts.push(group)
@@ -199,7 +214,11 @@ export function buildCalibrationRequest({ app, calibration, operationMode, event
     createdAt: new Date().toISOString(),
     routing: { versionId: app.selectedRoutingVersionId || 'control-split-v2' },
     ...(science ? { science: { versionId: calibration.scienceVersionId } } : {}),
-    ...(calibration.sourcePlan && runType === 'calibration' ? { sourcePlan: JSON.parse(JSON.stringify(calibration.sourcePlan)) } : {}),
+    // A restored colleague run is a reference record. Once the worker edits
+    // its events, parameters or settings it becomes an ordinary editable
+    // scheme and must not carry the source replay lock into a new run.
+    ...(calibration.sourcePlan && !calibration.originalPlanChanged && runType === 'calibration'
+      ? { sourcePlan: JSON.parse(JSON.stringify(calibration.sourcePlan)) } : {}),
     context: {
       contextKey: calibration.contextKey,
       projectId: app.basinId,

@@ -30,12 +30,12 @@
         </aside>
       </div>
       <details v-if="checkpoint?.routingTopology && (!frame || frame.time===checkpoint.time)" class="panel panel-pad routing-state"><summary>末时刻汇流状态 · {{ hourText(checkpoint.time) }}</summary><div class="routing-tables"><div><h3>坡面汇流 · m³/s</h3><div class="table-wrap"><table class="table"><thead><tr><th>汇流单元</th><th>地表径流</th><th>壤中流</th><th>地下径流</th></tr></thead><tbody><tr v-for="(id,index) in checkpoint.routingTopology.unitIds" :key="id"><td>{{ id }}</td><td>{{ number(checkpoint.routing.slope_state[index]?.[0],4) }}</td><td>{{ number(checkpoint.routing.slope_state[index]?.[1],4) }}</td><td>{{ number(checkpoint.routing.slope_state[index]?.[2],4) }}</td></tr></tbody></table></div></div><div><h3>河道汇流 · m³/s</h3><div class="table-wrap"><table class="table"><thead><tr><th>河段</th><th>入流</th><th>出流</th></tr></thead><tbody><tr v-for="(id,index) in checkpoint.routingTopology.reachIds" :key="id"><td>{{ id }}</td><td>{{ number(checkpoint.routing.prev_in[index],4) }}</td><td>{{ number(checkpoint.routing.prev_out[index],4) }}</td></tr></tbody></table></div></div></div></details>
-      <section v-if="!cells.length && !loading" class="panel empty"><p>该成果尚无可查看的状态</p><RouterLink :to="{path:'/simulation',query:{task:replayTaskId || sourceId}}" class="btn">模拟此时段</RouterLink></section>
+      <section v-if="!catalog && !loading" class="panel empty"><p>{{ replayProgress || '尚未保存逐时状态' }}</p><button class="btn primary" :disabled="replaying || !payload" @click="calculateStates">{{ replaying ? '正在计算状态' : '计算状态' }}</button></section>
     </template>
   </section>
 </template>
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { modelApi } from '@/services/modelBackendService'
@@ -49,7 +49,8 @@ const sourceLabel=ref(''),payload=ref(null),entryId=ref(''),catalog=ref(null),ch
 const entries=computed(()=>resultEntries(payload.value||{},sourceId.value))
 const entry=computed(()=>entries.value.find(row=>row.id===entryId.value))
 const replayTaskId=computed(()=>entry.value?.taskId||payload.value?.stateCalculationTaskId||sourceId.value)
-const layers={rain:false,hydro:false,water:false,section:true,river:true,subbasin:true,rainField:false,dem:true,grid:true}
+const replaying=ref(false),replayProgress=ref('')
+const layers={rain:false,hydro:false,water:false,section:true,river:true,subbasin:true,rainField:false,dem:false,grid:true}
 const variables=[
   {key:'soil',name:'张力水相对蓄量',symbol:'W/WM',unit:'',field:'soil',legend:'soil'},
   {key:'wu',name:'上层张力水',symbol:'WU',unit:'mm',field:'wu',raw:'WU',legend:'soil'},
@@ -81,8 +82,31 @@ const trendOption=computed(()=>{
   return {animation:false,grid:{left:45,right:10,top:20,bottom:50},tooltip:{trigger:'axis',confine:true},xAxis:{type:'category',data:indices.map(row=>hourText(row.value)),axisLabel:{fontSize:9,hideOverlap:true}},yAxis:{type:'value',scale:true,name:current.value.unit},series:[{type:'line',showSymbol:false,connectNulls:false,data:values,lineStyle:{width:2,color:'#287763'}}]}
 })
 let sourceRevision=0,replayRevision=0,frameRevision=0,seriesRevision=0
+onBeforeUnmount(()=>{sourceRevision++;replayRevision++;frameRevision++;seriesRevision++})
+async function calculateStates(){
+  const token=sourceRevision
+  const source=payload.value?.primaryTaskId||payload.value?.taskId||sourceId.value
+  replaying.value=true;error.value='';replayProgress.value='正在计算状态'
+  try{
+    let operation=await dailyClient.submit({operation:'stateReplay',sourceTaskId:source,context:app.backendCase?.context||{projectId:app.basinId,resolutionId:app.modelScale,modelConfigId:app.modelConfigId,contextKey:app.contextKey}})
+    while(['queued','running','cancelling'].includes(operation.status)){
+      if(token!==sourceRevision)return
+      replayProgress.value=operation.stageLabel
+      await new Promise(resolve=>setTimeout(resolve,700))
+      operation=await dailyClient.read(operation.taskId)
+    }
+    if(token!==sourceRevision)return
+    if(operation.status!=='completed')throw new Error(operation.errorMessage||'状态计算已停止')
+    const saved=await dailyClient.result(operation.taskId)
+    if(token!==sourceRevision)return
+    payload.value={...payload.value,...Object.fromEntries(['eventStates','stateCalculationTaskId','endStateVersionId'].filter(key=>saved[key]).map(key=>[key,saved[key]]))}
+    if(!entries.value.some(row=>row.id===entryId.value))entryId.value=entries.value.find(row=>row.id===route.query.event)?.id||entries.value[0]?.id||''
+    replayProgress.value=''
+  }catch(failure){if(token===sourceRevision)error.value=failure.message}
+  finally{if(token===sourceRevision)replaying.value=false}
+}
 watch(()=>[sourceId.value,route.query.operation,app.contextKey],async()=>{
-  const token=++sourceRevision;payload.value=null;entryId.value='';error.value='';sourceLabel.value=route.query.label||''
+  const token=++sourceRevision;payload.value=null;entryId.value='';error.value='';sourceLabel.value=route.query.label||'';replaying.value=false;replayProgress.value=''
   if(!sourceId.value&&!route.query.operation)return
   loading.value=true
   try{
@@ -111,7 +135,7 @@ watch([replayTaskId,entryId],async([id])=>{
       const bounds=entry.value
       catalog.value={...catalogResult.value,times:catalogResult.value.times.filter(value=>(!bounds?.start||value>=String(bounds.start).replace(' ','T'))&&(!bounds?.end||value.slice(0,16)<=String(bounds.end).replace(' ','T').slice(0,16)))}
       time.value=catalog.value.times.at(-1)||''
-    }else if(!checkpoint.value)throw catalogResult.reason
+    }else if(catalogResult.reason?.message!=='该成果尚未保存逐时状态')throw catalogResult.reason
   }catch(failure){if(token===replayRevision)error.value=failure.message}
   finally{if(token===replayRevision)loading.value=false}
 },{immediate:true})
@@ -132,4 +156,6 @@ function continueFromResult(){router.push({path:'/simulation',query:{source:repl
 <style scoped>
 .routing-state summary{font-size:13px;color:#547460;cursor:pointer}.routing-tables{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:20px}.routing-tables h3{font-size:13px;color:#375d49}.routing-tables .table-wrap{max-height:300px;overflow:auto}.routing-tables td{font-size:12px}@media(max-width:700px){.routing-tables{grid-template-columns:1fr}}
 .state-view{display:grid;gap:18px;min-width:0}.page-heading{display:flex;align-items:center;justify-content:space-between;gap:20px}.page-heading>div{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap}.page-heading h2{font-family:'Noto Serif CJK SC','SimSun',serif;color:#2e5142;font-size:23px;margin:0}.page-heading span{color:#7b8b80;font-size:12px}.time-toolbar{display:flex;align-items:end;gap:16px;flex-wrap:wrap}.time-toolbar label{display:grid;gap:7px;font-size:12px;color:#587362}.time-toolbar .input{min-width:210px}.time-toolbar>span{flex:1;color:#74867a;font-size:12px}.state-layout{display:grid;grid-template-columns:200px minmax(0,1fr) 290px;gap:16px;min-height:540px}.variables h3,.grid-detail h3{margin:0 0 18px;color:#345748;font-size:15px}.variables>button{display:grid;gap:5px;padding:10px 12px;width:100%;text-align:left;border:0;border-left:3px solid transparent;background:transparent;color:#4e6a58;cursor:pointer}.variables>button small{color:#7d9081;font-size:10px}.variables>button.active{background:#eaf2e9;border-color:#47815c}.mean{display:grid;gap:10px;padding:22px 0;border-top:1px solid #e1e8e0;margin-top:15px;color:#6a806f;font-size:11px}.mean b{font-size:24px;font-weight:500;color:#335e48}.mean small{font-size:12px}.variables details{font-size:11px;color:#748579}.conditions{display:grid;gap:8px;padding-top:12px;overflow-wrap:anywhere}.map-panel{overflow:hidden;min-height:540px}.values{display:grid;gap:10px}.values>div{display:flex;justify-content:space-between;font-size:12px;color:#738579}.values b{font-weight:500;color:#2c5542;font-variant-numeric:tabular-nums}.grid-id{color:#326047;font-size:13px}.trend{height:255px;margin-top:22px}.grid-empty{color:#809184;font-size:12px;padding-top:45px}.empty{padding:80px 25px;text-align:center;color:#718579}.empty p{margin-bottom:22px}.failure{color:#a24338;font-size:12px;line-height:1.8}@media(max-width:1150px){.state-layout{grid-template-columns:190px minmax(0,1fr)}.grid-detail{grid-column:1/-1}.values{grid-template-columns:repeat(4,1fr);gap:20px}.values>div{display:grid;gap:8px}.trend{height:250px}}@media(max-width:650px){.state-layout{grid-template-columns:1fr}.variables{display:flex;flex-wrap:wrap;gap:6px}.variables h3{width:100%}.variables>button{width:auto}.variables .mean{padding:10px}.map-panel{min-height:440px}.time-toolbar .input{min-width:0;width:100%}.values{grid-template-columns:repeat(2,1fr)}}
+.state-view :is(label,p,small,summary,td,th,.page-heading span,.time-toolbar>span,.values>div,.grid-id,.conditions,.mean){font-size:14px}
+.state-view :is(.btn,.input,.variables>button){min-height:36px;font-size:14px}
 </style>

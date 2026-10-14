@@ -10,7 +10,7 @@
     <p v-if="error" role="alert" class="scheme-error">{{ error }}</p>
     <div v-if="rows.length" class="scheme-cards">
       <button v-for="row in rows" :key="row.id" class="scheme-choice" :data-scheme-id="row.id" :disabled="busy" @click="load(row.id)">
-        <b>{{ row.name }}</b><span>{{ dateLabel(row.updated_at || row.updatedAt) }}</span><i aria-hidden="true">→</i>
+        <div><b>{{ row.name }}</b><p v-if="row.summary?.mode !== 'continuous'">已选 {{ row.summary?.selectedCount || 0 }} 场 · 率定 {{ row.summary?.calibration || 0 }} · 验证 {{ row.summary?.validation || 0 }} · 独立检验 {{ row.summary?.independent || 0 }}</p><p v-else>连续时段率定</p><p v-if="row.latestCalculation">最近计算：{{ operationStatuses[row.latestCalculation.status] || row.latestCalculation.status }} · {{ dateLabel(row.latestCalculation.completedAt || row.latestCalculation.createdAt) }}</p></div><span>{{ dateLabel(row.updated_at || row.updatedAt) }}</span><i aria-hidden="true">→</i>
       </button>
     </div>
     <p v-else-if="!busy && !creating && !error" class="empty">暂无率定方案</p>
@@ -27,7 +27,8 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { modelApi } from '@/services/modelBackendService'
-import { calibrationEditor, restoreModelScheme, saveCalibrationEditor, schemeDefinition, originalCalibrationRecords, openOriginalCalibrationRecord, recoverActiveCalibrationOperation } from '@/services/modelSchemeService'
+import { calibrationEditor, restoreModelScheme, saveCalibrationEditor, schemeDefinition, originalCalibrationRecords, openOriginalCalibrationRecord, recoverActiveCalibrationOperation, makeSchemeEditable } from '@/services/modelSchemeService'
+import { operationStatuses } from '@/services/dailyOperationService'
 import { useAppStore } from '@/stores/app'
 import { useCalibrationStore } from '@/stores/calibration'
 
@@ -43,8 +44,9 @@ function dateLabel(value) { return String(value || '').replace('T', ' ').slice(0
 async function refresh() {
   try {
     const [schemes, parameters] = await Promise.all([modelApi('model-schemes'), modelApi('parameter-versions')])
-    rows.value = schemes.schemes || []
-    originalRecords.value = originalCalibrationRecords(parameters.versions || [], app.contextKey)
+    rows.value = (schemes.schemes || []).filter(row => !row.context?.contextKey || row.context.contextKey === app.contextKey)
+    const linked = new Set(rows.value.map(row => row.originalPlanSHA256).filter(Boolean))
+    originalRecords.value = originalCalibrationRecords(parameters.versions || [], app.contextKey).filter(row => !linked.has(row.originalCalibrationPlan.planSHA256))
   }
   catch (failure) { error.value = failure.message }
 }
@@ -68,6 +70,9 @@ async function load(id) {
   try {
     await refreshCatalog()
     await restoreModelScheme(cal, app, await modelApi('model-schemes/' + id))
+    const reference = cal.originalCalibrationPlan
+    const source = reference ? originalCalibrationRecords((await modelApi('parameter-versions')).versions || [], app.contextKey).find(row => row.originalCalibrationPlan.planSHA256 === reference.planSHA256) : null
+    makeSchemeEditable(cal, source)
     opened.value = true; emit('opened', true); emit('loaded')
   } catch (failure) { error.value = failure.message }
   finally { busy.value = false; await nextTick(); loading = false }
@@ -107,6 +112,7 @@ async function restoreTask(taskId, schemeId, legacyConditionId = null) {
       revision: request.scheme?.revision || existing?.revision || 0, latestRevision: existing?.latestRevision || 0,
       definition: schemeDefinition(request, method), calculationDraft: request, editor: {} })
     cal.activeOperationId = null; cal.activeOperationRequest = null; cal.running = false
+    makeSchemeEditable(cal)
     if (existing) { opened.value = true; emit('opened', true); emit('loaded') }
     else { restoringUnnamed = true; creating.value = true; newName.value = '' }
   } catch (failure) { error.value = failure.message }
@@ -153,4 +159,6 @@ defineExpose({ refresh, flush, load })
 .original-records{margin-top:20px;border-top:1px solid #e4ece9;padding-top:14px}.original-records summary{font-size:12px;color:#768a7d;cursor:pointer;margin-bottom:12px}.original-records .scheme-choice{grid-template-columns:1fr 28px;margin-top:8px}
 .scheme-list{max-width:960px;margin:32px auto;padding:28px;background:#fff;border:1px solid #d6e2df;border-radius:5px}.scheme-list header,.scheme-heading{display:flex;align-items:center;gap:16px}.scheme-list header{justify-content:space-between;margin-bottom:24px}.scheme-list h1,.scheme-heading h1{font-size:20px;color:#244c44;margin:0}.scheme-list header p{margin:8px 0 0;color:#71837d;font-size:13px}.scheme-create{display:grid;grid-template-columns:auto minmax(160px,1fr) auto auto;gap:10px;align-items:center;padding:18px 0;border-top:1px solid #e4ece9}.scheme-create label{font-size:13px}.scheme-cards{display:grid;gap:8px}.scheme-choice{display:grid;grid-template-columns:1fr auto 28px;align-items:center;gap:20px;padding:17px 18px;background:#fbfdfc;border:1px solid #dce7e2;border-radius:4px;text-align:left;cursor:pointer;color:#31584c}.scheme-choice:hover{background:#eef6f2;border-color:#92b5a8}.scheme-choice span{font-size:12px;color:#75877e}.scheme-choice i{font-style:normal;font-size:20px}.scheme-choice:focus-visible{outline:2px solid #258276;outline-offset:2px}.empty{padding:52px 0;text-align:center;color:#8b9b94;font-size:14px}.scheme-heading{padding:7px 0}.save-status{margin-left:auto;color:#8a9d94;font-size:12px}.scheme-error{color:#a93636;font-size:13px}.text-button{border:0;background:none;color:inherit;text-decoration:underline;cursor:pointer}
 @media(max-width:640px){.scheme-list{margin:12px 0;padding:18px}.scheme-create{grid-template-columns:1fr 1fr}.scheme-create label,.scheme-create input{grid-column:1/-1}.scheme-choice{grid-template-columns:1fr 25px}.scheme-choice span{display:none}}
+.scheme-list :is(label,p,span,summary,.btn,.input),.scheme-heading :is(span,.btn){font-size:14px}
+.scheme-list :is(.btn,.input),.scheme-heading .btn{min-height:36px}
 </style>

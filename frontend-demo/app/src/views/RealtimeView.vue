@@ -56,7 +56,7 @@
             <div class="form-group-title">降雨显示</div>
             <div class="seg" role="group" aria-label="降雨显示方式">
               <button type="button" :class="{ on: monitor.rainDisplayMode !== 'smooth' }" :aria-pressed="monitor.rainDisplayMode !== 'smooth'" @click="monitor.setRainDisplayMode('grid')">网格</button>
-              <button type="button" :class="{ on: monitor.rainDisplayMode === 'smooth' }" :aria-pressed="monitor.rainDisplayMode === 'smooth'" @click="monitor.setRainDisplayMode('smooth')">平滑</button>
+              <button type="button" :class="{ on: monitor.rainDisplayMode === 'smooth' }" :aria-pressed="monitor.rainDisplayMode === 'smooth'" @click="monitor.setRainDisplayMode('smooth')">雨量分布</button>
             </div>
           </template>
           <div v-if="app.hasLakeBalance" class="form-group-title">累计雨量时段</div>
@@ -108,8 +108,8 @@
             :center="activeCenter"
             :zoom="activeZoom"
             :playing="monitor.playing"
-            :qpf-grid-cells="currentPrecipCells"
-            :smooth-rain-source="usesModelInputs ? 'model-grid' : 'station-idw'"
+            :qpf-grid-cells="displayRainCells"
+            smooth-rain-source="station-idw"
             legend-mode="rain"
             @select-station="onSelect"
           />
@@ -122,7 +122,7 @@
         </div>
         <div v-else-if="hasNananxiObservation || usesModelInputs" class="forcing-strip project-forcing">
           <span v-if="rainGridLoading || monitor.historicalLoading || rainGridError || monitor.historicalError" class="forcing-status" :class="{ loading: rainGridLoading || monitor.historicalLoading, error: Boolean(rainGridError || monitor.historicalError) }" role="status">{{ rainGridLoading || monitor.historicalLoading ? '正在读取降雨' : rainGridError || monitor.historicalError }}</span>
-          <details><summary>降雨资料</summary><p>{{ usesModelInputs ? currentRainfallPresentation.name : '站点雨量' }}</p></details>
+          <details><summary>降雨资料</summary><p>测站雨量 · 距离反比加权</p></details>
           <div><span>时刻</span><b>{{ usesModelInputs && !hasNananxiObservation ? '—' : monitor.currentTimeLabel }}</b></div>
           <div><span>降雨网格</span><b>{{ currentPrecipCells.length }} 个</b></div>
         </div>
@@ -153,11 +153,12 @@ import BasinMap from '@/components/map/BasinMap.vue'
 import StationDetail from '@/components/monitor/StationDetail.vue'
 import SelincoStationDetail from '@/components/monitor/SelincoStationDetail.vue'
 import TimelineBar from '@/components/monitor/TimelineBar.vue'
-import { inputProductPresentation } from '@/services/inputProductPresentation.js'
+import { loadJsonResource } from '@/services/projectDataService'
 import { gridCellsAt, gridCellsAtTime, loadNananxiRainfallGrid } from '@/services/rainfallGridService'
 import { projectDataForContext } from '@/services/caseAvailabilityService'
 import { usesModelInputService, finiteInputValue } from '@/services/modelInputService'
 import { modelApi } from '@/services/modelBackendService'
+import { stationRainfallGrid } from '@/services/rainfallInterpolationService'
 
 const monitor = useMonitorStore()
 const app = useAppStore()
@@ -182,10 +183,19 @@ onBeforeUnmount(() => { databaseRevision++; clearTimeout(databaseTimer) })
 const product = computed(() => app.latestForecastProduct)
 const caseData = computed(() => projectDataForContext(app.activeContext, app.projectData, { loading: app.projectDataLoading, error: app.projectDataError }))
 const usesModelInputs = computed(() => usesModelInputService(app.activeContext))
-const currentRainfallPresentation = computed(() => inputProductPresentation(
-  app.selectedInputProduct || { bundleVersionId: app.selectedInputBundleVersionId },
-  { catalog: app.selectedInputCatalog, parameterVersions: app.projectData?.backendParameterVersions }
-))
+const rainfallGeometry = shallowRef([])
+let geometryRevision = 0
+watch(() => [usesModelInputs.value, caseData.value?.spatial?.terrain?.gridUrl], async ([enabled, url]) => {
+  const token = ++geometryRevision
+  rainfallGeometry.value = []
+  if (!enabled || !url) return
+  try {
+    const grid = await loadJsonResource(url, '降雨显示网格')
+    if (token === geometryRevision) rainfallGeometry.value = (grid.features || []).map((feature, index) => ({
+      id: feature.properties?.id || `rain-${index}`, bounds: feature.geometry?.coordinates?.[0] || []
+    }))
+  } catch (failure) { if (token === geometryRevision) rainGridError.value = failure.message }
+}, { immediate: true })
 watch([usesModelInputs, () => monitor.currentTimeLabel, () => app.basinId], () => {
   const current = ++databaseRevision
   clearTimeout(databaseTimer)
@@ -277,10 +287,13 @@ const currentPrecipCells = computed(() => {
   const index = Math.min(product.times.length - 1, monitor.timeIndex)
   return product.cells.map((cell) => ({ id: cell.id, bounds: cell.bounds, qpf: cell.values[index] == null ? null : Number(cell.values[index]) }))
 })
+const displayRainCells = computed(() => usesModelInputs.value ? stationRainfallGrid(currentPrecipCells.value.length ? currentPrecipCells.value : rainfallGeometry.value, activeStations.value) : currentPrecipCells.value)
 const basinRain = computed(() => {
   if (usesModelInputs.value) {
-    const value = hasNananxiObservation.value ? finiteInputValue(monitor.modelInputSummary?.arealRainfallMm?.[monitor.timeIndex]) : null
-    return value == null ? '—' : value.toFixed(1)
+    const cells = displayRainCells.value.filter(cell => typeof cell.qpf === 'number' && Number.isFinite(cell.qpf))
+    const area = cell => Number(cell.areaKm2 ?? cell.area_km2) || 1
+    const weight = cells.reduce((sum, cell) => sum + area(cell), 0)
+    return weight ? (cells.reduce((sum, cell) => sum + cell.qpf * area(cell), 0) / weight).toFixed(1) : '—'
   }
   if (hasNananxiObservation.value) {
     const values = projectStations.value.map((station) => station.rain1h).filter((value) => value != null)

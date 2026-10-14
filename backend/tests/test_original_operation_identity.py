@@ -6,11 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from datetime import timedelta
 from unittest.mock import Mock, patch
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[1]), str(Path(__file__).resolve().parent)]
 from common import MODEL, read_json, write_json
-from input_products import InputProducts
+from input_products import InputProducts, hourly_time
 from model_schemes import input_definition
 from original_calibration_plan import original_plan_payload, validate_original_request, SOURCE_QC
 from hydrological_operations import HydrologicalOperations
@@ -55,25 +56,54 @@ class OriginalOperationIdentityTests(unittest.TestCase):
         self.input_patch.stop()
         self.fixture.tearDown()
 
+    def test_missing_derived_population_rebuilds_only_from_frozen_source(self):
+        from original_calibration_plan import _build
+        plan = copy.deepcopy(self.plan)
+        expected = plan['calibration']['optimizer'].pop('effectiveInitialCandidates')
+        request = _build(self.candidate, plan, self.bundle, 'search')
+        self.assertEqual(request['calibration']['optimizer']['effectiveInitialCandidates'], expected)
+        plan['calibration']['optimizer']['effectiveInitialCandidates'] = []
+        with self.assertRaisesRegex(ValueError, '保存快照不一致'):
+            _build(self.candidate, plan, self.bundle, 'search')
+
+    def test_imported_candidate_state_job_freezes_fixed_replay_conditions(self):
+        with patch('hydrological_operations.ThreadPoolExecutor'):
+            operation = HydrologicalOperations(self.manager, None)
+            try:
+                submitted = operation.submit({'operation': 'stateReplay', 'sourceTaskId': self.candidate['taskId'], 'context': self.candidate['context']})
+                request = submitted['runConfig']['frozenReplay']
+                self.assertEqual(request['calibration']['optimizer']['algorithm'], 'FIXED_PARAMETERS')
+                self.assertEqual(request['calibration']['initialParameters'], self.candidate['bestParameters'])
+                self.assertEqual(request['routing']['versionId'], self.candidate['routingCandidate']['routingVersionId'])
+                self.assertEqual(request['sourcePlan']['operation'], 'fixed-replay')
+            finally:
+                operation.close()
+
     def test_checked_preparation_cannot_replace_original_search_input_or_budget(self):
         scheme = self.manager.schemes.save({'name': '原来源率定', 'definition': input_definition(self.request),
                                            'calculationDraft': self.request})
         self.request['scheme'] = {'id': scheme['id'], 'revision': scheme['revision']}
         operation = object.__new__(HydrologicalOperations)
         operation.manager = self.manager
+        operation.cancelled = set()
         prepared = copy.deepcopy(self.request)
         prepared['inputs'].update(bundleVersionId='INPUT-DERIVED', bundleManifestSHA256='d' * 64)
         prepared.setdefault('lineage', {})['preparationTaskId'] = 'DATA-check-only'
         operation.prepare = Mock(return_value=prepared)
         captures = []
+        first = min(hourly_time(row['start']) for row in self.plan['sourceEvents'])
+        last = max(hourly_time(row['end']) for row in self.plan['sourceEvents'])
+        forecast = [{'time': (first + timedelta(hours=index)).isoformat(), 'value': 1.0}
+                    for index in range(int((last - first).total_seconds() / 3600) + 1)]
         def child(identifier, request, stage, role='calculation'):
             captures.append(copy.deepcopy(request))
             task = self.manager.submit(request, operation_id=identifier, state_role=role)
             if request['runType'] == 'calibration':
                 return {'taskId': task['taskId'], 'lineage': task['runConfig']['lineage'],
                     'bestParameters': self.candidate['bestParameters'], 'statePolicy': 'continuous-origin',
-                    'continuousOrigin': self.plan['continuousOrigin']}
-            return {'taskId': task['taskId'], 'endStateVersionId': 'STATE-' + task['taskId']}
+                    'continuousOrigin': self.plan['continuousOrigin'],
+                    'hydrographs': {row['id']: {'forecast': [point for point in forecast if hourly_time(row['start']) <= hourly_time(point['time']) <= hourly_time(row['end'])]} for row in self.plan['sourceEvents']}}
+            return {'taskId': task['taskId'], 'endStateVersionId': 'STATE-' + task['taskId'], 'hydrograph': {'forecast': forecast}}
         operation.child = child
         result = operation.calibration('OP-restored-source', {'operation': 'calibration', 'request': self.request,
                                                              'rainfallMethod': 'reuse'})
@@ -125,7 +155,7 @@ class RegisteredOriginalOperationTests(unittest.TestCase):
             'science': candidate['science'], 'routing': {'versionId': candidate['routingCandidate']['routingVersionId']},
             'parameters': candidate['bestParameters'], 'period': {'startTime': '2024-06-17T09:00:00',
                 'endTime': '2024-06-17T11:00:00', 'warmupDays': 7, 'continuousOrigin': '2024-06-10T09:00:00'}}
-        with tempfile.TemporaryDirectory() as temporary, patch('worker.RUNTIME', runtime), patch('routing_versions.RUNTIME', runtime):
+        with tempfile.TemporaryDirectory() as temporary, patch('worker.RUNTIME', runtime), patch('routing_versions.RUNTIME', runtime), patch('worker.InputProducts', return_value=InputProducts(runtime_root=runtime)):
             folder = Path(temporary) / 'JOB-original-fixed-acceptance'
             write_json(folder / 'request.json', request)
             write_json(folder / 'status.json', {'taskId': folder.name})
@@ -178,12 +208,17 @@ class RegisteredOriginalOperationTests(unittest.TestCase):
             try:
                 operation = object.__new__(HydrologicalOperations)
                 operation.manager = manager
+                operation.cancelled = set()
                 prepared = copy.deepcopy(original)
                 prepared['inputs'].update(bundleVersionId='INPUT-PREPARED-CHECK', bundleManifestSHA256='d' * 64)
                 prepared.setdefault('lineage', {})['preparationTaskId'] = 'DATA-source-read-check'
                 operation.prepare = Mock(return_value=prepared)
                 captured = []
                 candidate = read_json(runtime / 'parameters' / (parameter + '.json'))
+                first = min(hourly_time(row['start']) for row in original['period']['events'])
+                last = max(hourly_time(row['end']) for row in original['period']['events'])
+                forecast = [{'time': (first + timedelta(hours=index)).isoformat(), 'value': 1.0}
+                            for index in range(int((last - first).total_seconds() / 3600) + 1)]
                 def child(identifier, request, stage, role='calculation'):
                     task = manager.submit(request, operation_id=identifier, state_role=role)
                     captured.append(task)
@@ -192,8 +227,9 @@ class RegisteredOriginalOperationTests(unittest.TestCase):
                             'bestParameters': candidate['bestParameters'],
                             'bestRoutingParameters': candidate['bestRoutingParameters'],
                             'routingCandidate': candidate['routingCandidate'],
-                            'statePolicy': 'continuous-origin', 'continuousOrigin': candidate['originalCalibrationPlan']['continuousOrigin']}
-                    return {'taskId': task['taskId'], 'endStateVersionId': 'STATE-' + task['taskId']}
+                            'statePolicy': 'continuous-origin', 'continuousOrigin': candidate['originalCalibrationPlan']['continuousOrigin'],
+                            'hydrographs': {row['id']: {'forecast': [point for point in forecast if hourly_time(row['start']) <= hourly_time(point['time']) <= hourly_time(row['end'])]} for row in original['period']['events']}}
+                    return {'taskId': task['taskId'], 'endStateVersionId': 'STATE-' + task['taskId'], 'hydrograph': {'forecast': forecast}}
                 operation.child = child
                 output = operation.calibration('OP-source-queue-check', {'operation': 'calibration', 'request': original})
                 frozen = captured[0]['runConfig']

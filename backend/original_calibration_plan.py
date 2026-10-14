@@ -175,6 +175,15 @@ def _build(record, plan, bundle, operation):
             event.update(purpose=next(iter(purposes), "独立检验"), sourceSupplementaryReplay=True)
         events.append(event)
     calibration = copy.deepcopy(plan["calibration"])
+    optimizer = calibration['optimizer']
+    if operation == 'search' and optimizer.get('initializationPolicy') == SOURCE_INITIALIZATION:
+        source = plan['sourceConfiguration']
+        rebuilt = effective_initial_candidates(source['base_parameter_snapshot.json']['parameters'],
+            source['routing_parameter_snapshot.json'], source['parameter_space_snapshot.json']['parameters'],
+            source['initial_candidates.json'])
+        if optimizer.get('effectiveInitialCandidates') is not None and optimizer['effectiveInitialCandidates'] != rebuilt:
+            raise ValueError('原率定起始候选与保存快照不一致，请检查来源记录')
+        optimizer['effectiveInitialCandidates'] = rebuilt
     routing, science = plan["originalRoutingVersionId"], plan["science"]
     if operation == "fixed-replay":
         calibration.update(target="runoff", evaluationMode="manual", initialParameters=copy.deepcopy(record["bestParameters"]),

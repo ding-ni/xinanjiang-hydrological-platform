@@ -42,9 +42,15 @@ export function alignedTrialSeries(hydrograph, times) {
 
 export function latestComparableTrial(records = [], current, periodId) {
   if (!current?.frozenRequest || !current?.hydrographs?.[periodId]) return null
-  const identity = trialConditions(current.frozenRequest, current)
+  const comparisonIdentity = value => {
+    const parsed = JSON.parse(value)
+    delete parsed.routing
+    delete parsed.routingParameters
+    return JSON.stringify(canonical(parsed))
+  }
+  const identity = comparisonIdentity(trialConditions(current.frozenRequest, current))
   const index = records.findIndex(row => row.taskId === current.taskId)
-  const prior = (index < 0 ? records : records.slice(0, index)).filter(row => row.conditions === identity)
+  const prior = (index < 0 ? records : records.slice(0, index)).filter(row => row.conditions && comparisonIdentity(row.conditions) === identity)
   return prior.at(-1) || null
 }
 

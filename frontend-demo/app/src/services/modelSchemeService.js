@@ -131,6 +131,22 @@ export function originalCalibrationRecords(versions = [], contextKey) {
   return [...byPlan.values()]
 }
 
+export function makeSchemeEditable(cal, record = null) {
+  if (record?.routingCandidate?.routingVersionId && cal.schemeRoutingVersionId === record.originalCalibrationPlan?.originalRoutingVersionId) {
+    cal.schemeRoutingVersionId = record.routingCandidate.routingVersionId
+    if (record.bestParameters || record.parameters) {
+      cal.params = JSON.parse(JSON.stringify(record.bestParameters || record.parameters))
+      cal.baseline = JSON.parse(JSON.stringify(cal.params))
+    }
+  }
+  cal.sourcePlan = null
+  cal.sourcePlanRequestTemplate = null
+  cal.originalPlanChanged = true
+  const settings = { ...(cal.optimizerSettings || {}) }
+  for (const key of ['initializationPolicy', 'initialCandidates', 'effectiveInitialCandidates']) delete settings[key]
+  cal.optimizerSettings = settings
+}
+
 export async function openOriginalCalibrationRecord(cal, app, record, api = modelApi) {
   const payload = await api(`parameter-versions/${encodeURIComponent(record.parameterVersionId)}/original-plan?operation=search`)
   const { request, plan } = payload
@@ -141,6 +157,8 @@ export async function openOriginalCalibrationRecord(cal, app, record, api = mode
     const source = saved.editor?.originalCalibrationPlan || saved.calculationDraft?.sourcePlan
     if (source?.planSHA256 === plan.planSHA256 && source?.planId === plan.planId) {
       await restoreModelScheme(cal, app, saved)
+      cal.originalCalibrationPlan = JSON.parse(JSON.stringify(plan))
+      makeSchemeEditable(cal, record)
       await saveCalibrationEditor(cal, api)
       return saved
     }
@@ -151,7 +169,15 @@ export async function openOriginalCalibrationRecord(cal, app, record, api = mode
     definition: schemeDefinition(request, 'reuse'), calculationDraft: request, editor: {} })
   cal.originalCalibrationPlan = JSON.parse(JSON.stringify(plan))
   cal.eventSplitSeed = plan.sourceSplitSeed ?? cal.eventSplitSeed
-  const saved = await saveModelScheme(cal, request, api)
+  // Opening a historical colleague record starts an editable copy. Exact
+  // source replay remains available from the historical result; it must not
+  // silently constrain an ordinary new calibration.
+  makeSchemeEditable(cal, record)
+  const editableRequest = JSON.parse(JSON.stringify(request))
+  delete editableRequest.sourcePlan
+  editableRequest.calibration.initialParameters = JSON.parse(JSON.stringify(cal.params))
+  for (const key of ['initializationPolicy', 'initialCandidates', 'effectiveInitialCandidates']) delete editableRequest.calibration.optimizer[key]
+  const saved = await saveModelScheme(cal, editableRequest, api)
   await saveCalibrationEditor(cal, api)
   return saved
 }

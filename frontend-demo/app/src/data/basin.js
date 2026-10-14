@@ -493,7 +493,10 @@ export function gridToGeoJSON(cells = buildGridCells()) {
         qpf: cell.qpf,
         wu: cell.wu,
         wl: cell.wl,
-        wd: cell.wd
+        wd: cell.wd,
+        RS: cell.RS,
+        RI: cell.RI,
+        RG: cell.RG
       },
       geometry: {
         type: 'Polygon',

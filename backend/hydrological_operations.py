@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import copy
+import math
+import traceback
 import threading
 import time
 import uuid
@@ -13,7 +15,7 @@ from input_products import manifest_digest, hourly_time
 
 LABELS = {'calibration': '参数率定', 'manualTrial': '人工试调', 'eventSimulation': '洪水模拟',
           'continuousSimulation': '连续模拟', 'hindcast': '历史回算',
-          'rollingHindcast': '滚动回算', 'continuation': '继续模拟'}
+          'rollingHindcast': '滚动回算', 'continuation': '继续模拟', 'stateReplay': '计算状态'}
 ACTIVE = {'queued', 'running', 'cancelling'}
 CONTEXT = {'contextKey': 'nananxi-xufan:distributed-xinanjiang:nananxi-xufan-1km',
            'projectId': 'nananxi-xufan', 'resolutionId': '1km', 'modelConfigId': 'nananxi-xufan-1km'}
@@ -94,11 +96,35 @@ class HydrologicalOperations:
             if not isinstance(model, dict) or model.get('runType') != 'calibration':
                 raise ValueError('请选定率定方案与洪水')
             if kind == 'manualTrial':
-                model.setdefault('calibration', {})['evaluationMode'] = 'manual'
-                model['calibration'].setdefault('optimizer', {}).update(algorithm='FIXED_PARAMETERS', maxEvaluations=1)
+                model.pop('sourcePlan', None)
+                settings = model.setdefault('calibration', {})
+                settings['evaluationMode'] = 'manual'
+                settings['optimizer'] = {'algorithm': 'FIXED_PARAMETERS', 'maxEvaluations': 1}
+                for key in ('searchParameters', 'routingSearchParameters', 'target', 'jointProfile'):
+                    settings.pop(key, None)
             elif model.get('calibration', {}).get('evaluationMode', 'automatic') != 'automatic':
                 raise ValueError('自动率定须使用参数搜索设置')
             request['request'] = self.manager.schemes.freeze(model)
+        elif kind == 'stateReplay':
+            source_id = request.get('sourceTaskId')
+            if not self.manager.available_artifact(source_id):
+                raise ValueError('请选择已完成的计算成果')
+            source = self.frozen_request(source_id)
+            result = self.manager.result(source_id)
+            if source.get('runType') == 'candidateImport' and source.get('originalCalibrationPlan'):
+                from original_calibration_plan import original_plan_payload
+                parameter_id = source.get('lineage', {}).get('parameterVersionId') or result.get('parameterVersionId')
+                request['frozenReplay'] = original_plan_payload(parameter_id, self.manager.runtime_root,
+                    products=self.manager.products, operation='fixed-replay')['request']
+                source = request['frozenReplay']
+            missing = [label for key, label in [('inputs', '雨流资料'), ('routing', '汇流参数'), ('science', '蒸散发与起算条件'), ('period', '计算时段')] if not source.get(key)]
+            if not (result.get('bestParameters') or source.get('parameters')):
+                missing.append('产流参数')
+            if missing:
+                raise ValueError('该成果缺少' + '、'.join(missing) + '，请恢复计算条件后模拟')
+            if source.get('context') != context:
+                raise ValueError('请在该成果所属流域计算状态')
+            request['requestId'] = 'STATE-' + source_id
         elif kind == 'continuation':
             self.source_result(request.get('sourceTaskId'))
         else:
@@ -136,12 +162,15 @@ class HydrologicalOperations:
                     raise ValueError('最后起报时刻不能早于首次起报时刻')
                 if type(request.get('leadHours')) is not int or request['leadHours'] < 1:
                     raise ValueError('预见期须为正整数小时')
-        request['preparationDefaults'] = self.manager.schemes.defaults()
+        if kind != 'stateReplay':
+            request['preparationDefaults'] = self.manager.schemes.defaults()
         key = request.get('requestId')
         digest = manifest_digest(request)
         with self.lock:
             for row in self.list()['operations']:
                 if key and row.get('requestId') == key:
+                    if kind == 'stateReplay' and row['status'] in {'failed', 'cancelled'}:
+                        continue
                     if row['requestDigest'] != digest:
                         raise ValueError('同次提交的计算条件已改变')
                     return row
@@ -438,9 +467,20 @@ class HydrologicalOperations:
                 'parentVersionId': model.get('routing', {}).get('versionId', 'control-split-v2'), 'parameters': output['bestRoutingParameters']})
             output['routingCandidate'] = candidate
             write_json(safe_task(self.manager.root, output['taskId']) / 'result.json', output)
+        return self.final_states(identifier, output, frozen)
+
+    def final_states(self, identifier, output, frozen):
+        from calibration_groups import group_windows
+        science = self.manager.science_versions.resolve(frozen['science']['versionId'])
+        settings = frozen.get('calibration') or {}
+        policy = output.get('statePolicy') or settings.get('statePolicy') or science['statePolicy']['strategy']
+        rows = frozen['period'].get('events') or frozen['period'].get('windows') or []
+        rows = [row for row in rows if row.get('purpose') != '未使用' and row.get('status') != 'inactive']
+        if not rows or not output.get('hydrographs'):
+            raise ValueError('该成果缺少洪水时段或原流量过程，请恢复计算条件后模拟')
         base = {key: copy.deepcopy(frozen[key]) for key in ('context', 'inputs', 'routing', 'science') if key in frozen}
         base['inputs']['evaporation'] = {'mode': 'science-version'}
-        base.update(runType='simulation', parameters=output['bestParameters'], lineage=copy.deepcopy(output['lineage']))
+        base.update(runType='simulation', parameters=output['bestParameters'], lineage=copy.deepcopy(output.get('lineage') or frozen.get('lineage') or {}))
         for key in ('sourceBundleVersionId', 'preparationTaskId'):
             base['inputs'].pop(key, None)
         if output.get('routingCandidate'):
@@ -448,27 +488,101 @@ class HydrologicalOperations:
             for key in ('routingVersionId', 'routingManifestSHA256'):
                 base['lineage'].pop(key, None)
         states = []
-        if output['statePolicy'] == 'continuous-origin':
-            rows = frozen['period'].get('events') or frozen['period']['windows']
-            rows = [row for row in rows if row.get('purpose') != '未使用' and row.get('status') != 'inactive']
+        if policy == 'continuous-origin':
             groups = [{'start': min(row['start'] for row in rows), 'end': max(row['end'] for row in rows),
                        'memberEventIds': [row['id'] for row in rows]}]
         else:
-            groups = output['overlapGroups']
+            groups = group_windows(rows)
         for index, group in enumerate(groups):
             replay = copy.deepcopy(base)
-            replay['period'] = {'startTime': group['start'], 'endTime': group['end'], 'warmupDays': model['period'].get('warmupDays', 7)}
-            if output['statePolicy'] == 'continuous-origin':
-                replay['period']['continuousOrigin'] = output['continuousOrigin']
+            replay['period'] = {'startTime': group['start'], 'endTime': group['end'], 'warmupDays': frozen['period'].get('warmupDays', 7)}
+            if policy == 'continuous-origin':
+                origin = output.get('continuousOrigin') or settings.get('continuousOrigin') or frozen['period'].get('continuousOrigin') or science['statePolicy'].get('continuousOrigin')
+                if not origin:
+                    raise ValueError('该成果缺少连续起点，请恢复计算条件后模拟')
+                replay['period']['continuousOrigin'] = origin
             state = self.child(identifier, replay, f'正在保存最终参数状态 {index + 1}/{len(groups)}', 'calibrationFinal')
             for event_id in group['memberEventIds']:
                 original = next(row for row in frozen['period'].get('events', frozen['period'].get('windows', [])) if row['id'] == event_id)
-                states.append({'eventId': event_id, 'taskId': state['taskId'], 'endStateVersionId': state['endStateVersionId'],
+                expected = output['hydrographs'].get(event_id)
+                actual = self.slice_hydrograph(state['hydrograph'], original['start'], original['end'])
+                self.assert_same_flow(expected, actual)
+                states.append({'eventId': event_id, 'label': original.get('name') or event_id,
+                               'taskId': state['taskId'], 'endStateVersionId': state['endStateVersionId'],
                                'start': original['start'], 'end': original['end'],
                                'trajectoryStart': group['start'], 'trajectoryEnd': group['end']})
+        links = {'eventStates': states, 'stateCalculationTaskId': states[0]['taskId'] if states else None,
+                 'endStateVersionId': states[0]['endStateVersionId'] if states else None}
+        self.check_cancelled(identifier)
+        write_json(safe_task(self.manager.root, output['taskId']) / 'result.json', {**output, **links})
         return {**output, 'frozenRequest': frozen, 'primaryTaskId': output['taskId'], 'sourceTaskId': output['taskId'], 'eventStates': states,
                 'stateCalculationTaskId': states[0]['taskId'] if states else None,
                 'endStateVersionId': states[0]['endStateVersionId'] if states else None}
+
+    @staticmethod
+    def assert_same_flow(expected, actual):
+        left, right = (expected or {}).get('forecast', []), (actual or {}).get('forecast', [])
+        if not left or len(left) != len(right) or any(
+            hourly_time(a['time']) != hourly_time(b['time']) or not math.isclose(a['value'], b['value'], rel_tol=1e-10, abs_tol=1e-8)
+            for a, b in zip(left, right)
+        ):
+            raise ValueError('补算流量与原成果不一致，请检查原参数、资料及起算条件')
+
+    def has_state_history(self, task_id):
+        from task_diagnostics import TaskDiagnostics
+        try:
+            TaskDiagnostics(self.manager).catalog(task_id)
+            return True
+        except (ValueError, RuntimeError, KeyError, FileNotFoundError):
+            return False
+
+    def frozen_request(self, task_id):
+        source = self.manager.get(task_id).get('runConfig')
+        if not source:
+            path = safe_task(self.manager.root, task_id) / 'request.json'
+            if not path.is_file():
+                raise ValueError('该成果缺少保存的计算条件，请恢复计算条件后模拟')
+            source = read_json(path)
+        if not isinstance(source, dict) or not source:
+            raise ValueError('该成果缺少保存的计算条件，请恢复计算条件后模拟')
+        return copy.deepcopy(source)
+
+    def state_replay(self, identifier, request):
+        source_id = request['sourceTaskId']
+        frozen = self.frozen_request(source_id)
+        output = self.manager.result(source_id)
+        linked = output.get('eventStates') or []
+        if (linked and all(self.has_state_history(row['taskId']) for row in linked)) or (
+            frozen['runType'] != 'calibration' and self.has_state_history(output.get('stateCalculationTaskId') or source_id)
+        ):
+            return {**output, 'primaryTaskId': source_id, 'sourceTaskId': source_id}
+        if frozen['runType'] == 'calibration':
+            result = self.final_states(identifier, output, frozen)
+        elif request.get('frozenReplay'):
+            replay = self.child(identifier, request['frozenReplay'], '正在按保存参数计算状态', 'stateReplay')
+            replay = self.final_states(identifier, replay, self.manager.get(replay['taskId'])['runConfig'])
+            result = {**output, **{key: replay[key] for key in ('eventStates', 'stateCalculationTaskId', 'endStateVersionId')},
+                      'primaryTaskId': source_id, 'sourceTaskId': source_id}
+        else:
+            # Reuse the submitted forcing, initial state, science and parameters.
+            # This path does not prepare new rain or perform parameter search.
+            frozen.pop('scheme', None)
+            result = self.child(identifier, frozen, '正在计算逐时状态', 'stateReplay')
+            self.assert_same_flow(output.get('hydrograph'), result.get('hydrograph'))
+            result = {**output, 'primaryTaskId': source_id, 'sourceTaskId': source_id,
+                      'stateCalculationTaskId': result['taskId'], 'endStateVersionId': result['endStateVersionId']}
+        self.check_cancelled(identifier)
+        links = {key: result[key] for key in ('eventStates', 'stateCalculationTaskId', 'endStateVersionId') if key in result}
+        write_json(safe_task(self.manager.root, source_id) / 'result.json', {**output, **links})
+        # Existing staff operations continue to point at their original process.
+        for row in self.list()['operations']:
+            if row['taskId'] == identifier or row['status'] != 'completed':
+                continue
+            path = safe_task(self.root, row['taskId']) / 'result.json'
+            original = read_json(path)
+            if original.get('primaryTaskId') == source_id:
+                write_json(path, {**original, **links})
+        return result
 
     def hindcast(self, identifier, request):
         first = hourly_time(request['issueTime'])
@@ -560,6 +674,8 @@ class HydrologicalOperations:
             kind = request['operation']
             if kind in {'calibration', 'manualTrial'}:
                 result = self.calibration(identifier, request)
+            elif kind == 'stateReplay':
+                result = self.state_replay(identifier, request)
             elif kind == 'eventSimulation':
                 result = self.event_simulation(identifier, request)
             elif kind == 'continuation':
@@ -587,5 +703,6 @@ class HydrologicalOperations:
         except OperationCancelled:
             self.update(identifier, status='cancelled', stageLabel='已停止', completedAt=now())
         except Exception as error:
+            (folder / 'error.log').write_text(traceback.format_exc(), encoding='utf-8')
             self.update(identifier, status='failed', stageLabel='计算未完成', errorMessage=str(error),
                         issues=getattr(error, 'issues', []), completedAt=now())

@@ -184,7 +184,7 @@ function polygonBounds(polygons) {
   ]
 }
 
-function colorForRainfall(value) {
+export function colorForRainfall(value) {
   if (value == null) return [0, 0, 0, 0]
   const last = RAIN_COLORS.at(-1)
   if (value >= last[0]) return [...last[1].slice(0, 3), Math.round(last[1][3] * 255)]

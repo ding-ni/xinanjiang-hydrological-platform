@@ -5,7 +5,7 @@ import copy
 import json
 import re
 import uuid
-from common import now
+from common import now, read_json
 from input_products import manifest_digest
 
 
@@ -70,7 +70,27 @@ class ModelSchemes:
 
     def list(self):
         with self.database.connect() as db:
-            return {'schemes': [dict(row) for row in db.execute('SELECT * FROM model_schemes ORDER BY updated_at DESC')]}
+            rows = [dict(row) for row in db.execute('SELECT s.*, e.payload AS editor_payload, r.definition, r.calculation_draft FROM model_schemes s LEFT JOIN model_scheme_editors e ON e.scheme_id=s.id LEFT JOIN model_scheme_revisions r ON r.scheme_id=s.id AND r.revision=s.revision ORDER BY s.updated_at DESC')]
+        latest = {}
+        for path in (self.database.runtime / 'operations').glob('*/status.json'):
+            operation = read_json(path)
+            request = (operation.get('runConfig') or {}).get('request') or {}
+            scheme_id = request.get('scheme', {}).get('id') or operation.get('lineage', {}).get('schemeId')
+            if scheme_id and operation.get('createdAt', '') > latest.get(scheme_id, {}).get('createdAt', ''):
+                latest[scheme_id] = {key: operation.get(key) for key in ('taskId', 'status', 'createdAt', 'completedAt')}
+        for row in rows:
+            editor = json.loads(row.pop('editor_payload') or '{}')
+            definition = json.loads(row.pop('definition') or '{}')
+            draft = json.loads(row.pop('calculation_draft') or '{}')
+            events = editor.get('events', definition.get('period', {}).get('events', [])) + editor.get('schemeWindows', [])
+            selected = {event['id']: event for event in events if event.get('purpose') in {'率定', '验证', '独立检验'} and event.get('status') != 'inactive'}
+            row['summary'] = {'mode': editor.get('calibrationMode', definition.get('period', {}).get('mode', 'event')),
+                'selectedCount': len(selected), **{key: sum(event['purpose'] == purpose for event in selected.values()) for key, purpose in [('calibration', '率定'), ('validation', '验证'), ('independent', '独立检验')]}}
+            source = editor.get('originalCalibrationPlan') or draft.get('sourcePlan') or {}
+            row['originalPlanSHA256'] = source.get('planSHA256')
+            row['context'] = editor.get('context') or definition.get('context', {})
+            row['latestCalculation'] = latest.get(row['id'])
+        return {'schemes': rows}
 
     def get(self, scheme_id, revision=None):
         if not re.fullmatch(r'SCHEME-[a-f0-9]{32}', str(scheme_id)):

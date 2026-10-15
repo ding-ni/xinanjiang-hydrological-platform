@@ -58,7 +58,7 @@ const basins = computed(() => app.availableBasins)
 const modelConfigs = computed(() => listBasinConfigs(app.basinId, app.projectId))
 const inputStatus = computed(() => usesModelInputService(app.activeContext)
   ? modelInputDisplayStatus({ resolution: app.modelScale, registered: app.hasModelInput,
-    bundleVersionId: app.selectedInputBundleVersionId,
+    bundleVersionId: 'HISTORICAL_DATABASE',
     loaded: monitor.hasHistoricalObservations, loading: monitor.historicalLoading,
     backendError: app.backendError, inputError: monitor.historicalError || app.inputCatalogError })
   : { label: app.dataStatus, status: app.availabilityStatus })

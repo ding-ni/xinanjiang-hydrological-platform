@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { originalCalibrationRecords, openOriginalCalibrationRecord, recoverActiveCalibrationOperation, calibrationEditor, restoreCalibrationEditor, partitionSchemeWindows } from '../src/services/modelSchemeService.js'
+import { originalCalibrationRecords, openOriginalCalibrationRecord, recoverActiveCalibrationOperation, calibrationEditor, restoreCalibrationEditor, partitionSchemeWindows, saveModelScheme, schemeDefinition, schemeWindowCounts, adoptOriginalBestParameters, continuousOriginError, adoptHistoricalPreparation } from '../src/services/modelSchemeService.js'
 import { normalizeBackendTask } from '../src/services/modelBackendService.js'
 
 const context = { contextKey: 'nananxi-xufan:distributed-xinanjiang:nananxi-xufan-1km', projectId: 'nananxi-xufan', resolutionId: '1km', modelConfigId: 'nananxi-xufan-1km' }
@@ -19,6 +19,74 @@ const source = { context, runType: 'calibration', inputs: { bundleVersionId: 'IN
   calibration: { initialParameters: { SM: 18 }, target: 'joint', statePolicy: 'continuous-origin', continuousOrigin: '2020-12-25T00:00:00',
     optimizer: { algorithm: 'DIFFERENTIAL_EVOLUTION', seed: 20260820, maxEvaluations: 960, populationSize: 48 },
     objectives: { metrics: { nse: true }, weights: { nse: 1 } } } }
+
+test('scheme-only counts distinguish selected extra windows, exclusions and old boundaries', () => {
+  assert.deepEqual(schemeWindowCounts([{ purpose: '率定' }, { purpose: '未使用' }, { purpose: '验证', catalogueBoundaryOverride: true }]),
+    { selectedExtra: 1, excludedExtra: 1, boundaryOverrides: 1 })
+})
+
+test('adding an earlier flood requires an explicit continuous-origin change without blocking process preview', () => {
+  assert.match(continuousOriginError('continuous-origin', '2020-12-25T00:00', '2007-03-14T12:00'), /2007-03-14 12:00/)
+  assert.match(continuousOriginError('continuous-origin', null, '2007-03-14T12:00'), /连续演算开始时间/)
+  assert.equal(continuousOriginError('continuous-origin', '2007-03-07T12:00', '2007-03-14T12:00'), '')
+  assert.equal(continuousOriginError('independent-warmup', null, '2007-03-14T12:00'), '')
+})
+
+test('adopting current network only changes draft preparation fields and retains original model parameters and input until commit', async () => {
+  const cal = { params: { SM: 18 }, sourcePlan: structuredClone(source.sourcePlan), schemeSourceBundleVersionId: 'INPUT-original',
+    markNeedsRun() {}, saveCurrentWorkspace() {} }
+  const defaults = { idwPower: 3, minimumStations: 2 }, network = { flowStation: '70115800', stations: [{ id: 'rain', lon: 119, lat: 30 }] }
+  await adoptHistoricalPreparation(cal, async path => path === 'database/network' ? network : defaults)
+  assert.deepEqual(cal.schemeStationNetwork, network)
+  assert.equal(cal.rainfallMethod, 'stationIdw')
+  assert.equal(cal.idwPower, 3)
+  assert.equal(cal.minimumStations, 2)
+  assert.equal(cal.schemeSourceBundleVersionId, 'INPUT-original')
+  assert.deepEqual(cal.params, { SM: 18 })
+  assert.deepEqual(cal.sourcePlan, source.sourcePlan)
+})
+
+test('explicitly adopting original best parameters preserves floods, inputs, ranges and algorithm budget', async () => {
+  const cal = { contextKey: context.contextKey, originalCalibrationPlan: { ...plan, parameterVersionId: record.parameterVersionId },
+    params: { SM: 18 }, schemeSourceBundleVersionId: 'HISTORICAL_SPATIAL_V1', events: structuredClone(events),
+    sourcePlan: source.sourcePlan, searchParameters: { SM: { minimum: 10, maximum: 50 } },
+    optimizerSettings: { seed: 20260820, initializationPolicy: 'SOURCE_INITIAL_CANDIDATES', initialCandidates: [] },
+    maxEvaluations: 960, saveCurrentWorkspace() {}, markNeedsRun() {} }
+  await adoptOriginalBestParameters(cal, async path => {
+    assert.equal(path, 'parameter-versions/PARAM-original/original-plan?operation=fixed-replay')
+    return { plan, request: { context, calibration: { initialParameters: { SM: 22 } }, routing: { versionId: 'ROUTING-best' }, science: { versionId: 'SCIENCE-best' } } }
+  })
+  assert.deepEqual(cal.params, { SM: 22 })
+  assert.equal(cal.schemeRoutingVersionId, 'ROUTING-best')
+  assert.equal(cal.scienceVersionId, 'SCIENCE-best')
+  assert.equal(cal.schemeSourceBundleVersionId, 'HISTORICAL_SPATIAL_V1')
+  assert.deepEqual(cal.events, events)
+  assert.deepEqual(cal.searchParameters, { SM: { minimum: 10, maximum: 50 } })
+  assert.equal(cal.maxEvaluations, 960)
+  assert.equal(cal.optimizerSettings.seed, 20260820)
+  assert.equal(cal.sourcePlan, null)
+})
+
+test('parameter-only versions preserve the delivered input and never read new database defaults', async () => {
+  const cal = { modelSchemeId: 'SCHEME-original', modelSchemeName: '原方案', modelSchemeRevision: 1,
+    modelSchemeLatestRevision: 1, schemeSourceBundleVersionId: 'INPUT-original', rainfallMethod: 'reuse',
+    schemeDataMode: 'frozen-input', schemeStationNetwork: null, idwPower: 2, minimumStations: 1, saveCurrentWorkspace() {} }
+  const request = structuredClone(source)
+  delete request.sourcePlan
+  request.calibration.initialParameters.SM = 20
+  let written
+  const api = async (path, options) => {
+    if (path === 'model-schemes/SCHEME-original?revision=1') return { definition: schemeDefinition(source) }
+    assert.equal(path, 'model-schemes')
+    written = options.body
+    return { id: cal.modelSchemeId, name: cal.modelSchemeName, revision: 2, latestRevision: 2 }
+  }
+  await saveModelScheme(cal, request, api)
+  assert.equal(written.calculationDraft.inputs.bundleVersionId, 'INPUT-original')
+  assert.equal(written.definition.inputs.bundleVersionId, 'INPUT-original')
+  assert.equal(written.calculationDraft.calibration.initialParameters.SM, 20)
+  assert.equal(cal.modelSchemeRevision, 2)
+})
 
 test('same flood number with an old boundary never replaces the public directory boundary', () => {
   const old={...events[0],start:'2021-08-01T00:00:00'}
@@ -82,7 +150,8 @@ test('opening an original record preserves complete catalogue, exact accepted us
   assert.equal(cal.running, false)
   await openOriginalCalibrationRecord(cal, app, record, api)
   assert.equal(calls.filter(([path, method]) => path === 'model-schemes' && method === 'POST').length, 1)
-  assert.equal(saved.get('SCHEME-original').savedEditor.events.length, events.length)
+  assert.deepEqual(saved.get('SCHEME-original').calculationDraft, source)
+  assert.deepEqual(cal.sourcePlan, source.sourcePlan)
   assert.equal(calls.some(([path]) => path.endsWith('/draft')), false)
   assert.equal(calls.some(([path]) => /operations|calibration-tasks|scheme-preparations/.test(path)), false)
 })

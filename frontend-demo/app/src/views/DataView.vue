@@ -32,7 +32,7 @@
         </aside>
         <main class="observation-main">
           <form class="query-toolbar" @submit.prevent="queryWindow">
-            <label>资料来源<select class="input" v-model="sourceId"><option value="">历年资料</option><option v-for="item in sources" :key="item.id" :value="item.id">{{ item.id }}</option></select></label>
+            <span class="query-note">使用水文资料库 · 跨年查询无需选择原文件</span>
             <label>起始时间<input class="input" type="datetime-local" v-model="start" step="3600" required aria-label="资料起始时间" /></label>
             <label>结束时间<input class="input" type="datetime-local" v-model="end" step="3600" required aria-label="资料结束时间" /></label>
             <button class="btn primary" :disabled="busy || !stationId"><Search />查询</button>
@@ -61,7 +61,7 @@
 
       <section v-else-if="tab === 'events'" class="event-section">
         <div class="section-toolbar"><h2>历史洪水目录 <small>{{ filteredEvents.length }} 场</small></h2><label class="search-box"><Search /><input v-model="eventSearch" placeholder="年份或场次编号" aria-label="检索洪水场次" /></label></div>
-        <p class="section-intro">目录登记洪水编号和起止时段，用来查找实测过程；雨量、流量仍保存在实测资料中。模型计算资料有自己的洪水窗口目录，实际参与率定、验证或模拟的场次在“率定与模拟”中选择。</p>
+        <p class="section-intro">公共目录登记226场洪水，直接查询历史库实测过程。方案独有时段与不同边界在各方案内保留，选用场次及用途在项目方案中设置。</p>
         <div class="records-scroll"><table class="table"><thead><tr><th>场次编号</th><th>开始</th><th>结束</th><th>历时</th><th>洪峰流量（m³/s）</th><th>操作</th></tr></thead><tbody><tr v-for="event in filteredEvents" :key="event.eventId"><td><b>{{ event.floodCode || event.eventId }}</b></td><td>{{ event.start?.replace('T',' ') }}</td><td>{{ event.end?.replace('T',' ') }}</td><td>{{ event.durationHours }} h</td><td class="numeric">{{ value(event.observedInputs?.observedPeakFlowM3s) }}</td><td><button class="text-action" @click="viewEvent(event)">查看实测过程</button></td></tr></tbody></table></div>
       </section>
 
@@ -88,7 +88,7 @@ const app = useAppStore()
 const monitor = useMonitorStore()
 const route = useRoute()
 const available = computed(() => app.basinId === 'nananxi-xufan' && modelBackendEnabled())
-const tabs = [{ id: 'observations', label: '实测资料' }, { id: 'events', label: '洪水目录' }, { id: 'processing', label: '资料来源与处理记录' }]
+const tabs = [{ id: 'observations', label: '实测资料' }, { id: 'events', label: '洪水目录' }, { id: 'processing', label: '入库记录' }]
 const variables = { rain: { label: '降雨量', color: '#287ab4' }, level: { label: '水位', color: '#177c72' }, flow: { label: '流量', color: '#bb633e' } }
 const tab = ref(route.query.tab === 'inputs' ? 'processing' : tabs.some(item => item.id === route.query.tab) ? route.query.tab : 'observations'), busy = ref(false), error = ref(''), message = ref('')
 const summary = ref(null), stations = ref([]), events = ref([]), sources = ref([]), sourceId = ref('')

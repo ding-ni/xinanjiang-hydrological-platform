@@ -37,11 +37,11 @@ def local_observations_digest(products, start, end, intervals=None):
     return digest.hexdigest()
 
 
-def normalize_preparation(payload, products):
+def normalize_preparation(payload, products, *, frozen_definition=None):
     allowed = {'operation', 'requestId', 'name', 'projectId', 'resolutionId',
                'parentBundleVersionId', 'period', 'statePolicy', 'continuousOrigin',
                'rainfallMethod', 'idwPower', 'minimumStations', 'science', 'evaporation', 'stationSourceId',
-               'operationPurpose'}
+               'operationPurpose', 'stationNetwork'}
     if set(payload) - allowed:
         raise ValueError('自动资料准备字段无效')
     if payload.get('projectId') != 'nananxi-xufan' or payload.get('resolutionId') != '1km':
@@ -113,7 +113,11 @@ def normalize_preparation(payload, products):
                 adapter['manifest']['sourceId'] = selection
                 definition['stationSourceManifestSHA256'] = source['manifestSHA256']
             definition['stationSourceId'] = selection
-        definition['stationNetwork'] = station_network(products, adapter)
+        from station_network import validate_network
+        definition['stationNetwork'] = validate_network(payload['stationNetwork']) if payload.get('stationNetwork') else station_network(products, adapter)
+    from input_products import HISTORICAL_SPATIAL_ID
+    if parent['bundleVersionId'] == HISTORICAL_SPATIAL_ID and (method != 'stationIdw' or payload.get('stationSourceId') != 'LOCAL_OBSERVATIONS'):
+        raise ValueError('历史库空间配置必须从历史实测站网准备完整输入')
     from science_context import ScienceVersions
     is_calibration = period.get('mode') in {'event', 'continuous'} and purpose != 'simulation'
     science_request = {'runType': 'calibration' if is_calibration else 'simulation',
@@ -123,9 +127,13 @@ def normalize_preparation(payload, products):
     scientific = ScienceVersions(products.runtime_root).for_request(science_request)
     definition['science'] = {'versionId': scientific['scienceVersionId']}
     definition['petConfigurationSHA256'] = scientific['petConfigurationSHA256']
+    if parent['bundleVersionId'] == HISTORICAL_SPATIAL_ID:
+        from input_products import file_sha256
+        definition['preparationImplementationSHA256'] = frozen_definition['preparationImplementationSHA256'] if frozen_definition else manifest_digest([
+            file_sha256(__file__), file_sha256(MODEL / 'code/runoff_platform/data/precipitation_idw.py')])
     if method == 'stationIdw' and (payload.get('stationSourceId') == 'LOCAL_OBSERVATIONS' or not payload.get('stationSourceId') and not parent['manifest'].get('sourceId')):
         intervals = required_drive_intervals({**definition, 'period': period})
-        definition['localObservationSHA256'] = local_observations_digest(products, start, end, intervals)
+        definition['localObservationSHA256'] = frozen_definition['localObservationSHA256'] if frozen_definition else local_observations_digest(products, start, end, intervals)
     return {**payload, **definition, 'name': str(payload.get('name') or '方案计算资料')[:200],
             'preparationKey': manifest_digest(definition), 'productionEligible': False}
 
@@ -254,7 +262,7 @@ def build_prepared(folder, products):
     from xaj_routing.control_area import contributing_grid_areas
     from xaj_routing.io import read_topology_json
     request = read_json(folder / 'request.json')
-    original_fields = {'operation', 'requestId', 'name', 'projectId', 'resolutionId', 'parentBundleVersionId', 'period', 'statePolicy', 'continuousOrigin', 'rainfallMethod', 'idwPower', 'minimumStations', 'science', 'evaporation', 'stationSourceId', 'operationPurpose'}
+    original_fields = {'operation', 'requestId', 'name', 'projectId', 'resolutionId', 'parentBundleVersionId', 'period', 'statePolicy', 'continuousOrigin', 'rainfallMethod', 'idwPower', 'minimumStations', 'science', 'evaporation', 'stationSourceId', 'operationPurpose', 'stationNetwork'}
     if normalize_preparation({key: value for key, value in request.items() if key in original_fields}, products) != request:
         raise ValueError('资料准备请求已偏离冻结条件，请重新准备')
     parent = products.resolve(request['parentBundleVersionId'])
@@ -277,7 +285,8 @@ def build_prepared(folder, products):
     areas = contributing_grid_areas(parent['paths']['mapping'], read_topology_json(parent['paths']['topology']), 'R0020_UP', [row['unit_id'] for row in grids])
     indexes = np.flatnonzero(areas > 0)
     quality = read_json(parent['paths']['quality'])
-    flow = pd.read_csv(parent['paths']['flow']).assign(time=lambda df: pd.to_datetime(df.time)).set_index('time').flow_m3_s
+    flow = (pd.read_csv(parent['paths']['flow']).assign(time=lambda df: pd.to_datetime(df.time)).set_index('time').flow_m3_s
+            if request['rainfallMethod'] == 'reuse' else None)
     values = np.full((len(times), len(grids)), np.nan)
     counts = np.full(len(times), -1, dtype=np.int16)
     generated = []
@@ -294,9 +303,17 @@ def build_prepared(folder, products):
         output.mkdir(parents=True)
         rain_directory = output / 'precipitation'
         rain_directory.mkdir()
-        template_path = next(parent['precipitationDir'].glob('*.nc'))
-        with xr.open_dataset(template_path, engine='h5netcdf') as template:
-            lat, lon = template.lat.values.copy(), template.lon.values.copy()
+        from input_products import HISTORICAL_SPATIAL_ID
+        if parent['bundleVersionId'] == HISTORICAL_SPATIAL_ID:
+            from historical_inputs import grid_axes
+            geometry = read_json(parent['paths']['geometry'])
+            by_position = {(int(row['properties']['row']), int(row['properties']['col'])): row['geometry']['coordinates'][0] for row in geometry['features']}
+            cells = [{'bounds': by_position[(int(row['source_row']), int(row['source_col']))]} for row in grids]
+            lat, lon = grid_axes(grids, cells)
+        else:
+            # Preserve the exact delivered coordinate convention for old work.
+            with xr.open_dataset(next(parent['precipitationDir'].glob('nananxi_precip_hourly_1km_*.nc'))) as template:
+                lat, lon = template.lat.values.copy(), template.lon.values.copy()
         row_ids = np.array([int(row['array_row']) for row in grids])
         col_ids = np.array([int(row['array_col']) for row in grids])
         transformer = Transformer.from_crs('EPSG:4326', 'EPSG:32650', always_xy=True)
@@ -312,6 +329,7 @@ def build_prepared(folder, products):
             year_times, year_values, year_counts = [], [], []
             from station_network import observation_adapter
             adapter = observation_adapter(products, parent, request.get('stationSourceId'))
+            adapter['_stationNetwork'] = request['stationNetwork']
             for first, last in year_blocks:
                 block, ids, coordinates, rain, observed, source_id, flow_source = station_block(products, adapter, first, last, folder / 'queries')
                 rain[(~np.isfinite(rain)) | (rain < 0)] = np.nan
@@ -341,7 +359,11 @@ def build_prepared(folder, products):
     flow = pd.to_numeric(flow, errors='coerce').where(lambda series: np.isfinite(series) & (series >= 0))
     valid = np.isfinite(values).all(axis=1) & (counts >= request['minimumStations'])
     issues, packages = [], []
-    original_catalog = read_json(parent['paths']['events'])
+    if 'events' in parent['paths']:
+        original_catalog = read_json(parent['paths']['events'])
+    else:
+        from hydro_database import HydroDatabase
+        original_catalog = {'packages': HydroDatabase(products.runtime_root).events()}
     original = {row['eventId']: row for row in original_catalog['packages']}
     event_mode = request['period'].get('mode') == 'event'
     windows = request['windows']
@@ -386,12 +408,13 @@ def build_prepared(folder, products):
     paths = copy.deepcopy(parent['manifest']['paths'])
     if method != 'reuse':
         paths['flow'] = products.reference(flow_path)
-    if event_mode:
+    if event_mode or 'events' not in paths:
         event_path = output / 'event-catalog.json'
-        write_json(event_path, {'schemaVersion': '1.1', 'count': len(packages), 'packages': packages})
+        catalog_rows = packages if event_mode else original_catalog['packages']
+        write_json(event_path, {'schemaVersion': '1.1', 'count': len(catalog_rows), 'packages': catalog_rows})
         paths['events'] = products.reference(event_path)
         generated.append(event_path)
-    files = [row for row in parent['files'] if not (row['root'], row['path']) in {(parent['manifest']['paths'][role]['root'], parent['manifest']['paths'][role]['path']) for role in ('events', 'flow') if paths[role] != parent['manifest']['paths'][role]}]
+    files = [row for row in parent['files'] if not (row['root'], row['path']) in {(parent['manifest']['paths'][role]['root'], parent['manifest']['paths'][role]['path']) for role in ('events', 'flow') if role in parent['manifest']['paths'] and paths[role] != parent['manifest']['paths'][role]}]
     files += [products.file_record(path) for path in generated]
     manifest = {**copy.deepcopy(parent['manifest']), 'bundleVersionId': product_id, 'modelInputVersion': product_id, 'name': request['name'], 'operation': 'schemeInput', 'createdAt': now(), 'sourceTaskId': folder.name, 'requestSHA256': manifest_digest(request), 'parentBundleVersionId': parent['bundleVersionId'], 'parentManifestSHA256': parent['manifestSHA256'], 'paths': paths, 'files': files, 'precipitationDirectory': products.reference(rain_directory), 'productionEligible': False,
                 'forcingVersion': parent['forcingVersion'] if method == 'reuse' else 'scheme-rain-' + product_id,

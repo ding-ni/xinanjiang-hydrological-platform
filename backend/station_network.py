@@ -84,3 +84,25 @@ def station_network(products, parent, body=None):
     if len(outlets) != 1 or not stations:
         raise ValueError('请在模型与资料中配置雨量站和控制断面')
     return validate_network({'stations': stations, 'flowStation': outlets[0]['id']})
+
+
+def local_station_network(database, body=None):
+    """The workspace station network is independent of historical input packages."""
+    with database.connect() as db:
+        db.execute('CREATE TABLE IF NOT EXISTS station_networks (source_id TEXT PRIMARY KEY, payload TEXT NOT NULL)')
+        if body is not None:
+            network = validate_network(body)
+            known = {row['id'] for row in database.stations() if row['variable'] == 'rain'}
+            if any(row['id'] not in known for row in network['stations']):
+                raise ValueError('所选雨量站不在历史水文资料库中')
+            if network['flowStation'] not in {row['id'] for row in database.stations() if row['variable'] == 'flow'}:
+                raise ValueError('出口水文站不在历史水文资料库中')
+            db.execute('INSERT INTO station_networks VALUES (?,?) ON CONFLICT(source_id) DO UPDATE SET payload=excluded.payload',
+                       ('LOCAL_OBSERVATIONS', json.dumps(network, ensure_ascii=False)))
+        saved = db.execute('SELECT payload FROM station_networks WHERE source_id=?', ('LOCAL_OBSERVATIONS',)).fetchone()
+    if saved:
+        return validate_network(json.loads(saved[0]))
+    rows = database.stations()
+    stations = [{'id': row['id'], 'lon': row['lon'], 'lat': row['lat']} for row in rows
+                if row['variable'] == 'rain' and row['lon'] is not None and row['lat'] is not None]
+    return validate_network({'stations': stations, 'flowStation': '70115800'})

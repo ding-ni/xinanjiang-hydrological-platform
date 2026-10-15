@@ -213,7 +213,7 @@ watch([usesModelInputs, () => monitor.currentTimeLabel, () => app.basinId], () =
   }, 100)
 }, { immediate: true })
 const hasNananxiObservation = computed(() => Boolean(caseData.value) && app.hasObservationCatalog && monitor.hasHistoricalObservations
-  && (!usesModelInputs.value || (app.modelScale === '1km' && !app.backendError && monitor.historicalPreview?.sourceType === 'model-qc')))
+  && (!usesModelInputs.value || (app.modelScale === '1km' && !app.backendError && ['model-qc','database-observed'].includes(monitor.historicalPreview?.sourceType))))
 const projectStations = computed(() => {
   const rows = [
     ...(caseData.value?.stations?.stations || []),
@@ -276,7 +276,7 @@ const currentPrecipCells = computed(() => {
     const key = `${product.source || product.sourceType || 'grid'}:${product.resolution}:${product.times[0] || ''}:${product.times[product.times.length - 1] || ''}:${index}`
     const cached = precipCellCache.get(key)
     if (cached) return cached
-    const cells = product.sourceType === 'model-qc' ? gridCellsAtTime(product, monitor.currentTimeLabel) : gridCellsAt(product, index)
+    const cells = ['model-qc','database-derived-grid'].includes(product.sourceType) ? gridCellsAtTime(product, monitor.currentTimeLabel) : gridCellsAt(product, index)
     precipCellCache.set(key, cells)
     while (precipCellCache.size > 24) precipCellCache.delete(precipCellCache.keys().next().value)
     return cells
@@ -360,13 +360,13 @@ async function loadRainfallGridWindow(requestId = observationRequestId) {
   const preview = monitor.historicalPreview
   if (!preview || requestId !== observationRequestId) return
   if (usesModelInputs.value) {
-    if (app.modelScale !== '1km' || preview.sourceType !== 'model-qc' || !monitor.modelInputProduct) {
+    if (app.modelScale !== '1km' || !['model-qc','database-observed'].includes(preview.sourceType) || !monitor.modelInputProduct) {
       nananxiRainGridProduct.value = null
       rainGridError.value = '当前尺度没有降雨资料'
       return
     }
     nananxiRainGridProduct.value = monitor.modelInputProduct
-    rainGridError.value = ''
+    rainGridError.value = monitor.modelInputEventQuality?.gridError || ''
     rainGridLoading.value = false
     precipCellCache.clear()
     return

@@ -121,7 +121,8 @@ class SchemeEditorTests(unittest.TestCase):
                         'context': parameter['context'], 'issueTime': '2023-12-31T00:00',
                         'lastIssueTime': '2024-01-01T00:00', 'leadHours': 10000}
                 with patch.object(manager.parameter_schemes, 'get', return_value=parameter):
-                    submitted = manager.operations.submit(body)
+                    with patch('station_network.local_station_network', return_value={'stations': [{'id': 'test', 'lon': 119, 'lat': 30}], 'flowStation': '70115800'}):
+                        submitted = manager.operations.submit(body)
                     self.assertEqual(submitted['runConfig']['leadHours'], 10000)
                     for lead in (0, -1, 2.5, True):
                         with self.subTest(lead=lead), self.assertRaisesRegex(ValueError, '正整数'):

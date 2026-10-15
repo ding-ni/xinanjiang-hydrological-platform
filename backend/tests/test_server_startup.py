@@ -94,6 +94,7 @@ class StartupTests(unittest.TestCase):
               patch('server.WorkspaceLock') as ownership,
               patch('server.workspace_identity'),
               patch('server.TaskManager', return_value=manager),
+              patch('delivered_schemes.migrate_delivered_schemes', return_value=[]),
               patch('server.handler', side_effect=prepare_handler) as prepared,
               patch('server.webbrowser.open', side_effect=open_browser) as browser,
               redirect_stdout(output), redirect_stderr(logs)):

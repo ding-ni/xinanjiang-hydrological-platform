@@ -20,6 +20,14 @@ def editor_identity(editor):
     return {key:value for key,value in editor.items() if key not in {'eventId','activeOperationId','activeOperationRequest'}}
 
 
+def preparation_binding_key(record, request):
+    # Parameter-only versions share inputs; PET/science changes require their
+    # own coverage check even when the selected floods have not changed.
+    return manifest_digest({'definition': record['definitionSHA256'],
+                            'science': request.get('science', {}),
+                            'evaporation': request.get('inputs', {}).get('evaporation', {})})
+
+
 def input_definition(request, rainfall_method='reuse'):
     period = copy.deepcopy(request['period'])
     if period.get('mode') == 'event':
@@ -33,6 +41,7 @@ def input_definition(request, rainfall_method='reuse'):
     return {'context': request['context'], 'inputs': {'bundleVersionId': request['inputs'].get('sourceBundleVersionId') or request['inputs']['bundleVersionId'], 'rainfallMethod': rainfall_method,
             **({'stationSourceId': request['inputs']['stationSourceId']} if rainfall_method == 'stationIdw' and request['inputs'].get('stationSourceId') else {}),
             **({'stationNetwork': request['inputs']['stationNetwork']} if rainfall_method == 'stationIdw' and request['inputs'].get('stationNetwork') else {}),
+            **({'dataMode': request['inputs']['dataMode']} if request['inputs'].get('dataMode') else {}),
             'idwPower': request['inputs'].get('idwPower', 2), 'minimumStations': request['inputs'].get('minimumStations', 1)},
             'period': period, 'statePolicy': calibration.get('statePolicy') or ('continuous-origin' if period.get('continuousOrigin') else 'independent-warmup'),
             'continuousOrigin': calibration.get('continuousOrigin') or period.get('continuousOrigin') or None}
@@ -61,6 +70,13 @@ class ModelSchemes:
                     PRIMARY KEY(scheme_id,revision));
                 CREATE TABLE IF NOT EXISTS model_scheme_draft_versions (
                     scheme_id TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS model_scheme_prepared_inputs (
+                    scheme_id TEXT NOT NULL, definition_sha256 TEXT NOT NULL,
+                    preparation_task_id TEXT NOT NULL, bundle_version_id TEXT NOT NULL,
+                    PRIMARY KEY(scheme_id,definition_sha256));
+                CREATE TABLE IF NOT EXISTS scheme_input_assets (
+                    asset_id TEXT PRIMARY KEY, scheme_id TEXT, scheme_revision INTEGER,
+                    role TEXT NOT NULL, payload TEXT NOT NULL);
             ''')
 
     def defaults(self, body=None):
@@ -108,6 +124,11 @@ class ModelSchemes:
             row['originalPlanSHA256'] = source.get('planSHA256')
             row['context'] = editor.get('context') or definition.get('context', {})
             row['latestCalculation'] = latest.get(row['id'])
+            with self.database.connect() as db:
+                assets = [dict(asset) for asset in db.execute('SELECT role,payload FROM scheme_input_assets WHERE scheme_id=?', (row['id'],))]
+            row['origin'] = '同事交付' if any(asset['role'] == 'delivered-plan' for asset in assets) else '历史选取' if assets else '自建方案'
+            row['configurationPending'] = bool(editor.get('configurationPending')) and row['revision'] == 0
+            row['deliverySelectionCount'] = len(editor.get('deliverySelection', []))
         return {'schemes': rows}
 
     def get(self, scheme_id, revision=None):
@@ -283,3 +304,12 @@ class ModelSchemes:
                                   'schemeRevision': record['revision'], 'schemeName': record['name'],
                                   'schemeDefinitionSHA256': record['definitionSHA256']}
         return request
+
+    def history_defaults(self, body=None):
+        """New work always uses the archive; old saved requests stay untouched."""
+        if body is not None and set(body) - {'idwPower', 'minimumStations'}:
+            raise ValueError('历史库默认规则只包含插值幂次和最少有效站')
+        if body is not None:
+            self.defaults(body)
+        return {**self.defaults(), 'rainfallMethod': 'stationIdw', 'stationSourceId': 'LOCAL_OBSERVATIONS',
+                'sourceBundleVersionId': 'HISTORICAL_SPATIAL_V1', 'dataMode': 'historical-database'}

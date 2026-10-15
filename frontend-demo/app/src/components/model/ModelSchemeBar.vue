@@ -10,15 +10,15 @@
     <p v-if="error" role="alert" class="scheme-error">{{ error }}</p>
     <div v-if="rows.length" class="scheme-cards">
       <button v-for="row in rows" :key="row.id" class="scheme-choice" :data-scheme-id="row.id" :disabled="busy" @click="load(row.id)">
-        <div><b>{{ row.name }}</b><p v-if="row.summary?.mode !== 'continuous'">已选 {{ row.summary?.selectedCount || 0 }} 场 · 率定 {{ row.summary?.calibration || 0 }} · 验证 {{ row.summary?.validation || 0 }} · 独立检验 {{ row.summary?.independent || 0 }}</p><p v-else>连续时段率定</p><p v-if="row.latestCalculation">最近计算：{{ operationStatuses[row.latestCalculation.status] || row.latestCalculation.status }} · {{ dateLabel(row.latestCalculation.completedAt || row.latestCalculation.createdAt) }}</p></div><span>{{ dateLabel(row.updated_at || row.updatedAt) }}</span><i aria-hidden="true">→</i>
+        <div><b>{{ row.name }}</b><p>{{ row.origin || '自建方案' }}<template v-if="row.configurationPending"> · 待完善方案 · 保留 {{ row.deliverySelectionCount }} 场原选取，尚未指定用途</template></p><p v-if="row.summary?.mode !== 'continuous'">已选 {{ row.summary?.selectedCount || 0 }} 场 · 率定 {{ row.summary?.calibration || 0 }} · 验证 {{ row.summary?.validation || 0 }} · 独立检验 {{ row.summary?.independent || 0 }}</p><p v-else>连续时段率定</p><p v-if="row.latestCalculation">最近计算：{{ operationStatuses[row.latestCalculation.status] || row.latestCalculation.status }} · {{ dateLabel(row.latestCalculation.completedAt || row.latestCalculation.createdAt) }}</p></div><span>{{ dateLabel(row.updated_at || row.updatedAt) }}</span><i aria-hidden="true">→</i>
       </button>
     </div>
     <p v-else-if="!busy && !creating && !error" class="empty">暂无率定方案</p>
-    <details v-if="originalRecords.length" class="original-records"><summary>已有率定记录</summary><button v-for="record in originalRecords" :key="record.originalCalibrationPlan.planId" class="scheme-choice" :disabled="busy" @click="loadOriginal(record)"><b>{{ record.name || record.originalCalibrationPlan.name }}</b><i aria-hidden="true">→</i></button></details>
+    <details v-if="historicalAssets.length" class="original-records"><summary>待关联历史记录 · {{ historicalAssets.length }}</summary><p v-for="asset in historicalAssets" :key="asset.asset_id">{{ asset.details.name || asset.asset_id }}：{{ asset.details.reason }}</p></details>
   </section>
   <header v-else class="scheme-heading" aria-label="当前率定方案">
     <button class="btn" :disabled="busy" @click="back">← 方案列表</button><h1>{{ cal.modelSchemeName }}</h1><button class="btn icon-name" title="修改方案名称" aria-label="修改方案名称" :disabled="busy || cal.running" @click="rename">✎</button>
-    <span class="revision-label">版本 {{ cal.modelSchemeRevision || '未保存' }} · {{ editing ? '编辑草稿' : '查看' }}</span>
+    <span class="revision-label">版本 {{ cal.modelSchemeRevision || '待完善' }} · {{ editing ? '编辑草稿' : '查看' }}<template v-if="cal.configurationPending"> · 原选取 {{ cal.deliverySelection.length }} 场，须补齐用途和计算条件</template></span>
     <button v-if="!editing" class="btn" :disabled="busy || cal.running" @click="beginEdit">编辑方案</button>
     <button v-if="editing" class="btn primary" :disabled="busy || cal.running" @click="commit">保存新版本</button>
     <button v-if="editing" class="btn" :disabled="busy || cal.running" @click="discard">放弃修改</button>
@@ -28,6 +28,15 @@
     <span v-if="saving" class="save-status" role="status">保存中</span>
     <span v-else-if="error" class="scheme-error" role="alert">{{ error }} <button class="text-button" @click="flush">重试</button></span>
   </header>
+  <details v-if="opened && linkedAssets.length" class="scheme-processing">
+    <summary>方案原始输入与处理记录 · {{ linkedAssets.length }}</summary>
+    <div v-for="asset in linkedAssets" :key="asset.asset_id">
+      <b>{{ asset.details.name || (asset.role === 'delivered-plan' ? '同事原始率定条件' : asset.asset_id) }}</b>
+      <span> · {{ asset.role === 'delivered-plan' ? '原方案条件' : asset.role === 'processing-ancestor' ? '加工前序记录' : '冻结输入' }}</span>
+      <p v-if="asset.details.reason">{{ asset.details.reason }}</p>
+      <details><summary>查看原记录</summary><pre>{{ JSON.stringify(asset.details, null, 2) }}</pre></details>
+    </div>
+  </details>
 </template>
 
 <script setup>
@@ -35,7 +44,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { modelApi } from '@/services/modelBackendService'
-import { calibrationEditor, calibrationEditorIdentity, restoreModelScheme, saveCalibrationEditor, schemeDefinition, originalCalibrationRecords, openOriginalCalibrationRecord, recoverActiveCalibrationOperation, makeSchemeEditable } from '@/services/modelSchemeService'
+import { calibrationEditor, calibrationEditorIdentity, restoreModelScheme, saveCalibrationEditor, schemeDefinition, recoverActiveCalibrationOperation } from '@/services/modelSchemeService'
 import { operationStatuses } from '@/services/dailyOperationService'
 import { useAppStore } from '@/stores/app'
 import { useCalibrationStore } from '@/stores/calibration'
@@ -45,7 +54,7 @@ const editing = ref(false), savedRow = ref(null), cleanIdentity = ref('')
 const app = useAppStore(), cal = useCalibrationStore()
 const route = useRoute()
 const rows = ref([]), opened = ref(false), busy = ref(false), saving = ref(false), creating = ref(false)
-const originalRecords = ref([])
+const historicalAssets = ref([]), linkedAssets = ref([])
 const newName = ref(''), nameInput = ref(null), error = ref('')
 const emit = defineEmits(['loaded', 'opened', 'editing'])
 let timer, loading = false, pendingSave = Promise.resolve(), restoringUnnamed = false
@@ -53,23 +62,11 @@ let timer, loading = false, pendingSave = Promise.resolve(), restoringUnnamed = 
 function dateLabel(value) { return String(value || '').replace('T', ' ').slice(0, 16) }
 async function refresh() {
   try {
-    const [schemes, parameters] = await Promise.all([modelApi('model-schemes'), modelApi('parameter-versions')])
+    const [schemes, assets] = await Promise.all([modelApi('model-schemes'), modelApi('scheme-input-assets')])
     rows.value = (schemes.schemes || []).filter(row => !row.context?.contextKey || row.context.contextKey === app.contextKey)
-    const linked = new Set(rows.value.map(row => row.originalPlanSHA256).filter(Boolean))
-    originalRecords.value = originalCalibrationRecords(parameters.versions || [], app.contextKey).filter(row => !linked.has(row.originalCalibrationPlan.planSHA256))
+    historicalAssets.value = (assets.assets || []).filter(row => !row.scheme_id)
   }
   catch (failure) { error.value = failure.message }
-}
-async function loadOriginal(record) {
-  if (cal.running || cal.activeOperationId) { error.value = '请先完成或停止当前计算'; return }
-  busy.value = true; loading = true; error.value = ''
-  try {
-    await refreshCatalog()
-    savedRow.value = await openOriginalCalibrationRecord(cal, app, record)
-    setEditing(false); cleanIdentity.value = calibrationEditorIdentity(calibrationEditor(cal))
-    opened.value = true; emit('opened', true); emit('loaded')
-  } catch (failure) { error.value = failure.message }
-  finally { busy.value = false; await nextTick(); loading = false }
 }
 async function refreshCatalog() {
   const payload = await modelApi('flood-catalog?projectId=' + encodeURIComponent(app.basinId) + '&resolutionId=' + encodeURIComponent(app.modelScale))
@@ -81,6 +78,7 @@ async function load(id, revision = null) {
   try {
     await refreshCatalog()
     savedRow.value = await modelApi('model-schemes/' + id + (revision ? '?revision=' + revision : ''))
+    linkedAssets.value = (await modelApi('scheme-input-assets?schemeId=' + encodeURIComponent(id))).assets || []
     await restoreModelScheme(cal, app, savedRow.value)
     setEditing(false)
     cleanIdentity.value = calibrationEditorIdentity(calibrationEditor(cal))
@@ -94,7 +92,7 @@ async function create() {
   busy.value = true; loading = true; error.value = ''
   try {
     if (!restoringUnnamed) {
-      const defaults = await modelApi('preparation-defaults')
+      const defaults = await modelApi('database/preparation-defaults')
       await refreshCatalog()
       cal.resetCalibrationScheme(defaults, app.backendCase)
     }
@@ -225,8 +223,11 @@ async function saveAs() {
     const { value } = await ElMessageBox.prompt('填写新方案名称', '另存方案', { inputValue: cal.modelSchemeName + ' · 副本', inputValidator: value => Boolean(value?.trim()) && value.trim().length <= 80, confirmButtonText: '另存', cancelButtonText: '取消' })
     clearTimeout(timer); await pendingSave
     const source = { id: cal.modelSchemeId, revision: cal.modelSchemeRevision, latest: cal.modelSchemeLatestRevision, name: cal.modelSchemeName, draft: cal.modelSchemeDraftRevision }
+    cal.modelSchemeSourceId = source.id; cal.modelSchemeSourceRevision = source.revision
     cal.modelSchemeId = null; cal.modelSchemeRevision = 0; cal.modelSchemeLatestRevision = 0; cal.modelSchemeDraftRevision = null; cal.modelSchemeName = value.trim()
-    if (!await commit()) { Object.assign(cal, { modelSchemeId: source.id, modelSchemeRevision: source.revision, modelSchemeLatestRevision: source.latest, modelSchemeName: source.name, modelSchemeDraftRevision: source.draft }); return }
+    const committed = await commit()
+    cal.modelSchemeSourceId = null; cal.modelSchemeSourceRevision = null
+    if (!committed) { Object.assign(cal, { modelSchemeId: source.id, modelSchemeRevision: source.revision, modelSchemeLatestRevision: source.latest, modelSchemeName: source.name, modelSchemeDraftRevision: source.draft }); return }
     emit('loaded')
   } catch (failure) { if (failure instanceof Error) error.value = failure.message }
 }
@@ -241,4 +242,5 @@ defineExpose({ refresh, flush, load, ensureSaved })
 @media(max-width:640px){.scheme-list{margin:12px 0;padding:18px}.scheme-create{grid-template-columns:1fr 1fr}.scheme-create label,.scheme-create input{grid-column:1/-1}.scheme-choice{grid-template-columns:1fr 25px}.scheme-choice span{display:none}}
 .scheme-list :is(label,p,span,summary,.btn,.input),.scheme-heading :is(span,.btn){font-size:14px}
 .scheme-list :is(.btn,.input),.scheme-heading .btn{min-height:36px}
+.scheme-processing{font-size:12px;color:#637c72;margin:4px 0 12px}.scheme-processing summary{cursor:pointer}.scheme-processing>div{padding:12px;background:#fff;border-bottom:1px solid #dce7e2}.scheme-processing pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto}
 </style>

@@ -64,12 +64,12 @@ export function normalizeModelInputCatalog(payload = {}) {
   return {
     ...payload,
     bundleVersionId: payload.bundleVersionId || payload.inputBundleVersionId || payload.provenance?.inputBundleVersionId || DEFAULT_INPUT_BUNDLE_VERSION_ID,
-    sourceType: 'model-qc',
+    sourceType: payload.sourceType === 'database-observed' ? 'database-observed' : 'model-qc',
     qualityNotes: Array.isArray(payload.qualityNotes) ? payload.qualityNotes.slice() : (payload.provenance?.notes || []).slice(),
     // There are no per-station QC series in the delivery. Do not substitute the
     // old MDB station catalog for the model's accepted gridded precipitation.
-    rain: { ...payload.rain, ...precipitation, stations: [], sourceType: 'model-qc' },
-    river: { ...payload.river, ...flow, sourceType: 'model-qc', station: { spatialCode: '70115800', name: '徐畈（二）' } },
+    rain: { ...payload.rain, ...precipitation, stations: payload.sourceType === 'database-observed' ? payload.rain?.stations || [] : [], sourceType: payload.sourceType || 'model-qc' },
+    river: { ...payload.river, ...flow, sourceType: payload.sourceType || 'model-qc', station: { spatialCode: '70115800', name: '徐畈（二）' } },
     events
   }
 }
@@ -77,7 +77,9 @@ export function normalizeModelInputCatalog(payload = {}) {
 export function normalizeModelInputWindow(payload = {}) {
   const rawProduct = payload.product || {}
   const rawPreview = payload.observationPreview || {}
-  if (payload.sourceType !== 'model-qc' && rawProduct.sourceType !== 'model-qc') {
+  const historical = payload.sourceType === 'database-observed'
+  const sourceType = historical ? 'database-observed' : 'model-qc'
+  if (!historical && payload.sourceType !== 'model-qc' && rawProduct.sourceType !== 'model-qc') {
     throw new Error('返回的资料窗口不属于已登记的模型计算资料')
   }
   if (payload.caseKey && payload.caseKey !== `${INPUT_CASE_ID}:${INPUT_RESOLUTION}`) {
@@ -87,7 +89,7 @@ export function normalizeModelInputWindow(payload = {}) {
     throw new Error('后端输入尺度与南安溪 1 km 模型不一致')
   }
   const times = Array.isArray(rawProduct.times) ? rawProduct.times.slice() : []
-  if (!times.length || new Set(times).size !== times.length || !Array.isArray(rawProduct.cells) || !rawProduct.cells.length) {
+  if (!times.length || new Set(times).size !== times.length || !Array.isArray(rawProduct.cells) || (!rawProduct.cells.length && !(historical && payload.quality?.gridStatus === 'failed'))) {
     throw new Error('计算资料窗口缺少有效时次或网格')
   }
   if (times.some((time, index) => !Number.isFinite(new Date(time).getTime())
@@ -111,24 +113,24 @@ export function normalizeModelInputWindow(payload = {}) {
   if (!forcingVersion || !observationVersion) throw new Error('后端未登记输入版本，不能作为真实模型资料展示')
   const preview = {
     ...rawPreview,
-    sourceType: 'model-qc',
-    source: 'model-backend-qc-inputs',
+    sourceType,
+    source: historical ? 'historical-database' : 'model-backend-qc-inputs',
     forcingVersion,
     observationVersion,
     start: times[0], end: times[times.length - 1], stepHours: 1, times,
-    rain: {},
+    rain: historical ? Object.fromEntries(Object.entries(rawPreview.rain || {}).map(([key, values]) => [key, normalizeSeries(values, times.length, '站点雨量')])) : {},
     river: {
       spatialCode: '70115800',
       flows: normalizeSeries(rawPreview.river?.flows, times.length, '出口流量'),
       // The QC CSV has no level column. Missing levels are not zero levels.
-      levels: Array(times.length).fill(null)
+      levels: historical ? normalizeSeries(rawPreview.river?.levels, times.length, '实测水位') : Array(times.length).fill(null)
     }
   }
   const bundleVersionId = payload.bundleVersionId || payload.inputBundleVersionId || payload.provenance?.inputBundleVersionId || DEFAULT_INPUT_BUNDLE_VERSION_ID
   return {
     ...payload,
-    sourceType: 'model-qc', forcingVersion, observationVersion, bundleVersionId,
-    product: { ...rawProduct, sourceType: 'model-qc', resolution: INPUT_RESOLUTION, forcingVersion, bundleVersionId, times, cells },
+    sourceType, forcingVersion, observationVersion, bundleVersionId,
+    product: { ...rawProduct, sourceType: historical ? 'database-derived-grid' : 'model-qc', resolution: INPUT_RESOLUTION, forcingVersion, bundleVersionId, times, cells },
     observationPreview: { ...preview, bundleVersionId },
     summary: {
       ...payload.summary,
@@ -137,6 +139,18 @@ export function normalizeModelInputWindow(payload = {}) {
     },
     provenance: { ...payload.provenance, inputBundleVersionId: bundleVersionId, forcingVersion, observationVersion }
   }
+}
+
+export async function loadHistoricalDatabaseCatalog({ source = null, resolution = null } = {}) {
+  const query = inputQuery(source, resolution)
+  query.delete('bundleVersionId')
+  return normalizeModelInputCatalog(await modelApi(`database/catalog?${query}`))
+}
+
+export async function loadHistoricalDatabaseProcess(start = '', end = '', { source = null, eventId = null } = {}) {
+  const query = inputQuery(source, null, eventId ? { eventId } : start && end ? { start, end } : {})
+  query.delete('bundleVersionId')
+  return normalizeModelInputWindow(await modelApi(`database/process?${query}`, { timeoutMs: 60000 }))
 }
 
 export async function loadModelInputCatalog({ source = null, resolution = null } = {}) {
@@ -173,7 +187,9 @@ export function sliceModelInputWindow(input, start, end) {
   return normalizeModelInputWindow({
     ...input,
     product: { ...input.product, start: times[0], end: times.at(-1), times, cells: input.product.cells.map((cell) => ({ ...cell, values: select(cell.values) })) },
-    observationPreview: { ...input.observationPreview, times, river: { ...input.observationPreview.river, flows: select(input.observationPreview.river.flows) } },
+    observationPreview: { ...input.observationPreview, times,
+      rain: Object.fromEntries(Object.entries(input.observationPreview.rain || {}).map(([key, series]) => [key, select(series)])),
+      river: { ...input.observationPreview.river, flows: select(input.observationPreview.river.flows), levels: select(input.observationPreview.river.levels) } },
     summary: {
       ...input.summary, windowHours: times.length,
       arealRainfallMm: select(input.summary.arealRainfallMm), reportingStationCount: select(input.summary.reportingStationCount),

@@ -39,17 +39,19 @@ PARAMETER_NOTES = {
 }
 
 
-def case_catalog(bundle=None):
+def case_catalog(bundle=None, database=None):
     from calibration_space import definitions
     from joint_calibration import definitions as joint_definitions
     from joint_calibration import profiles as joint_profiles
     from science_context import model_implementation_identity
     missing = [name for name in ("numpy", "pandas", "scipy", "xarray", "h5netcdf", "h5py", "pyproj", "shapely", "matplotlib", "openpyxl") if importlib.util.find_spec(name) is None]
     required = ["code", "config/parameter_set_land.json", "config/routing_parameters_control_split_v2.json", "config/initial_state_land.json", "config/pet_forcing_assumed_monthly.json", "config/event_quality_config.json", "data_interface/runoff_2017/grid_static.csv", "data_interface/event_catalog/nananxi_flood_event_catalog_qc_20260819.json", "data_interface/spatial/nan_an_topology_control_split_v2.json", "data_interface/precipitation_qc_20260819/1km_hourly", "data_interface/observations/xufan_outlet_hourly_qc.csv", "data_interface/spatial/grid_to_unit_weight_control_split_v2.csv"]
+    if database is not None:
+        required = [p for p in required if p not in {'data_interface/event_catalog/nananxi_flood_event_catalog_qc_20260819.json', 'data_interface/precipitation_qc_20260819/1km_hourly', 'data_interface/observations/xufan_outlet_hourly_qc.csv'}]
     missing += [p for p in required if not (MODEL / p).exists()]
     ready = not missing
     base = read_json(MODEL / "config/parameter_set_land.json")["parameters"]
-    event_catalog = read_json(bundle["paths"]["events"] if bundle else MODEL / "data_interface/event_catalog/nananxi_flood_event_catalog_qc_20260819.json")
+    event_catalog = {'packages': [{**row, 'status': 'review', 'observedInputs': row.get('observedInputs', {})} for row in database.events()]} if database is not None else read_json(bundle["paths"]["events"] if bundle else MODEL / "data_interface/event_catalog/nananxi_flood_event_catalog_qc_20260819.json")
     events = []
     for row in event_catalog["packages"]:
         observed = row["observedInputs"]
@@ -58,12 +60,12 @@ def case_catalog(bundle=None):
             "name": row["eventId"], "sourceFloodNo": row.get("floodCode"), "start": row["start"], "end": row["end"],
             "observedPeak": observed.get("observedPeakFlowM3s"), "peakTime": observed.get("observedPeakTime"),
             "volumeM3": observed.get("volumeM3", observed.get("riverVolumeM3")), "sectionId": "70115800",
-            "sourceFiles": {"rain": bundle["forcingVersion"] if bundle else "precipitation_qc_20260819/1km_hourly",
-                            "river": bundle["observationVersion"] if bundle else "observations/xufan_outlet_hourly_qc.csv"},
+            "sourceFiles": {"rain": "水文资料库实测雨量" if database is not None else bundle["forcingVersion"] if bundle else "precipitation_qc_20260819/1km_hourly",
+                            "river": "水文资料库实测流量" if database is not None else bundle["observationVersion"] if bundle else "observations/xufan_outlet_hourly_qc.csv"},
             "rainCompleteness": observed.get("rainCompleteness"), "flowCompleteness": observed.get("riverCompleteness"),
-            "status": "active" if row["status"] == "ready" else "pending", "revision": 1,
-            "source": bundle["modelInputVersion"] if bundle else "model-qc-20260819", "purpose": "未使用",
-            "bundleVersionId": bundle["bundleVersionId"] if bundle else DEFAULT_INPUT_BUNDLE,
+            "status": "active" if database is not None or row["status"] == "ready" else "pending", "revision": 1,
+            "source": "HISTORICAL_DATABASE" if database is not None else bundle["modelInputVersion"] if bundle else "model-qc-20260819", "purpose": "未使用",
+            "bundleVersionId": "HISTORICAL_DATABASE" if database is not None else bundle["bundleVersionId"] if bundle else DEFAULT_INPUT_BUNDLE,
         })
     case = {
         "basinId": "nananxi-xufan", "resolutionId": "1km", "ready": ready,
@@ -96,7 +98,7 @@ def case_catalog(bundle=None):
         "productionEligible": False,
         "initializationStrategies": [{"id": "FIXED_WARMUP", "label": "降雨预热"},
                                      {"id": "OBSERVED_FLOW_ANCHORED", "label": "按实测流量初始化"}],
-        "qualityNotes": ["地图与计算采用同一输入版本的网格雨量和出口流量。", "历史站点雨量、水位和流量由水文资料库管理。", "场次蒸散发为 0 mm/h；连续模拟与连续率定采用逐月给定值。", "当前模型为液态降雨产汇流模型。"],
+        "qualityNotes": ["日常查询读取完整历史库；方案计算使用冻结输入快照。", "实测资料、派生网格与计算质量检查分别展示。", "蒸散发与起算规则随方案保存。", "当前模型为液态降雨产汇流模型。"],
         "modules": [
             {"id": "FORECAST", "label": "降雨情景预报", "status": "integrated", "reason": "逐小时给定降雨、起报状态衔接、真实产汇流计算及预报成果保存。"},
             {"id": "SPATIAL-EXPORT", "label": "地形河网与汇流分区成果", "status": "integrated", "reason": "原始 30 m DEM、D8 河网、控制断面切分、分区栅格、PNG 图件和 GIS 成果包。"},

@@ -169,12 +169,23 @@ class TaskManager:
                 parent_manifest=self.products.resolve(source)['manifest']
                 if automatic_source!=(parent_manifest.get('sourceId') or (parent_manifest.get('sourceOrigin') or {}).get('sourceId')):
                     raise ValueError('自动准备的站点来源与原资料来源不一致')
+            selection = request.get('scheme')
+            frozen_definition = None
+            if selection and request['inputs'].get('dataMode') == 'historical-database':
+                from model_schemes import preparation_binding_key
+                record = self.schemes.get(selection['id'], selection['revision'])
+                with self.database.connect() as db:
+                    binding = db.execute('SELECT * FROM model_scheme_prepared_inputs WHERE scheme_id=? AND definition_sha256=?',
+                                         (selection['id'], preparation_binding_key(record, request))).fetchone()
+                if binding and binding['preparation_task_id'] == preparation.name and binding['bundle_version_id'] == request['inputs']['bundleVersionId']:
+                    frozen_definition = config
             check = normalize_preparation({key: config[key] for key in ('operation', 'requestId', 'name', 'projectId', 'resolutionId', 'rainfallMethod', 'idwPower', 'minimumStations', 'operationPurpose') if key in config} | {
                 'parentBundleVersionId': source, 'period': request['period'], 'idwPower': request['inputs'].get('idwPower', 2), 'minimumStations': request['inputs'].get('minimumStations', 1), 'rainfallMethod': effective_method,
                 **({'stationSourceId': request['inputs']['stationSourceId']} if request['inputs'].get('stationSourceId') else {}),
+                **({'stationNetwork': request['inputs']['stationNetwork']} if request['inputs'].get('stationNetwork') else {}),
                 'statePolicy': (request.get('calibration') or {}).get('statePolicy', 'continuous-origin' if request['period'].get('continuousOrigin') else 'independent-warmup'),
                 'science': request.get('science', {}), 'evaporation': request.get('inputs', {}).get('evaporation', {}),
-                'continuousOrigin': (request.get('calibration') or {}).get('continuousOrigin') or request['period'].get('continuousOrigin')}, self.products)
+                'continuousOrigin': (request.get('calibration') or {}).get('continuousOrigin') or request['period'].get('continuousOrigin')}, self.products, frozen_definition=frozen_definition)
             if status.get('status') not in {'completed', 'archived'} or prepared.get('issues') or status.get('registeredBundleVersionId') != request['inputs']['bundleVersionId'] or config.get('preparationKey') != check['preparationKey']:
                 raise ValueError('计算资料与本次方案时段不一致或仍有缺测问题，请重新准备')
             if request['inputs'].get('rainfallMethod') == 'stationIdw' and request['inputs'].get('stationNetwork') != config.get('stationNetwork'):
@@ -420,10 +431,9 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
         if manager.input_tasks is None:
             manager.input_tasks = InputTaskManager(manager.runtime_root / "input-tasks", products=products)
         input_manager = manager.input_tasks
-    baseline = products.resolve()
     if manager.operations is None:
         manager.operations = HydrologicalOperations(manager, input_manager)
-    input_readers = {(baseline["bundleVersionId"], baseline["manifestSHA256"]): InputService(bundle=baseline)}
+    input_readers = {}
     input_reader_lock = threading.RLock()
     diagnostics = TaskDiagnostics(manager)
     class Handler(BaseHTTPRequestHandler):
@@ -502,7 +512,21 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 operation = path[len(f"{prefix}/database/"):]
                 if argument("projectId", "nananxi-xufan") != "nananxi-xufan":
                     raise ValueError("本资料库对应南安溪-徐畈，请切换流域后查询")
-                if self.command == "GET" and operation == "summary":
+                if self.command == 'GET' and operation in {'catalog', 'process'}:
+                    from historical_inputs import HistoricalInputs
+                    with input_reader_lock:
+                        if not hasattr(manager, 'historical_inputs'):
+                            manager.historical_inputs = HistoricalInputs(database, products.model_root)
+                    service = manager.historical_inputs
+                    options = {'project_id': argument('projectId', 'nananxi-xufan'), 'resolution_id': argument('resolutionId', '1km')}
+                    payload = service.catalog(**options) if operation == 'catalog' else service.process(
+                        start=argument('start'), end=argument('end'), event_id=argument('eventId'), **options)
+                elif operation == 'network' and self.command in {'GET', 'POST'}:
+                    from station_network import local_station_network
+                    payload = local_station_network(database, self.read_body() if self.command == 'POST' else None)
+                elif operation == 'preparation-defaults' and self.command in {'GET', 'POST'}:
+                    payload = manager.schemes.history_defaults(self.read_body() if self.command == 'POST' else None)
+                elif self.command == "GET" and operation == "summary":
                     payload = database.summary()
                 elif self.command == "GET" and operation == "stations":
                     payload = {"stations": database.stations()}
@@ -512,7 +536,7 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                                    'aliases': [dict(row) for row in db.execute('SELECT * FROM station_aliases WHERE project_id=?', ('nananxi-xufan',))]}
                 elif self.command == 'GET' and operation == 'sources':
                     with database.connect() as db:
-                        payload = {'sources': [dict(row) for row in db.execute('SELECT id,category,relative_path AS path,sha256 FROM source_files ORDER BY id')]}
+                        payload = {'sources': [dict(row) for row in db.execute('SELECT id,category,relative_path AS path,sha256,records,imported_at AS importedAt FROM source_files ORDER BY id')]}
                 elif self.command == "GET" and operation == "monitor":
                     payload = database.monitor(argument("end"))
                 elif self.command == "GET" and operation == "window":
@@ -585,6 +609,10 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 method = manager.schemes.rename if pieces[1] == 'rename' else manager.schemes.discard_editor
                 self.send_json(200, method(pieces[0], self.read_body()))
                 return
+            if path == f'{prefix}/scheme-input-assets' and self.command == 'GET':
+                from delivered_schemes import scheme_assets
+                self.send_json(200, {'assets': scheme_assets(manager.schemes, argument('schemeId'))})
+                return
             if path.startswith(f'{prefix}/model-schemes/') and path.endswith('/draft') and self.command == 'POST':
                 pieces = path[len(f'{prefix}/model-schemes/'):].split('/')
                 if len(pieces) != 2:
@@ -648,7 +676,7 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 self.send_json(202, reuse_preparation(input_manager, self.read_body()))
                 return
             if self.command == "GET" and path == f"{prefix}/catalog":
-                payload = case_catalog()
+                payload = case_catalog(database=manager.database)
                 payload["routingVersions"] = manager.routing_versions.list()["versions"]
                 self.send_json(200, payload)
                 return
@@ -915,6 +943,9 @@ def main():
         manager = TaskManager()
         print("Preparing hydrological database from existing observations...", flush=True)
         manager.database.import_existing()
+        from delivered_schemes import migrate_delivered_schemes
+        for issue in migrate_delivered_schemes(manager.schemes, manager.products):
+            print('历史记录待关联：' + json.dumps(issue, ensure_ascii=False), flush=True)
         server.RequestHandlerClass = handler(manager, Path(args.frontend).resolve(), verbose_requests=args.verbose_requests)
         address = f"http://{args.host}:{server.server_port}"
         print(f"Unified XAJ platform: {address}", flush=True)

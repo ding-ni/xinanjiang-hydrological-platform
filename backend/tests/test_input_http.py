@@ -54,8 +54,11 @@ class InputHttpTests(unittest.TestCase):
         self.inputs.catalog.side_effect = catalog
         self.inputs.window.side_effect = window
         self.inputs.event.side_effect = event
-        with patch("server.InputService", return_value=self.inputs):
-            self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler(self.manager, self.root))
+        # Readers are constructed lazily on the first pinned-input request.
+        reader_patch = patch("server.InputService", return_value=self.inputs)
+        reader_patch.start()
+        self.addCleanup(reader_patch.stop)
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler(self.manager, self.root))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.server.server_port}/api/model/"

@@ -45,6 +45,7 @@ class InputService:
         self.model_input_version = self.bundle.get("modelInputVersion", "nananxi-qc20260819-control-split-v2")
         self._lock = threading.RLock()
         self._initialized = False
+        self._spatial_initialized = False
         self._hashes = {}
         self._catalog_cache = None
         self.paths = {
@@ -77,8 +78,8 @@ class InputService:
         except ValueError as exc:
             raise ValueError("无效的输入资料时刻") from exc
 
-    def _initialize(self):
-        if self._initialized:
+    def _initialize_spatial(self):
+        if self._spatial_initialized:
             return
         import numpy as np
         import pandas as pd
@@ -121,6 +122,13 @@ class InputService:
                                "bounds": by_position[position], "areaKm2": float(row["area_km2"]),
                                "controlAreaKm2": float(self.areas[index]),
                                "controlWeight": float(self.areas[index] / self.control_area)})
+        self._spatial_initialized = True
+
+    def _initialize(self):
+        if self._initialized:
+            return
+        self._initialize_spatial()
+        np, pd = self.np, self.pd
         frame = pd.read_csv(self.paths["flow"])
         flow_times = pd.DatetimeIndex(pd.to_datetime(frame["time"], errors="raise"))
         if flow_times.has_duplicates or flow_times.tz is not None:

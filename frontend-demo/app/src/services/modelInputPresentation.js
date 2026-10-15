@@ -4,7 +4,7 @@ import { DEFAULT_INPUT_BUNDLE_VERSION_ID } from './inputProductService.js'
 // Registration, connection and a loaded window are different facts. In
 // particular, a static manifest must not keep a live-looking badge offline.
 export function modelInputDisplayStatus({ resolution = '1km', registered = false, loaded = false, loading = false, backendError = '', inputError = '', bundleVersionId = DEFAULT_INPUT_BUNDLE_VERSION_ID } = {}) {
-  const source = bundleVersionId === DEFAULT_INPUT_BUNDLE_VERSION_ID ? '整编资料' : '计算资料'
+  const source = bundleVersionId === 'HISTORICAL_DATABASE' ? '历史库实测' : bundleVersionId === DEFAULT_INPUT_BUNDLE_VERSION_ID ? '整编资料' : '计算资料'
   if (resolution !== '1km') return { label: '空间资料浏览', status: 'spatial-only' }
   if (backendError) return { label: `${source}服务离线`, status: 'spatial-only' }
   if (loading) return { label: '正在查询时段', status: 'input-loading' }
@@ -23,12 +23,12 @@ export function observedModelProcess(input, start, end) {
     hydrograph: { times, forecast: [], obs, prev: [], metrics: null, peak: null, peakTime: null },
     forcing: {
       times, precipitation: window.summary.arealRainfallMm, temperature: [], components: {},
-      sourceLabel: `整编降雨 · 控制区面积加权 · ${window.forcingVersion}`,
+      sourceLabel: `${input.sourceType === 'database-observed' ? '历史站点派生降雨' : '整编降雨'} · 控制区面积加权 · ${window.forcingVersion}`,
       forcingVersion: window.forcingVersion, observationVersion: window.observationVersion,
       controlAreaKm2: window.summary.controlAreaKm2
     },
     summary: window.summary, provenance: window.provenance, quality: input.quality,
-    sourceType: 'model-qc'
+    sourceType: input.sourceType || 'model-qc'
   }
 }
 
@@ -45,6 +45,6 @@ export function modelEventStatistics(input, start, end) {
     arealRainfallTotalMm: rain.every((value) => value != null) ? rain.reduce((sum, value) => sum + value, 0) : null,
     rainCompleteness: rain.filter((value) => value != null).length / rain.length,
     flowCompleteness: valid.length / rows.length, durationHours: rows.length,
-    controlAreaKm2: process.summary.controlAreaKm2, sourceType: 'model-qc'
+    controlAreaKm2: process.summary.controlAreaKm2, sourceType: input.sourceType || 'model-qc'
   }
 }

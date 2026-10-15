@@ -74,6 +74,8 @@ def freeze_input_selection(request, products):
     if set(inputs).intersection({"path", "root", "files", "precipitationDir", "modelRoot", "runtimeRoot", "url"}):
         raise ValueError("只能选择已登记的输入版本，不接受客户端资料路径")
     descriptor = products.resolve(inputs.get("bundleVersionId"))
+    if descriptor.get('preparationOnly'):
+        raise ValueError('请先按方案准备历史库输入；空间配置本身不能运行模型')
     version, digest = descriptor["bundleVersionId"], descriptor["manifestSHA256"]
     if "bundleManifestSHA256" in inputs and inputs["bundleManifestSHA256"] != digest:
         raise ValueError("请求输入版本摘要与后端登记不一致")

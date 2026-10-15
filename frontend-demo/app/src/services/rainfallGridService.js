@@ -119,9 +119,9 @@ export function gridCellsAt(product, timeIndex = 0) {
 }
 
 export function gridCellsAtTime(product, time, fallbackIndex = 0) {
-  if (!product?.times?.length || !time) return product?.sourceType === 'model-qc' ? [] : gridCellsAt(product, fallbackIndex)
+  if (!product?.times?.length || !time) return ['model-qc', 'database-derived-grid'].includes(product?.sourceType) ? [] : gridCellsAt(product, fallbackIndex)
   const target = String(time).replace('T', ' ').slice(0, 16)
   const index = product.times.findIndex((item) => String(item).replace('T', ' ').slice(0, 16) === target)
-  if (index < 0 && product.sourceType === 'model-qc') return []
+  if (index < 0 && ['model-qc', 'database-derived-grid'].includes(product.sourceType)) return []
   return gridCellsAt(product, index >= 0 ? index : fallbackIndex)
 }

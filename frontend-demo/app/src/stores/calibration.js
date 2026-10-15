@@ -300,12 +300,13 @@ function createWorkspace(context) {
     candidateWarmupHours: null,
     searchSeed: 42,
     optimizerSettings: {}, sourcePlan: null, sourcePlanRequestTemplate: null, originalCalibrationPlan: null, originalPlanChanged: false,
+    deliverySelection: [], configurationPending: false, deliveryProcessing: null,
     searchParameterOrder: null, eventSplitSeed: 42, eventAssignment: null,
     params,
     baseline: { ...params },
     operationMode: 'calibration',
     modelSchemeId: null, modelSchemeRevision: 0, modelSchemeLatestRevision: 0, modelSchemeName: '', schemeWindows: [], rainfallMethod: 'reuse', fixedEventSimulation: false, idwPower: null, minimumStations: null, stationSourceId: null,
-    schemeSourceBundleVersionId: null, schemeRoutingVersionId: null, fullFloodCatalogLoaded: false,
+    schemeSourceBundleVersionId: null, schemeRoutingVersionId: null, schemeDataMode: 'frozen-input', schemeStationNetwork: null, fullFloodCatalogLoaded: false,
     activeOperationId: null, activeOperationRequest: null, operationProgress: null,
     simulationStart: isSelinco ? '2026-06-01T00:00' : isNananxi ? '2024-01-01T00:00' : '',
     simulationEnd: isSelinco ? '2026-06-06T00:00' : isNananxi ? '2024-12-31T23:00' : '',
@@ -330,7 +331,7 @@ function createWorkspace(context) {
 
 const WORKSPACE_FIELDS = [
   'modelSchemeId', 'modelSchemeRevision', 'modelSchemeLatestRevision', 'modelSchemeName', 'schemeWindows', 'rainfallMethod', 'fixedEventSimulation', 'idwPower', 'minimumStations', 'stationSourceId',
-  'schemeSourceBundleVersionId', 'schemeRoutingVersionId', 'fullFloodCatalogLoaded', 'activeOperationId', 'activeOperationRequest', 'operationProgress',
+  'schemeSourceBundleVersionId', 'schemeRoutingVersionId', 'schemeDataMode', 'schemeStationNetwork', 'fullFloodCatalogLoaded', 'activeOperationId', 'activeOperationRequest', 'operationProgress',
   'domainId',
   'modelScale',
   'modelConfigId',
@@ -364,7 +365,7 @@ const WORKSPACE_FIELDS = [
   'continuousOrigin', 'requiredInputBundleVersionId',
   'candidateWarmupHours',
   'searchSeed',
-  'optimizerSettings', 'sourcePlan', 'sourcePlanRequestTemplate', 'originalCalibrationPlan', 'originalPlanChanged', 'searchParameterOrder', 'eventSplitSeed', 'eventAssignment',
+  'optimizerSettings', 'sourcePlan', 'sourcePlanRequestTemplate', 'originalCalibrationPlan', 'originalPlanChanged', 'searchParameterOrder', 'eventSplitSeed', 'eventAssignment', 'deliverySelection', 'configurationPending', 'deliveryProcessing',
   'params',
   'baseline',
   'operationMode',
@@ -746,9 +747,11 @@ export const useCalibrationStore = defineStore('calibration', {
       this.statePolicy = 'independent-warmup'; this.continuousOrigin = null; this.initialStateVersionId = null
       this.sourcePlan = null; this.sourcePlanRequestTemplate = null; this.originalCalibrationPlan = null
       this.originalPlanChanged = false
+      this.deliverySelection = []; this.configurationPending = false; this.deliveryProcessing = null
       this.evaporationMode = 'monthly-climatology-assumption'; this.warmupDays = backend?.defaultWarmupDays ?? 7
       this.rainfallMethod = defaults.rainfallMethod || 'stationIdw'; this.stationSourceId = Object.hasOwn(defaults,'stationSourceId') ? defaults.stationSourceId : 'LOCAL_OBSERVATIONS'
-      this.schemeSourceBundleVersionId = defaults.sourceBundleVersionId || useAppStore().selectedInputBundleVersionId
+      this.schemeSourceBundleVersionId = defaults.sourceBundleVersionId || 'HISTORICAL_SPATIAL_V1'
+      this.schemeDataMode = 'historical-database'; this.schemeStationNetwork = null
       this.schemeRoutingVersionId = useAppStore().selectedRoutingVersionId
       this.idwPower = defaults.idwPower ?? 2; this.minimumStations = defaults.minimumStations ?? 1
       this.dirty = true; this.running = false; this.runStatus = 'needs-run'; this.runMessage = ''

@@ -41,11 +41,12 @@
       <div class="workbench" :class="{ 'manual-mode': trialMode === 'manual' }">
         <aside class="panel flood-panel">
           <template v-if="cal.calibrationMode === 'event'">
-            <div class="panel-heading"><h2>洪水目录</h2><span>公共目录 {{ cal.events.length }} 场 · 已选 {{ eventCounts.calibration + eventCounts.validation + eventCounts.independent }} 场<span v-if="cal.schemeWindows.length"> · 原方案额外编号 {{ cal.schemeWindows.filter(row=>!row.catalogueBoundaryOverride).length }} 场<span v-if="cal.schemeWindows.some(row=>row.catalogueBoundaryOverride)"> · 同号原边界 {{ cal.schemeWindows.filter(row=>row.catalogueBoundaryOverride).length }} 场</span></span></span></div>
+            <div class="panel-heading"><h2>洪水目录</h2><span>公共目录 {{ cal.events.length }} 场 · 已选 {{ eventCounts.calibration + eventCounts.validation + eventCounts.independent }} 场<span v-if="windowCounts.selectedExtra"> · 已选专有时段 {{ windowCounts.selectedExtra }} 场</span><span v-if="windowCounts.excludedExtra"> · 原排除时段 {{ windowCounts.excludedExtra }} 场</span><span v-if="windowCounts.boundaryOverrides"> · 同号原边界 {{ windowCounts.boundaryOverrides }} 场</span></span></div>
             <div class="event-browser-bar">
               <div class="event-scope" role="group" aria-label="洪水目录范围">
                 <button type="button" :class="{ active: eventScope === 'selected' }" @click="eventScope = 'selected'">已选洪水</button>
                 <button type="button" :class="{ active: eventScope === 'all' }" @click="eventScope = 'all'">全部洪水</button>
+                <button v-if="cal.deliverySelection.length" type="button" :class="{ active: eventScope === 'delivery' }" @click="eventScope = 'delivery'">交付选取</button>
               </div>
               <span class="event-scope-count">显示 {{ filteredEvents.length }} 场</span>
             </div>
@@ -132,11 +133,12 @@
 
       <dialog ref="conditionsDialog" class="settings-dialog"><header class="dialog-heading"><h2>本次成果的原始计算条件</h2><button class="btn" @click="conditionsDialog.close()">关闭</button></header><p>方案版本 {{ displayResult?.frozenRequest?.scheme?.revision || displayResult?.lineage?.schemeRevision || '历史记录' }} · 预热 {{ displayResult?.frozenRequest?.period?.warmupDays }} 天</p><table class="evaluation-table"><thead><tr><th>洪水 / 评价期</th><th>开始</th><th>结束</th><th>用途</th></tr></thead><tbody><tr v-for="row in displayResult?.frozenRequest?.period?.events || displayResult?.frozenRequest?.period?.windows || []" :key="row.id"><td>{{ row.name || row.id }}</td><td>{{ shortTime(row.start) }}</td><td>{{ shortTime(row.end) }}</td><td>{{ row.purpose }}</td></tr></tbody></table><p>起算规则：{{ displayResult?.frozenRequest?.calibration?.statePolicy === 'continuous-origin' ? '连续演算，自 '+shortTime(displayResult?.frozenRequest?.calibration?.continuousOrigin) : '各场独立预热' }}</p><p>算法 {{ displayResult?.frozenRequest?.calibration?.optimizer?.algorithm }} · 预算 {{ displayResult?.frozenRequest?.calibration?.optimizer?.maxEvaluations }} 次</p><table class="evaluation-table"><thead><tr><th>参数</th><th>初值</th><th>下限</th><th>上限</th></tr></thead><tbody><tr v-for="row in displayResult?.searchPlan?.rows || []" :key="row.key"><td>{{ row.label || row.key }}</td><td>{{ finiteMetric(row.initial,4) }}</td><td>{{ row.minimum ?? '固定' }}</td><td>{{ row.maximum ?? '固定' }}</td></tr></tbody></table></dialog>
       <dialog ref="settings" class="settings-dialog" aria-labelledby="cal-settings-title" @click="closeBackdrop($event, settings)">
-        <header class="dialog-heading"><h2 id="cal-settings-title">率定设置</h2><button class="btn" @click="settings.close()">完成</button></header>
+        <header class="dialog-heading"><h2 id="cal-settings-title">率定设置</h2><button class="btn" :disabled="parameterLoading" @click="settings.close()">完成</button></header>
         <div class="settings-summary"><span>{{ cal.section }}</span><span>新安江产流 · 坡面线性水库 · 马斯京根汇流</span></div>
         <div class="settings-grid">
           <div class="field"><label for="reference-parameters">初始参数 <button v-if="referenceParameterId && referenceParameterId !== 'model-default'" class="text-button" title="修改参数名称" :disabled="cal.running" @click="renameParameter">✎</button></label><select id="reference-parameters" class="input" :value="referenceParameterId" :disabled="cal.running || !editing || parameterLoading" @change="applyReference($event.target.value)"><option value="" disabled>选用初始参数</option><option value="model-default">模型默认值</option><option v-for="row in namedParameters" :key="row.id" :value="row.id">{{ row.name }}</option></select></div>
         </div>
+        <p v-if="cal.originalCalibrationPlan?.parameterVersionId" class="settings-note">原交付最佳参数可用作新计算初值。<button class="text-button" :disabled="cal.running || !editing || parameterLoading" @click="applyOriginalBest">采用原方案最佳参数作为初值</button>（替换产流与汇流初值，保留选用场次、搜索范围和算法预算）</p>
         <template v-if="trialMode === 'automatic'">
           <h3 class="settings-section-title">参与搜索的参数</h3>
           <div class="scope-actions"><button v-for="group in [{id:'runoff',name:'仅产流'},{id:'routing',name:'仅汇流'},{id:'joint',name:'联合率定'}]" :key="group.id" class="btn" :disabled="cal.running || !editing" @click="cal.setCalibrationTarget(group.id)">{{ group.name }}</button></div>
@@ -153,6 +155,7 @@
           <p v-if="!objectiveWeightValid" class="field-error">指标权重合计须为1，当前为{{ objectiveWeightTotal.toFixed(2) }}</p>
         </template>
         <details class="advanced-settings"><summary>起算条件与算法细项</summary>
+          <p class="settings-note">本站网与处理规则随方案保存。<button class="text-button" :disabled="cal.running || !editing || parameterLoading" @click="applyCurrentPreparation">采用当前站网与处理规则</button>（从“流域与站网”读取，保存新版本时确认重建全部选用输入）</p>
           <div class="settings-grid">
             <div class="field"><label for="cal-state-policy">状态衔接</label><select id="cal-state-policy" class="input" :value="cal.statePolicy" :disabled="cal.running || !editing || Boolean(cal.scienceVersionId)" @change="cal.setScienceField('statePolicy', $event.target.value)"><option value="independent-warmup">{{ cal.calibrationMode === 'continuous' ? '各期独立预热' : '分场预热' }}</option><option value="continuous-origin">连续演算</option></select></div>
             <div class="field"><label for="cal-warmup">预热天数</label><input id="cal-warmup" class="input" type="number" min="0" step="1" :value="cal.warmupDays" :disabled="cal.running || !editing || Boolean(cal.scienceVersionId)" @change="cal.setSimulationField('warmupDays', $event.target.value)" /></div>
@@ -184,11 +187,10 @@ import { useAppStore } from '@/stores/app'
 import { useCalibrationStore } from '@/stores/calibration'
 import { useTasksStore } from '@/stores/tasks'
 import { buildCalibrationRequest, physicalFloodGroups, stratifiedRandomEventSplit } from '@/services/calibrationSubmissionService'
-import { saveModelScheme, makeSchemeEditable } from '@/services/modelSchemeService'
+import { saveModelScheme, makeSchemeEditable, schemeWindowCounts, adoptOriginalBestParameters, continuousOriginError, adoptHistoricalPreparation } from '@/services/modelSchemeService'
 import { modelApi, uniqueRequestId } from '@/services/modelBackendService'
 import { observedModelProcess, modelEventStatistics } from '@/services/modelInputPresentation'
-import { loadModelInputWindow } from '@/services/modelInputService'
-import { loadNananxiObservationWindow } from '@/services/historicalObservationService'
+import { loadModelInputWindow, loadHistoricalDatabaseProcess } from '@/services/modelInputService'
 import { latestComparableTrial, trialConditions, resultProcessMatches, calibrationSummaryMetrics } from '@/services/manualCalibrationService'
 import { visibleWorkspaceResult } from '@/services/savedModelResultService'
 import { preparationIssueText } from '@/services/dailyOperationService'
@@ -219,7 +221,8 @@ let previewSequence = 0
 const allEvents = computed(() => cal.schemeEvents)
 const eventYears = computed(() => [...new Set(allEvents.value.map(row => String(row.start).slice(0, 4)))].sort().reverse())
 const selectedEventRows = computed(() => allEvents.value.filter(row => row.purpose !== '未使用' && row.status !== 'inactive'))
-const browserEvents = computed(() => eventScope.value === 'selected' ? selectedEventRows.value : allEvents.value)
+const browserEvents = computed(() => eventScope.value === 'selected' ? selectedEventRows.value : eventScope.value === 'delivery'
+  ? allEvents.value.filter(row => cal.deliverySelection.some(saved => saved.id === row.id)) : allEvents.value)
 const filteredEvents = computed(() => {
   const query = eventQuery.value.trim()
   const rows = browserEvents.value.filter(row => {
@@ -249,6 +252,7 @@ const eventCounts = computed(() => allEvents.value.reduce((counts, event) => {
   if (key) counts[key]++
   return counts
 }, { calibration: 0, validation: 0, independent: 0 }))
+const windowCounts = computed(() => schemeWindowCounts(cal.schemeWindows))
 const activeEvent = computed(() => allEvents.value.find(row => row.id === cal.eventId) || allEvents.value[0])
 const physicalGrouping = computed(() => physicalFloodGroups(allEvents.value))
 const physicalConflict = computed(() => physicalGrouping.value.conflicts.length ? '重叠洪水须设为同一用途：' + physicalGrouping.value.conflicts.map(row => row.memberEventIds.map(eventName).join('、')).join('；') : '')
@@ -258,6 +262,7 @@ const periodFields = [
   { key: 'ind', label: '独立检验期', start: 'independentStart', end: 'independentEnd', optional: true }
 ]
 const continuousError = computed(() => cal.calibrationMode === 'continuous' ? cal.validateCalibration({ manual: trialMode.value === 'manual' }).errors.find(value => !value.includes('次评价')) || '' : '')
+const originError = computed(() => continuousOriginError(cal.statePolicy, cal.continuousOrigin, cal.calibrationMode === 'continuous' ? cal.calibrationStart : selectedEventRows.value.map(row => row.start).sort()[0]))
 const algorithms = computed(() => app.backendCase?.algorithms || [])
 const jointProfiles = computed(() => app.backendCase?.jointSearchProfiles || [])
 const jointDefinitions = computed(() => jointProfiles.value.find(row => row.id === cal.jointProfile)?.definitions || {})
@@ -289,7 +294,7 @@ const objectives = [{ key: 'nse', label: 'NSE' }, { key: 'kge', label: 'KGE' }, 
 const objectiveWeightTotal = computed(() => Object.entries(cal.criteria.metrics).reduce((sum, [key, enabled]) => sum + (enabled ? Number(cal.criteria.weights[key] || 0) : 0), 0))
 const objectiveWeightValid = computed(() => Math.abs(objectiveWeightTotal.value - 1) < 0.001)
 const canRun = computed(() => {
-  if (!cal.modelSchemeId || cal.running || cal.activeOperationId || !app.backendCase || parameterLoading.value || parameterConstraint.value) return false
+  if (!cal.modelSchemeId || cal.running || cal.activeOperationId || !app.backendCase || parameterLoading.value || parameterConstraint.value || originError.value) return false
   if (cal.calibrationMode === 'event' && (physicalConflict.value || physicalGrouping.value.errors.length)) return false
   if (trialMode.value === 'automatic' && (searchError.value || routingSearchError.value || !objectiveWeightValid.value || routingError.value)) return false
   const errors = cal.validateCalibration({ manual: trialMode.value === 'manual' }).errors
@@ -301,6 +306,7 @@ const calculationBlockReason = computed(() => {
   if (parameterLoading.value) return '正在读取初始参数'
   if (cal.activeOperationId) return '请先查看当前计算'
   if (parameterConstraint.value) return parameterConstraint.value
+  if (originError.value) return originError.value
   if (physicalConflict.value && cal.calibrationMode === 'event') return physicalConflict.value
   if (trialMode.value === 'automatic') {
     if (routingError.value) return routingError.value
@@ -399,7 +405,7 @@ async function restoreSchemeView() {
   cal.operationMode = 'calibration'; cal.fixedEventSimulation = false
   trialMode.value = cal.editorTrialMode || 'automatic'; preparationIssues.value = []; calculationError.value = ''; inspectedResult.value = null
   savedParameterId.value = null; savedParameterName.value = ''; referenceParameterId.value = ''
-  eventScope.value = selectedEventRows.value.length ? 'selected' : 'all'
+  eventScope.value = selectedEventRows.value.length ? 'selected' : cal.deliverySelection.length ? 'delivery' : 'all'
   autoSplitPreview.value = null
   if (cal.activeOperationId) await cal.awaitOperation(cal.activeOperationId, cal.activeOperationRequest)
   else if (cal.modelSchemeId) await loadSchemeCalculations()
@@ -458,6 +464,18 @@ async function refreshNamedParameters() {
   try { namedParameters.value = ((await modelApi('parameter-schemes')).schemes || []).filter(row => !row.contextKey || row.contextKey === cal.contextKey) }
   catch (failure) { calculationError.value = failure.message }
 }
+async function applyOriginalBest() {
+  parameterLoading.value = true
+  try { await adoptOriginalBestParameters(cal); calculationError.value = '' }
+  catch (failure) { calculationError.value = failure.message }
+  finally { parameterLoading.value = false }
+}
+async function applyCurrentPreparation() {
+  parameterLoading.value = true
+  try { await adoptHistoricalPreparation(cal); calculationError.value = '' }
+  catch (failure) { calculationError.value = failure.message }
+  finally { parameterLoading.value = false }
+}
 async function applyReference(id) {
   parameterLoading.value = true
   try {
@@ -514,6 +532,7 @@ async function renameParameter() {
   } catch(failure) { if(failure instanceof Error) calculationError.value=failure.message }
 }
 async function commitScheme() {
+  if (parameterLoading.value) throw new Error('正在读取初始参数，请稍候再保存')
   if (manualRouting.value && JSON.stringify(manualRouting.value) !== JSON.stringify(routingRecord.value?.parameters)) {
     const routing = await modelApi('routing-versions', {method:'POST',body:{name:cal.modelSchemeName+' · 人工试调',parentVersionId:cal.schemeRoutingVersionId || 'control-split-v2',parameters:manualRouting.value}})
     cal.schemeRoutingVersionId = routing.routingVersionId
@@ -578,25 +597,16 @@ async function readPreview() {
   const event = activeEvent.value
   previewLoading.value = true
   try {
-    if (cal.rainfallMethod === 'reuse') {
+    if (cal.schemeDataMode !== 'historical-database' && cal.rainfallMethod === 'reuse') {
       const source = { ...app.activeContext, selectedInputBundleVersionId: cal.schemeSourceBundleVersionId || app.selectedInputBundleVersionId, inputBundleVersionId: cal.schemeSourceBundleVersionId || app.selectedInputBundleVersionId }
       const input = await loadModelInputWindow(event.start, event.end, { source })
       if (sequence === previewSequence) preview.value = { ...observedModelProcess(input, event.start, event.end), statistics: modelEventStatistics(input, event.start, event.end) }
     } else {
-      const data = await loadNananxiObservationWindow(event.start, event.end, { source: app.activeContext })
-      if (sequence !== previewSequence) return
-      const flows = new Map((data.river || []).map(row => [String(row.time).replace(' ', 'T').slice(0, 16), row.flowM3s]))
-      const rain = new Map()
-      for (const row of data.rain || []) {
-        if (row.rainMm == null || !Number.isFinite(Number(row.rainMm))) continue
-        const time = String(row.time).replace(' ', 'T').slice(0, 16)
-        if (!rain.has(time)) rain.set(time, [])
-        rain.get(time).push(Number(row.rainMm))
+      const input = await loadHistoricalDatabaseProcess(event.start, event.end, { source: app.activeContext })
+      if (sequence === previewSequence) {
+        preview.value = { ...observedModelProcess(input, event.start, event.end), statistics: modelEventStatistics(input, event.start, event.end) }
+        if (input.quality?.gridError) previewError.value = '实测已读取；网格尚未生成：' + input.quality.gridError
       }
-      const times = []
-      for (let time = dayjs(event.start); !time.isAfter(dayjs(event.end)); time = time.add(1, 'hour')) times.push(time.format('YYYY-MM-DDTHH:mm'))
-      preview.value = { hydrograph: { times, forecast: [], obs: times.map(time => ({ time, value: flows.get(time) ?? null })), metrics: null },
-        forcing: { precipitation: times.map(time => { const values = rain.get(time); return values?.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null }), temperature: [], components: {}, rainfallLabel: '站均降雨' } }
     }
   } catch (failure) { if (sequence === previewSequence) previewError.value = failure.message }
   finally { if (sequence === previewSequence) previewLoading.value = false }

@@ -215,7 +215,10 @@ class HydrologicalOperations:
                 if type(request.get('leadHours')) is not int or request['leadHours'] < 1:
                     raise ValueError('预见期须为正整数小时')
         if kind not in {'stateReplay', 'rerun'}:
-            request['preparationDefaults'] = self.manager.schemes.defaults()
+            request['preparationDefaults'] = self.manager.schemes.history_defaults()
+            if kind not in {'calibration', 'manualTrial'}:
+                from station_network import local_station_network
+                request['preparationDefaults']['stationNetwork'] = local_station_network(self.manager.database)
         key = request.get('requestId')
         digest = manifest_digest(request)
         with self.lock:
@@ -290,6 +293,8 @@ class HydrologicalOperations:
 
     def prepare(self, identifier, request, method, purpose='calibration', origin=None, preceding_hour=False):
         from scheme_inputs import reuse_preparation
+        if request['inputs'].get('dataMode') == 'historical-database':
+            method = 'stationIdw'
         source = request['inputs'].get('sourceBundleVersionId') or request['inputs']['bundleVersionId']
         options = {'operation': 'schemeInput', 'requestId': 'PREP-' + uuid.uuid4().hex,
                    'name': '水文计算资料', 'projectId': request['context']['projectId'],
@@ -303,6 +308,10 @@ class HydrologicalOperations:
                    'operationPurpose': purpose}
         if request['inputs'].get('stationSourceId'):
             options['stationSourceId'] = request['inputs']['stationSourceId']
+        if method == 'stationIdw' and request['inputs'].get('stationNetwork'):
+            options['stationNetwork'] = request['inputs']['stationNetwork']
+        if request['inputs'].get('dataMode') == 'historical-database':
+            options['stationSourceId'] = 'LOCAL_OBSERVATIONS'
         # Include the saved trajectory when checking a newly extended forcing
         # product, while the numeric child still begins at the next hour.
         if origin and purpose == 'simulation':
@@ -318,9 +327,22 @@ class HydrologicalOperations:
                 options['period']['startTime'] = (hourly_time(options['period']['startTime']) - timedelta(hours=1)).isoformat()
             if options.get('continuousOrigin'):
                 options['continuousOrigin'] = (hourly_time(options['continuousOrigin']) - timedelta(hours=1)).isoformat()
+        selection = request.get('scheme')
+        binding = None
+        if selection and request['inputs'].get('dataMode') == 'historical-database':
+            from model_schemes import preparation_binding_key
+            record = self.manager.schemes.get(selection['id'], selection['revision'])
+            binding_key = preparation_binding_key(record, request)
+            with self.manager.database.connect() as db:
+                binding = db.execute('SELECT * FROM model_scheme_prepared_inputs WHERE scheme_id=? AND definition_sha256=?',
+                                     (selection['id'], binding_key)).fetchone()
         with self.lock:
             self.check_cancelled(identifier)
-            task = reuse_preparation(self.inputs, options)
+            if binding:
+                self.manager.products.resolve(binding['bundle_version_id'])
+                task = self.inputs.get(binding['preparation_task_id'])
+            else:
+                task = reuse_preparation(self.inputs, options)
             self.update(identifier, preparationTaskId=task['taskId'])
         result = self.wait(identifier, task, self.inputs, '正在备齐雨流资料', 0, 18)
         automatic_source = None
@@ -342,6 +364,10 @@ class HydrologicalOperations:
         ready = status.get('registeredBundleVersionId')
         if not ready:
             raise ValueError('雨流资料未准备完成')
+        if selection and request['inputs'].get('dataMode') == 'historical-database' and not binding:
+            with self.manager.database.connect() as db:
+                db.execute('INSERT OR IGNORE INTO model_scheme_prepared_inputs VALUES (?,?,?,?)',
+                           (selection['id'], binding_key, task['taskId'], ready))
         prepared = copy.deepcopy(request)
         prepared['inputs'].update(bundleVersionId=ready, rainfallMethod=method)
         if automatic_source:
@@ -376,7 +402,8 @@ class HydrologicalOperations:
                  'parameters': parameter['parameters'], 'routing': parameter['routing'],
                  'science': parameter['science'], 'lineage': {'parameterSchemeId': parameter['id'],
                     'parameterVersionId': parameter['id'], 'parameterName': parameter['name']},
-                 'inputs': {'bundleVersionId': defaults['sourceBundleVersionId'],
+                 'inputs': {'bundleVersionId': defaults['sourceBundleVersionId'], 'dataMode': 'historical-database',
+                            'stationNetwork': defaults.get('stationNetwork'),
                             'evaporation': parameter['evaporation'], 'idwPower': defaults['idwPower'],
                             'minimumStations': defaults['minimumStations']}}
         if defaults.get('stationSourceId'):

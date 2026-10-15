@@ -16,6 +16,7 @@ from common import MODEL, RUNTIME, clean, now, read_json, safe_task, write_json
 
 
 DEFAULT_BUNDLE_VERSION_ID = "NANANXI_QC_20260819_CONTROL_V2"
+HISTORICAL_SPATIAL_ID = "HISTORICAL_SPATIAL_V1"
 BASELINE_FORCING_VERSION = "precipitation_qc_20260819"
 BASELINE_OBSERVATION_VERSION = "xufan_outlet_hourly_qc_20260819"
 BASELINE_MODEL_INPUT_VERSION = "nananxi-qc20260819-control-split-v2"
@@ -217,6 +218,8 @@ class InputProducts:
 
     def resolve(self, bundle_version_id=None, verify=True):
         bundle_version_id = DEFAULT_BUNDLE_VERSION_ID if bundle_version_id is None else bundle_version_id
+        if bundle_version_id == HISTORICAL_SPATIAL_ID:
+            return self.historical_spatial()
         if bundle_version_id == DEFAULT_BUNDLE_VERSION_ID:
             # First use pins the exact baseline files. A changed source file
             # must not silently receive a new digest under the same version id.
@@ -263,6 +266,26 @@ class InputProducts:
                 or result.get("productionEligible") is not False):
             raise ValueError("输入产品来源任务非成功状态或结果摘要错配")
         return self._descriptor(manifest, digest, manifest_path, verify=verify, registration=registration)
+
+    def historical_spatial(self):
+        """Spatial/quality configuration only; no delivered rain or flow dependency.
+
+        This is a preparation parent, never a runnable input product. A completed
+        preparation must register its own observation, catalogue and NC files.
+        """
+        paths = {role: {"root": "model", "path": BASELINE_PATHS[role]}
+                 for role in ('grids', 'geometry', 'topology', 'mapping', 'quality')}
+        files = [self.file_record(self._path(value)) for value in paths.values()]
+        manifest = {"schemaVersion": "1.0", "bundleVersionId": HISTORICAL_SPATIAL_ID,
+                    "projectId": PROJECT_ID, "resolutionId": RESOLUTION_ID,
+                    "sourceType": "model-qc", "sourceLabel": "历史库计算空间配置",
+                    "forcingVersion": "pending-historical-rain", "observationVersion": "pending-historical-flow",
+                    "modelInputVersion": HISTORICAL_SPATIAL_ID, "timeConvention": TIME_CONVENTION,
+                    "productionEligible": False, "paths": paths, "files": files}
+        return {**{key: manifest[key] for key in ('bundleVersionId', 'forcingVersion', 'observationVersion', 'modelInputVersion')},
+                'preparationOnly': True,
+                'manifest': manifest, 'manifestSHA256': manifest_digest(manifest), 'files': files,
+                'paths': {role: self._path(value) for role, value in paths.items()}}
 
     def list_versions(self):
         versions = [self.resolve()["public"]]

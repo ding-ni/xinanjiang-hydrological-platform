@@ -113,6 +113,8 @@ function requiresModelInput() {
   return usesModelInputService(activeObservationSource())
 }
 
+const trustedObservation = preview => ['model-qc', 'database-observed'].includes(preview?.sourceType)
+
 function localHour(date) {
   const pad = (value) => String(value).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:00`
@@ -132,7 +134,7 @@ function buildQualityPayload(state, basinId) {
 
   if (basinId === 'nananxi-xufan') {
     if (requiresModelInput()) {
-      const ready = state.historicalPreview?.sourceType === 'model-qc' && Boolean(state.modelInputProduct)
+      const ready = trustedObservation(state.historicalPreview) && Boolean(state.modelInputProduct)
       const index = Math.min(state.timeIndex, (state.historicalPreview?.times?.length || 1) - 1)
       const rain = finiteInputValue(state.modelInputSummary?.arealRainfallMm?.[index])
       const flow = finiteInputValue(state.historicalPreview?.river?.flows?.[index])
@@ -143,8 +145,8 @@ function buildQualityPayload(state, basinId) {
         excluded: [],
         arealNote: `徐畈控制区面雨量 · ${state.currentTimeLabel}`,
         qualityRecordId: state.modelInputProvenance?.forcingVersion || null,
-        source: 'model-backend-qc-inputs',
-        status: missing ? 'missing' : 'qc-ready',
+        source: state.historicalPreview?.sourceType === 'database-observed' ? 'historical-database' : 'model-backend-qc-inputs',
+        status: missing ? 'missing' : state.historicalPreview?.sourceType === 'database-observed' ? 'observed-ready' : 'qc-ready',
         productionEligible: false
       }
     }
@@ -264,7 +266,7 @@ export const useMonitorStore = defineStore('monitor', {
       return `${y}-${mo}-${d} ${hh}:${mm}`
     },
     selectedRainSeries(state) {
-      if (requiresModelInput() && (!state.historicalPreview || state.historicalPreview.sourceType !== 'model-qc')) return []
+      if (requiresModelInput() && !trustedObservation(state.historicalPreview)) return []
       if (state.activeDomainId === 'nananxi-xufan' && state.historicalPreview) {
         const station = state.stations.find((item) => item.id === state.selectedStationId)
         return this.historicalRainSeries(station?.code || station?.id)
@@ -273,11 +275,11 @@ export const useMonitorStore = defineStore('monitor', {
       return buildRainTimeline(id).slice(0, state.timeIndex + 1)
     },
     hasHistoricalObservations: (state) => Boolean(state.historicalCatalog && state.historicalPreview
-      && (!requiresModelInput() || (state.historicalPreview.sourceType === 'model-qc' && state.modelInputProduct))),
+      && (!requiresModelInput() || (trustedObservation(state.historicalPreview) && state.modelInputProduct))),
     historicalStationSnapshot(state) {
       return (spatialCode) => {
         if (!state.historicalPreview || !state.historicalCatalog) return null
-        if (requiresModelInput() && state.historicalPreview.sourceType !== 'model-qc') return null
+        if (requiresModelInput() && !trustedObservation(state.historicalPreview)) return null
         const station = state.historicalCatalog.rain.stations.find((item) => item.spatialCode === spatialCode)
         const index = Math.min(state.timeIndex, state.historicalPreview.times.length - 1)
         const rainValues = station ? state.historicalPreview.rain[station.legacyCode] : null
@@ -298,9 +300,9 @@ export const useMonitorStore = defineStore('monitor', {
           level: isRiver ? finiteInputValue(state.historicalPreview.river.levels?.[index]) : null,
           flow,
           lastTime: state.historicalPreview.times[index]?.replace('T', ' '),
-          quality: modelQC ? isRiver ? (flow == null ? '流量缺测' : '整编实测流量') : '站点实测请查询水文资料库' : '离线原始资料',
-          sourceLabel: modelQC ? isRiver ? '徐畈控制断面 · 整编逐时流量' : '模型计算资料为网格降雨' : '原始水文资料 · 与模型整编输入分开保留',
-          sourceType: modelQC ? 'model-qc' : 'offline-observed',
+          quality: modelQC ? isRiver ? (flow == null ? '流量缺测' : '整编实测流量') : '站点实测请查询水文资料库' : '历史实测记录',
+          sourceLabel: modelQC ? isRiver ? '徐畈控制断面 · 整编逐时流量' : '模型计算资料为网格降雨' : '水文资料库 · 原始实测记录',
+          sourceType: state.historicalPreview.sourceType,
           interval: '逐小时'
         }
       }
@@ -308,7 +310,7 @@ export const useMonitorStore = defineStore('monitor', {
     historicalRainSeries(state) {
       return (spatialCode) => {
         if (!state.historicalPreview || !state.historicalCatalog) return []
-        if (requiresModelInput() && state.historicalPreview.sourceType !== 'model-qc') return []
+        if (requiresModelInput() && !trustedObservation(state.historicalPreview)) return []
         const station = state.historicalCatalog.rain.stations.find((item) => item.spatialCode === spatialCode)
         const values = station ? state.historicalPreview.rain[station.legacyCode] : null
         if (!values) return []
@@ -323,7 +325,7 @@ export const useMonitorStore = defineStore('monitor', {
       }
     },
     historicalFlowSeries(state) {
-      if (!state.historicalPreview || (requiresModelInput() && state.historicalPreview.sourceType !== 'model-qc')) return []
+      if (!state.historicalPreview || (requiresModelInput() && !trustedObservation(state.historicalPreview))) return []
       return state.historicalPreview.times.slice(0, state.timeIndex + 1).map((time, index) => ({
         time, label: time.slice(5).replace('T', ' '), flow: finiteInputValue(state.historicalPreview.river?.flows?.[index])
       }))
@@ -557,8 +559,9 @@ export const useMonitorStore = defineStore('monitor', {
       this.clearModelInputWindow()
       this.historicalLoading = true
       try {
-        const catalog = !refresh && this.historicalCatalog?.sourceType === 'model-qc' && this.historicalCatalog.bundleVersionId === source?.selectedInputBundleVersionId
-          ? this.historicalCatalog : await loadModelInputCatalog({ source })
+        const { loadHistoricalDatabaseCatalog, loadHistoricalDatabaseProcess } = await import('@/services/modelInputService')
+        const catalog = !refresh && this.historicalCatalog?.sourceType === 'database-observed'
+          ? this.historicalCatalog : await loadHistoricalDatabaseCatalog({ source })
         if (!stillSelected()) return null
         this.historicalCatalog = catalog
         // Registered statistics are authoritative for this version; merging a
@@ -569,8 +572,8 @@ export const useMonitorStore = defineStore('monitor', {
         if (eventId) {
           const event = catalog.events.find((item) => String(item.eventId || item.id) === String(eventId))
           if (!event) throw new Error('选定计算资料不包含该洪水场次')
-          input = sliceModelInputWindow(await loadModelInputEvent(eventId, { source }), event.start, event.end)
-          replayLabel = `${event.sourceFloodNo || event.eventId || event.id} · 整编洪水场次资料`
+          input = await loadHistoricalDatabaseProcess('', '', { source, eventId })
+          replayLabel = `${event.sourceFloodNo || event.eventId || event.id} · 历史库洪水过程`
         } else {
           if (!start && !end) {
             const common = catalog.coverage?.common || catalog.latestPeriod || {}
@@ -581,7 +584,7 @@ export const useMonitorStore = defineStore('monitor', {
             start = localHour(first)
             end = localHour(last)
           }
-          input = await loadModelInputWindow(start, end, { source })
+          input = await loadHistoricalDatabaseProcess(start, end, { source })
         }
         if (!stillSelected() || !requiresModelInput()) return null
         this.historicalPreview = input.observationPreview
@@ -591,7 +594,7 @@ export const useMonitorStore = defineStore('monitor', {
         this.modelInputEventQuality = input.quality || null
         this.historicalReplayMode = mode
         this.historicalReplayEventId = eventId
-        this.historicalReplayLabel = replayLabel || '指定计算资料时段'
+        this.historicalReplayLabel = replayLabel || '历史库指定时段'
         this.historicalDataRevision += 1
         this.applyHistoricalTimeline({ reset: true })
         if (syncDataTime) useAppStore().setDataTime(this.currentTimeLabel)
@@ -609,7 +612,7 @@ export const useMonitorStore = defineStore('monitor', {
       this.timelineStart = preview.start.replace('T', ' ')
       this.timelineEnd = preview.end.replace('T', ' ')
       this.timelineStepMinutes = Number(preview.stepHours || 1) * 60
-      this.timelineLabel = preview.sourceType === 'model-qc' ? '整编逐时资料' : '逐小时离线资料'
+      this.timelineLabel = preview.sourceType === 'model-qc' ? '整编逐时资料' : preview.sourceType === 'database-observed' ? '历史库逐时实测' : '逐小时离线资料'
       this.timeMin = 0
       this.timeMax = preview.times.length - 1
       this.timeIndex = reset ? 0 : Math.min(this.timeMax, Math.max(this.timeMin, this.timeIndex))

@@ -166,7 +166,7 @@ test('switching between simulation and calibration saves changed conditions with
   assert.equal(persisted.length, 1)
 })
 
-test('changing rainfall settings removes the original search inheritance and saves the selected preparation method', () => {
+test('workspace preparation defaults apply to new schemes without changing an opened original scheme', async () => {
   const { state, persisted } = originFixture({
     sourcePlan: { planId: 'source-original', operation: 'search' },
     sourcePlanRequestTemplate: { inputs: { bundleVersionId: 'INPUT-original' } },
@@ -175,23 +175,18 @@ test('changing rainfall settings removes the original search inheritance and sav
     rainfallMethod: 'stationIdw', stationSourceId: 'LOCAL_OBSERVATIONS'
   })
   const source = readFileSync(new URL('../src/views/ConfigView.vue', import.meta.url), 'utf8')
-  const action = source.slice(source.indexOf('function saveInputSettings()'), source.indexOf('async function selectWorkspaceInput('))
-  const save = new Function('calibration', `${action}\nreturn saveInputSettings`)(state)
-  save()
-  assert.equal(state.sourcePlan, null)
-  assert.equal(state.sourcePlanRequestTemplate, null)
-  assert.equal(state.searchParameterOrder, null)
-  assert.equal(state.eventAssignment, null)
-  assert.deepEqual(state.optimizerSettings, {})
-  assert.equal(state.originalPlanChanged, true)
-  assert.equal(state.runResult.isCurrent, false)
-  assert.equal(persisted.length, 1)
-  const saved = persisted[0][contextKey]
-  assert.equal(saved.sourcePlan, null)
-  assert.deepEqual(saved.optimizerSettings, {})
-  assert.equal(saved.rainfallMethod, 'stationIdw')
-  assert.equal(saved.stationSourceId, 'LOCAL_OBSERVATIONS')
-  assert.deepEqual(saved.params, { KC: .89, SM: 29 })
+  const action = source.slice(source.indexOf('async function savePreparationDefaults()'), source.indexOf('const tabs ='))
+  const before = structuredClone({ sourcePlan: state.sourcePlan, optimizerSettings: state.optimizerSettings, params: state.params })
+  const defaults = { value: { idwPower: 3, minimumStations: 2 } }
+  const api = async (path, options) => {
+    assert.equal(path, 'database/preparation-defaults')
+    assert.deepEqual(options.body, defaults.value)
+    return options.body
+  }
+  const save = new Function('calibration', 'preparationDefaults', 'modelApi', 'ElMessage', `${action}\nreturn savePreparationDefaults`)(state, defaults, api, { success() {}, error(message) { throw new Error(message) } })
+  await save()
+  assert.deepEqual({ sourcePlan: state.sourcePlan, optimizerSettings: state.optimizerSettings, params: state.params }, before)
+  assert.equal(persisted.length, 0)
 })
 
 test('a named new scheme uses the configured local source and clears selections without altering the current display source', () => {

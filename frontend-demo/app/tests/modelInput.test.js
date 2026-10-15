@@ -15,6 +15,30 @@ function windowPayload() {
 }
 
 describe('fixed model input boundary', () => {
+  it('keeps historical station rain and water levels distinct from derived grid rain', () => {
+    const payload = windowPayload()
+    payload.sourceType = 'database-observed'
+    payload.quality = { status: 'raw-observations', gridStatus: 'ready' }
+    const input = normalizeModelInputWindow(payload)
+    assert.equal(input.product.sourceType, 'database-derived-grid')
+    assert.equal(input.observationPreview.source, 'historical-database')
+    assert.deepEqual(input.observationPreview.rain['old-mdb-station'], [100, 100])
+    assert.deepEqual(input.observationPreview.river.levels, [31, 32])
+    const sliced = sliceModelInputWindow(input, input.product.times[1], input.product.times[1])
+    assert.deepEqual(sliced.observationPreview.rain['old-mdb-station'], [100])
+    assert.deepEqual(sliced.observationPreview.river.levels, [32])
+    assert.equal(sliced.quality.status, 'raw-observations')
+  })
+  it('displays historical raw observations even when spatial preparation fails', () => {
+    const payload = windowPayload()
+    payload.sourceType = 'database-observed'
+    payload.quality = { gridStatus: 'failed', gridError: '空间配置未完成' }
+    payload.product.cells = []
+    const input = normalizeModelInputWindow(payload)
+    assert.deepEqual(input.observationPreview.river.flows, [null, 0])
+    assert.deepEqual(input.product.cells, [])
+    assert.equal(input.quality.gridError, '空间配置未完成')
+  })
   it('distinguishes registered QC, loaded data, loading, offline and an unsupported scale', () => {
     assert.equal(modelInputDisplayStatus({ registered: true }).label, '整编资料已登记')
     assert.equal(modelInputDisplayStatus({ registered: true, loaded: true }).label, '整编资料可用')

@@ -176,6 +176,7 @@ export const useAppStore = defineStore('app', {
       const backend = state.projectData?.backend
       const input = state.selectedInputCatalog
       if (!backend) return null
+      if (input?.sourceType === 'database-observed') return { ...backend, observationCoverage: input.coverage, publicEvents: input.events }
       return input?.bundleVersionId === this.selectedInputBundleVersionId ? { ...backend,
         events: input.events, forcingVersion: input.forcingVersion, observationVersion: input.observationVersion,
         inputBundleVersionId: input.bundleVersionId, qualityNotes: input.qualityNotes || backend.qualityNotes
@@ -429,10 +430,14 @@ export const useAppStore = defineStore('app', {
       this.inputCatalogLoading = true
       this.inputCatalogError = ''
       try {
-        const catalog = await loadModelInputCatalog({ source })
+        const { loadHistoricalDatabaseCatalog } = await import('@/services/modelInputService')
+        const catalog = await loadHistoricalDatabaseCatalog({ source })
         if (key !== this.inputSelectionKey || revision !== this.inputCatalogRequestRevision) return null
         this.selectedInputCatalog = catalog
-        if (this.backendCase) useCalibrationStore().configureBackend(this.backendCase)
+        if (this.backendCase) {
+          useCalibrationStore().configureBackend(this.backendCase)
+          useCalibrationStore().loadFullFloodCatalog(catalog.events)
+        }
         useCalibrationStore().setObservationRange(catalog.river)
         return catalog
       } catch (error) {
@@ -485,7 +490,7 @@ export const useAppStore = defineStore('app', {
         this.projectData.backend = backend
         if (backend) {
           if (this.selectedInputBundleVersionId) {
-            await Promise.all([this.refreshInputProducts(), this.refreshSelectedInputCatalog()])
+            await this.refreshSelectedInputCatalog()
           } else useCalibrationStore().configureBackend(backend)
           const [{ states }, { versions }] = await Promise.all([modelApi('states'), modelApi('parameter-versions')])
           if (this.contextKey !== requestedContextKey || revision !== this.backendRequestRevision || requestedInputKey !== this.inputSelectionKey) return null

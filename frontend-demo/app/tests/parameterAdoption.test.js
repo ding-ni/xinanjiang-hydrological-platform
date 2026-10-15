@@ -17,14 +17,14 @@ test('manual trial is blocked until a saved reference parameter set has been com
   const empty = { value: '' }
   const actions = new Function('computed', 'app', 'cal', 'parameterLoading', 'parameterConstraint', 'physicalConflict',
     'physicalGrouping', 'trialMode', 'searchError', 'routingSearchError', 'objectiveWeightValid', 'routingError',
-    'referenceParameterId', 'calculationError', 'modelApi',
+    'referenceParameterId', 'calculationError', 'modelApi', 'originError',
     selectionAction + '\n' + eligibility + '\nreturn { applyReference, canRun }')(
     fn => ({ get value() { return fn() } }), app, cal, parameterLoading, empty, empty,
     { value: { errors: [] } }, { value: 'manual' }, empty, empty, { value: true }, empty,
     referenceParameterId, calculationError, async () => { await verification; return {
       id: 'PARAMSET-reference', parameters: { SM: 41 }, routing: { versionId: 'ROUTING-reference' },
       science: { versionId: 'SCIENCE-reference' }, warmupDays: 7, statePolicy: 'independent-warmup'
-    } })
+    } }, empty)
   assert.equal(actions.canRun.value, true)
   const adopting = actions.applyReference('PARAMSET-reference')
   assert.equal(actions.canRun.value, false)

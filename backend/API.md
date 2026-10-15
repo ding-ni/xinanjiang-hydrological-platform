@@ -1,5 +1,15 @@
 # Unified model API / schema 2.0
 
+## 历史库统一供数与交付方案（2026-10-16）
+
+基础路径 `/api/model`。`GET database/catalog` 返回完整226场公共目录及实测覆盖，`GET database/process?eventId=...` 或 `?start=...&end=...` 返回实测雨流、水位与独立标识的派生网格；时段限1至8784小时。网格失败保留实测，`quality.status=raw-observations` 不代表QC通过。起止覆盖不等于中间完整。
+
+`GET/POST database/network` 维护历史库中文站网站点与出口。`GET/POST database/preparation-defaults` 仅编辑 `idwPower/minimumStations`，供新建方案采用。`GET database/sources` 为真实入库记录；`GET scheme-input-assets?schemeId=...` 为方案加工追溯，均不作为日常资料来源选择。
+
+新方案 `inputs.dataMode=historical-database`，`sourceBundleVersionId=HISTORICAL_SPATIAL_V1` 仅表示空间准备配置，不能直接执行数值任务。作业后台从完整数据库按冻结站网准备输入，完成后绑定方案定义及科学条件。参数新版本可共享原绑定，不重新读取后来修改的数据库。同事原方案保留 `frozen-input` 输入；旧输入接口保留历史兼容。
+
+方案保存版本冻结全部计算条件；草稿独立、显式放弃，读取旧版本不叠加最新草稿。启动执行幂等交付关联；完整原条件一致才复用方案，不根据同名或洪号合并。复算继续用 `POST operations {operation:"rerun",sourceTaskId:"..."}`，不采用当前数据库与默认值。迁移去向及验收见 `docs/historical-database-schemes.md`。
+
 ## 日常水文作业（2026-10-14）
 
 - `GET /flood-catalog` 返回流域完整目录 `events/count`，独立于当前处理产品。
@@ -13,7 +23,7 @@
 
 ## 命名方案与自动资料准备（1.12.0）
 
-- `GET /model-schemes` 返回工作区方案。`POST /model-schemes` 保存 `name/definition/calculationDraft`，已有方案附带 `id/revision` 做并发校验。输入定义改变产生修订；仅计算草稿改变更新当前草稿。
+- `GET /model-schemes` 返回工作区方案。`POST /model-schemes` 保存 `name/definition/calculationDraft`，已有方案附带 `id/revision/draftRevision` 做并发校验。计算条件改变保存为完整新版本；独立草稿不覆盖已保存版本。
 - `GET /model-schemes/{id}?revision=N` 返回指定修订及 `latestRevision/revisions`。计算请求附带 `scheme:{id,revision}`，服务核验输入定义并冻结方案关联到 `lineage`。
 - `POST /scheme-preparations` 提交 `operation:schemeInput`、来源 `parentBundleVersionId`、`period`、`rainfallMethod`（`reuse/stationIdw`）、`statePolicy/continuousOrigin`，以及可选 `stationSourceId/idwPower/minimumStations/science/evaporation`。返回现有资料队列任务；同条件复用。读取 `/input-tasks/{id}` 与 `/result` 获取进度、问题及登记输入；登记由后台完成。
 - 准备结果 `issues` 汇总降雨、流量与蒸散发缺口，包含 `missingIntervals/flowMissingIntervals/petMissingIntervals`。用户洪水窗口在服务端核验并保存为自动输入目录；没有问题时计算请求带上 `inputs.sourceBundleVersionId/preparationTaskId/bundleVersionId/rainfallMethod`，服务再次校验准备条件。

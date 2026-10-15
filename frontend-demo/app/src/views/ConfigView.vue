@@ -134,13 +134,11 @@
           <h3 class="panel-title">流域与站网</h3>
           <template v-if="app.basinId === 'nananxi-xufan'">
             <RouterLink class="btn" to="/data">查询实测资料</RouterLink>
-            <details v-if="app.backendCase" class="workspace-input-settings" open><summary>维护资料来源与站网</summary>
-              <div class="config-grid two">
-                <div class="field"><label for="workspace-station-source">实测资料来源</label><select id="workspace-station-source" class="input" v-model="preparationDefaults.stationSourceId" @change="savePreparationDefaults"><option :value="null">沿用当前来源（选择规则）</option><option value="LOCAL_OBSERVATIONS">本地实测资料库</option><option v-for="source in networkSources" :key="source.sourceId" :value="source.sourceId">{{ source.name }}</option></select></div>
-              </div>
+            <details v-if="app.backendCase" class="workspace-input-settings" open><summary>站网与默认处理规则</summary>
+              <p>使用水文资料库 · 新方案按所选洪水自动准备雨量、流量与网格。已保存方案保留自己的站网和输入。</p>
               <p v-if="networkError" role="alert" class="warn-text">{{ networkError }}</p>
-              <details><summary>资料来源、覆盖时段与站点</summary><table class="table"><thead><tr><th>资料来源</th><th>已登记覆盖</th><th>站点</th></tr></thead><tbody><tr><td>本地实测资料库</td><td>{{ commonObservationRangeLabel }}</td><td>{{ databaseStations.length }} 条站点记录</td></tr><tr v-for="source in networkSources" :key="source.sourceId"><td>{{ source.name }}</td><td>{{ source.start && source.end ? formatCatalogDate(source.start)+' 至 '+formatCatalogDate(source.end) : '覆盖时间尚未登记，按所选时段检查' }}</td><td>{{ (networkSource===source.sourceId && network) ? network.stations.length+'个雨量站，1个流量站' : '选择来源后查看绑定站网' }}</td></tr></tbody></table></details>
-              <template v-if="network"><label>控制断面<span v-if="network.flowStation === 'PARENT_INPUT'">沿用当前资料的实测流量</span><span v-else>{{ stationDisplay(network.flowStation) }}</span><details><summary>站号与MDB别名</summary><input class="input" v-model.trim="network.flowStation" /></details></label>
+              <p>{{ commonObservationRangeLabel }} · {{ databaseStations.length }} 条站点要素记录。起止日期表示覆盖边界，计算前逐时检查缺测。</p>
+              <template v-if="network"><label>出口水文站 <span>{{ stationDisplay(network.flowStation) }}</span><details><summary>站号与MDB别名</summary><input class="input" v-model.trim="network.flowStation" /></details></label>
                 <table class="table"><thead><tr><th>雨量站</th><th>经度</th><th>纬度</th><th></th></tr></thead><tbody><tr v-for="(station, index) in network.stations" :key="index"><td><b>{{ stationDisplay(station.id) }}</b><details><summary>站号 / 别名 {{ station.id }}</summary><input class="input" v-model.trim="station.id" /></details></td><td><input class="input" type="number" step="any" v-model.number="station.lon" /></td><td><input class="input" type="number" step="any" v-model.number="station.lat" /></td><td><button class="btn mini" @click="network.stations.splice(index, 1)">移除</button></td></tr></tbody></table>
                 <div class="btn-row"><button class="btn" @click="network.stations.push({ id: '', lon: null, lat: null })">添加雨量站</button><button class="btn primary" :disabled="networkBusy" @click="saveNetwork">保存站网</button></div>
               </template>
@@ -373,7 +371,6 @@ import { useAppStore } from '@/stores/app'
 import { useCalibrationStore } from '@/stores/calibration'
 import { PARAMETER_VERSION_CATALOG } from '@/fixtures/catalogs/parameter-versions'
 import ContextStatusMetric from '@/components/common/ContextStatusMetric.vue'
-import { inputProductContents, inputProductPresentation } from '@/services/inputProductPresentation.js'
 import { loadNananxiEventPackages, loadNananxiEventStatistics, loadNananxiFloodEvents, loadNananxiObservationCatalog } from '@/services/historicalObservationService'
 import { formatObservationCoverage, formatObservationDate } from '@/services/observationCoverageService'
 import { eventDataQuality } from '@/services/floodEventService'
@@ -381,7 +378,7 @@ import { parameterLibraryFor } from '@/services/parameterLibraryService'
 import { validateProjectDataContext } from '@/services/projectDataValidationService'
 import { selectObservedHydrologyDataset, selectObservedPrecipitationDataset } from '@/services/datasetSelectionService'
 import { loadJsonResource } from '@/services/projectDataService'
-import { finiteInputValue, loadModelInputCatalog, usesModelInputService } from '@/services/modelInputService'
+import { finiteInputValue, loadHistoricalDatabaseCatalog, usesModelInputService } from '@/services/modelInputService'
 import { modelApi } from '@/services/modelBackendService'
 
 const cfg = useConfigStore()
@@ -390,25 +387,15 @@ const monitor = useMonitorStore()
 const app = useAppStore()
 const router = useRouter()
 const calibration = useCalibrationStore()
-const preparationDefaults = ref({ idwPower: 2, minimumStations: 1, rainfallMethod: 'stationIdw', stationSourceId: 'LOCAL_OBSERVATIONS', sourceBundleVersionId: 'NANANXI_QC_20260819_CONTROL_V2' })
-const network = ref(null), networkBundle = ref(''), networkError = ref(''), networkBusy = ref(false)
+const preparationDefaults = ref({ idwPower: 2, minimumStations: 1 })
+const network = ref(null), networkError = ref(''), networkBusy = ref(false)
 const stationDirectory = ref({stations:[],aliases:[]})
 function stationDisplay(id) {
   const alias=stationDirectory.value.aliases.find(row=>String(row.alias)===String(id))
   const canonical=alias?.station_id || id
   return stationDirectory.value.stations.find(row=>String(row.id)===String(canonical))?.name || (String(id)==='70115800'?'徐畈（二）':'未命名站点（'+id+'）')
 }
-const networkSource = ref(''), networkSources = ref([])
-function saveInputSettings() { calibration.detachOriginalPlan(); calibration.markNeedsRun('计算资料已调整'); calibration.saveCurrentWorkspace() }
-async function selectWorkspaceInput(id) {
-  try {
-    await app.selectInputBundleVersion(id)
-    calibration.requiredInputBundleVersionId = null; calibration.sourcePlan = null; calibration.sourcePlanRequestTemplate = null
-    calibration.rainfallMethod = 'reuse'; calibration.stationSourceId = null
-    saveInputSettings()
-  } catch (failure) { ElMessage.error(failure.message) }
-}
-const networkPath = () => `station-network?bundleVersionId=${encodeURIComponent(networkBundle.value)}${networkSource.value ? `&sourceId=${encodeURIComponent(networkSource.value)}` : ''}`
+const networkPath = () => 'database/network'
 async function loadNetwork() {
   const source = networkPath()
   networkError.value = ''; network.value = null
@@ -422,7 +409,7 @@ async function saveNetwork() {
   finally { networkBusy.value = false }
 }
 async function savePreparationDefaults() {
-  try { preparationDefaults.value = await modelApi('preparation-defaults', { method: 'POST', body: preparationDefaults.value }); networkBundle.value = preparationDefaults.value.sourceBundleVersionId; networkSource.value = preparationDefaults.value.stationSourceId || ''; await loadNetwork(); ElMessage.success('资料设置已保存') }
+  try { preparationDefaults.value = await modelApi('database/preparation-defaults', { method: 'POST', body: { idwPower: preparationDefaults.value.idwPower, minimumStations: preparationDefaults.value.minimumStations } }); ElMessage.success('默认处理规则已保存，下次新建方案时采用') }
   catch (failure) { ElMessage.error(failure.message) }
 }
 const tabs = ['流域与站网', '模型方案', '参数库']
@@ -459,8 +446,6 @@ async function renameNamedParameter(row) {
 const refreshingProjectData = ref(false)
 const projectDataValidation = computed(() => validateProjectDataContext(app.projectData))
 const isModelInputWorkspace = computed(() => usesModelInputService(app.activeContext))
-const currentInputPresentation = computed(() => inputProductPresentation(app.selectedInputProduct || {}, { catalog: observationCatalog.value }))
-const currentInputContents = computed(() => inputProductContents(app.selectedInputProduct || {}, { catalog: observationCatalog.value }))
 const displayedAlgorithms = computed(() => isModelInputWorkspace.value ? app.backendCase?.algorithms || [] : algorithmCatalog.value)
 
 function createFloodEventDraft(event = null) {
@@ -491,13 +476,13 @@ async function loadProjectObservationCatalog({ refresh = false } = {}) {
       const stationData = await modelApi('database/stations')
       if (requestId !== inputCatalogRequestId || contextKey !== app.contextKey) return
       databaseStations.value = stationData.stations
-      const catalog = await loadModelInputCatalog({ source: app.activeContext })
+      const catalog = await loadHistoricalDatabaseCatalog({ source: app.activeContext })
       if (requestId !== inputCatalogRequestId || contextKey !== app.contextKey || inputKey !== app.inputSelectionKey) return
       projectObservationCatalog.value = catalog
       calibration.setObservationRange(catalog?.river)
       // The selected product supplies authoritative statistics, not the fixed
       // default case in /catalog and never an obsolete static event package.
-      if (app.backendCase) calibration.configureBackend({ ...app.backendCase, events: catalog.events, inputBundleVersionId: catalog.bundleVersionId })
+      calibration.loadFullFloodCatalog(catalog.events)
       return
     }
     projectObservationCatalog.value = refresh || !monitor.historicalCatalog
@@ -543,8 +528,8 @@ const commonObservationRangeLabel = computed(() => {
 const observationCatalog = computed(() => {
   if (isModelInputWorkspace.value) {
     if (app.modelScale !== '1km' || app.backendError) return null
-    return projectObservationCatalog.value?.sourceType === 'model-qc' && projectObservationCatalog.value.bundleVersionId === app.selectedInputBundleVersionId ? projectObservationCatalog.value
-      : monitor.historicalCatalog?.sourceType === 'model-qc' && monitor.historicalCatalog.bundleVersionId === app.selectedInputBundleVersionId ? monitor.historicalCatalog : null
+    return projectObservationCatalog.value?.sourceType === 'database-observed' ? projectObservationCatalog.value
+      : monitor.historicalCatalog?.sourceType === 'database-observed' ? monitor.historicalCatalog : null
   }
   return monitor.historicalCatalog?.sourceType === 'model-qc' ? projectObservationCatalog.value : monitor.historicalCatalog || projectObservationCatalog.value
 })
@@ -568,10 +553,7 @@ function recordCountLabel(kind) {
 onMounted(async () => {
   if(app.basinId === 'nananxi-xufan') await loadNamedParameters()
   if (app.backendCase) {
-    try { networkSources.value = (await modelApi('input-sources')).sources } catch (failure) { networkError.value = failure.message }
-    try { preparationDefaults.value = await modelApi('preparation-defaults') } catch (failure) { ElMessage.warning(failure.message) }
-    networkBundle.value = preparationDefaults.value.sourceBundleVersionId
-    networkSource.value = preparationDefaults.value.stationSourceId || ''
+    try { preparationDefaults.value = await modelApi('database/preparation-defaults') } catch (failure) { ElMessage.warning(failure.message) }
     await loadNetwork()
   }
   await loadProjectObservationCatalog()

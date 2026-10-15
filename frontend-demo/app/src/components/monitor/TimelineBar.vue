@@ -49,9 +49,11 @@
         </select>
       </label>
       <template v-if="replayMode === 'event'">
+        <label><span>搜索洪水</span><input v-model="eventSearch" class="replay-input" type="search" placeholder="名称、编号或日期" /></label>
+        <label><span>年份</span><select v-model="eventYear" class="replay-input"><option value="">全部年份</option><option v-for="year in eventYears" :key="year" :value="year">{{ year }} 年</option></select></label>
         <label class="replay-event">
           <span>选择场次</span>
-          <select v-model="selectedEventId" class="replay-input" :disabled="monitor.historicalLoading || !eventOptions.length" @change="loadSelectedEvent">
+          <select v-model="selectedEventId" class="replay-input event-list" size="6" :disabled="monitor.historicalLoading || !eventOptions.length" @change="loadSelectedEvent">
             <option value="" disabled>{{ eventOptions.length ? '请选择洪水场次' : noEventCatalogLabel }}</option>
             <option v-for="event in eventOptions" :key="event.eventId || event.id" :value="event.eventId || event.id">{{ eventOptionLabel(event) }}</option>
           </select>
@@ -83,6 +85,7 @@ import { useAppStore } from '@/stores/app'
 import { useCalibrationStore } from '@/stores/calibration'
 import { observationBoundaryInput } from '@/services/observationCoverageService'
 import { finiteInputValue, usesModelInputService } from '@/services/modelInputService'
+import { modelApi } from '@/services/modelBackendService'
 
 const monitor = useMonitorStore()
 const app = useAppStore()
@@ -92,6 +95,13 @@ const selectedEventId = ref('')
 const rangeStart = ref('')
 const rangeEnd = ref('')
 const latestHours = ref(72)
+const publicEvents = ref([]), eventSearch = ref(''), eventYear = ref('')
+const eventYears = computed(() => [...new Set(publicEvents.value.map(row => String(row.start).slice(0,4)))].sort().reverse())
+watch(() => app.contextKey, async () => {
+  const context = app.contextKey
+  try { const result = await modelApi('flood-catalog?projectId='+encodeURIComponent(app.basinId)+'&resolutionId='+encodeURIComponent(app.modelScale)); if(context===app.contextKey) publicEvents.value = result.events || [] }
+  catch(failure) { if(context===app.contextKey) replayError.value = failure.message }
+}, {immediate:true})
 const usesModelInputs = computed(() => usesModelInputService(app.activeContext))
 const playbackMetadataReady = computed(() => !usesModelInputs.value || monitor.hasHistoricalObservations)
 const playbackDisabled = computed(() => monitor.historicalLoading || (usesModelInputs.value && !monitor.hasHistoricalObservations))
@@ -110,8 +120,9 @@ function commonCatalogBoundary(kind) {
 const minInput = computed(() => commonCatalogBoundary('start') || monitor.timelineStart.replace(' ', 'T'))
 const maxInput = computed(() => commonCatalogBoundary('end') || monitor.timelineEnd.replace(' ', 'T'))
 const stepText = computed(() => usesModelInputs.value || monitor.timelineStepMinutes === 60 ? '1 h' : '10 min')
-const eventOptions = computed(() => [...(usesModelInputs.value ? monitor.historicalCatalog?.events || [] : app.hasEventCatalog ? (calibration.events || []) : (monitor.historicalEvents || []))]
+const eventOptions = computed(() => [...(publicEvents.value.length ? publicEvents.value : usesModelInputs.value ? monitor.historicalCatalog?.events || [] : app.hasEventCatalog ? (calibration.events || []) : (monitor.historicalEvents || []))]
   .filter((event) => event.status !== 'inactive')
+  .filter(event => (!eventYear.value || String(event.start).startsWith(eventYear.value)) && (!eventSearch.value || [event.name,event.id,event.eventId,event.sourceFloodNo,event.start].join(' ').includes(eventSearch.value)))
   .sort((a, b) => new Date(b.start || 0) - new Date(a.start || 0)))
 const noEventCatalogLabel = computed(() => {
   if (monitor.historicalLoading || app.inputCatalogLoading) return '场次目录加载中'
@@ -178,7 +189,8 @@ function eventOptionLabel(event) {
   const code = event.sourceFloodNo || event.floodCode || event.eventId || event.id
   const observedPeak = finiteInputValue(event.observedPeak)
   const peak = observedPeak != null ? ` · Qmax ${observedPeak.toLocaleString()} m³/s` : ''
-  return `${code} · ${String(event.start || '').replace('T', ' ')}${peak}`
+  const covered = (monitor.historicalCatalog?.events || []).some(row => (row.eventId || row.id) === (event.eventId || event.id))
+  return `${event.name || code} · ${String(event.start || '').replace('T', ' ')}${peak} · ${covered ? '当前资料覆盖' : '需检查资料覆盖'}`
 }
 
 async function loadLatest() {
@@ -194,7 +206,9 @@ async function loadSelectedEvent() {
   if (!selectedEventId.value) return
   replayError.value = ''
   try {
-    await monitor.loadHistoricalEvent(selectedEventId.value)
+    const event = publicEvents.value.find(row => String(row.eventId || row.id) === selectedEventId.value)
+    if(event) await monitor.loadHistoricalWindow(event.start,event.end,{mode:'event',label:event.name||event.id})
+    else await monitor.loadHistoricalEvent(selectedEventId.value)
   } catch (error) {
     replayError.value = error instanceof Error ? error.message : String(error)
   }
@@ -350,6 +364,7 @@ onBeforeUnmount(() => {
 .replay-controls .replay-event { flex: 1 1 270px; min-width: 240px; }
 .replay-controls .latest-window { min-width: 110px; }
 .replay-input { width: 100%; height: 30px; padding: 0 7px; border: 1px solid #c8d8ec; border-radius: 5px; background: #fff; color: #17343e; font-size: 11px; }
+.event-list{height:150px;overflow-y:auto;overscroll-behavior:contain}.event-list option{padding:6px}
 .replay-load { height: 30px; padding: 0 11px; border: 1px solid #9bc9c2; border-radius: 5px; background: #edf8f5; color: #14776e; font-size: 11px; font-weight: 800; cursor: pointer; }
 .replay-load:hover { border-color: #178276; background: #dff2ed; }
 .replay-window { align-self: center; min-width: 220px; color: #55717a; font-size: 10px; font-variant-numeric: tabular-nums; }

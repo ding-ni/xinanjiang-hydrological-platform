@@ -22,6 +22,8 @@ test('continuation follows parent science and never substitutes the selected cal
   }
   assert.match(stateScienceBlockReason(parent, '0'.repeat(64)), /升级前模型/)
   assert.throws(() => scientificRequestSelection({ parentState: parent, modelImplementationSHA256: '0'.repeat(64) }), /重新初始化/)
+  assert.equal(stateScienceBlockReason({...parent,implementationReplayable:true},'0'.repeat(64)), '')
+  assert.equal(scientificRequestSelection({parentState:{...parent,implementationReplayable:true},modelImplementationSHA256:'0'.repeat(64)}).science.versionId,'SCIENCE-parent')
 })
 
 test('continuous candidate initialization inherits its scientific version while an explicit independent mode uses independent conditions', () => {

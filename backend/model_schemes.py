@@ -9,6 +9,17 @@ from common import now, read_json
 from input_products import manifest_digest
 
 
+def calculation_identity(request):
+    """Calculation settings, excluding request routing and display metadata."""
+    result = copy.deepcopy(request)
+    for key in ('requestId', 'createdAt', 'scheme', 'lineage', 'name'):
+        result.pop(key, None)
+    return result
+
+def editor_identity(editor):
+    return {key:value for key,value in editor.items() if key not in {'eventId','activeOperationId','activeOperationRequest'}}
+
+
 def input_definition(request, rainfall_method='reuse'):
     period = copy.deepcopy(request['period'])
     if period.get('mode') == 'event':
@@ -44,6 +55,12 @@ class ModelSchemes:
                 CREATE TABLE IF NOT EXISTS model_scheme_editors (
                     scheme_id TEXT PRIMARY KEY REFERENCES model_schemes(id),
                     payload TEXT NOT NULL, updated_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS model_scheme_snapshots (
+                    scheme_id TEXT NOT NULL, revision INTEGER NOT NULL,
+                    editor TEXT NOT NULL, calculation_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scheme_id,revision));
+                CREATE TABLE IF NOT EXISTS model_scheme_draft_versions (
+                    scheme_id TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0);
             ''')
 
     def defaults(self, body=None):
@@ -70,7 +87,7 @@ class ModelSchemes:
 
     def list(self):
         with self.database.connect() as db:
-            rows = [dict(row) for row in db.execute('SELECT s.*, e.payload AS editor_payload, r.definition, r.calculation_draft FROM model_schemes s LEFT JOIN model_scheme_editors e ON e.scheme_id=s.id LEFT JOIN model_scheme_revisions r ON r.scheme_id=s.id AND r.revision=s.revision ORDER BY s.updated_at DESC')]
+            rows = [dict(row) for row in db.execute('SELECT s.*, e.payload AS editor_payload, p.editor AS saved_editor, r.definition, r.calculation_draft FROM model_schemes s LEFT JOIN model_scheme_editors e ON e.scheme_id=s.id LEFT JOIN model_scheme_revisions r ON r.scheme_id=s.id AND r.revision=s.revision LEFT JOIN model_scheme_snapshots p ON p.scheme_id=s.id AND p.revision=s.revision ORDER BY s.updated_at DESC')]
         latest = {}
         for path in (self.database.runtime / 'operations').glob('*/status.json'):
             operation = read_json(path)
@@ -80,13 +97,14 @@ class ModelSchemes:
                 latest[scheme_id] = {key: operation.get(key) for key in ('taskId', 'status', 'createdAt', 'completedAt')}
         for row in rows:
             editor = json.loads(row.pop('editor_payload') or '{}')
+            saved_editor = json.loads(row.pop('saved_editor') or '{}')
             definition = json.loads(row.pop('definition') or '{}')
             draft = json.loads(row.pop('calculation_draft') or '{}')
-            events = editor.get('events', definition.get('period', {}).get('events', [])) + editor.get('schemeWindows', [])
+            events = definition.get('period', {}).get('events', []) if row['revision'] else editor.get('events', []) + editor.get('schemeWindows', [])
             selected = {event['id']: event for event in events if event.get('purpose') in {'率定', '验证', '独立检验'} and event.get('status') != 'inactive'}
-            row['summary'] = {'mode': editor.get('calibrationMode', definition.get('period', {}).get('mode', 'event')),
+            row['summary'] = {'mode': definition.get('period', {}).get('mode', editor.get('calibrationMode', 'event')),
                 'selectedCount': len(selected), **{key: sum(event['purpose'] == purpose for event in selected.values()) for key, purpose in [('calibration', '率定'), ('validation', '验证'), ('independent', '独立检验')]}}
-            source = editor.get('originalCalibrationPlan') or draft.get('sourcePlan') or {}
+            source = saved_editor.get('originalCalibrationPlan') or editor.get('originalCalibrationPlan') or draft.get('sourcePlan') or {}
             row['originalPlanSHA256'] = source.get('planSHA256')
             row['context'] = editor.get('context') or definition.get('context', {})
             row['latestCalculation'] = latest.get(row['id'])
@@ -106,12 +124,50 @@ class ModelSchemes:
                 raise KeyError('方案修订不存在')
             editor = db.execute('SELECT payload FROM model_scheme_editors WHERE scheme_id=?', (scheme_id,)).fetchone()
             editing = json.loads(editor['payload']) if editor else {}
+            snapshot = db.execute('SELECT * FROM model_scheme_snapshots WHERE scheme_id=? AND revision=?', (scheme_id, selected)).fetchone()
+            draft_version = db.execute('SELECT revision FROM model_scheme_draft_versions WHERE scheme_id=?', (scheme_id,)).fetchone()
             revisions = [dict(r) for r in db.execute('SELECT revision,created_at FROM model_scheme_revisions WHERE scheme_id=? ORDER BY revision DESC', (scheme_id,))]
             return {**dict(scheme), 'latestRevision': scheme['revision'], 'revision': selected,
                     'definition': json.loads(row['definition']) if row else {'context': editing.get('context', {}), 'period': {}},
                     'calculationDraft': json.loads(row['calculation_draft']) if row else {},
                     'definitionSHA256': row['definition_sha256'] if row else None,
-                    'editor': editing, 'revisions': revisions}
+                    'editor': editing if selected == scheme['revision'] else {},
+                    'savedEditor': json.loads(snapshot['editor']) if snapshot else {},
+                    'calculationSHA256': snapshot['calculation_sha256'] if snapshot else None,
+                    'draftRevision': draft_version[0] if draft_version else 0,
+                    'hasDraft': bool(editing), 'legacyDraft': bool(editing) and not snapshot,
+                    'revisions': revisions}
+
+    def rename(self, scheme_id, body):
+        self.get(scheme_id)
+        name = str(body.get('name') or '').strip()
+        if set(body) != {'name'} or not name or len(name) > 80:
+            raise ValueError('方案名称须为1至80个字符')
+        with self.database.connect() as db:
+            db.execute('UPDATE model_schemes SET name=?,updated_at=? WHERE id=?', (name, now(), scheme_id))
+        return self.get(scheme_id)
+
+    def discard_editor(self, scheme_id, body):
+        record = self.get(scheme_id)
+        with self.database.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self._check_draft(db, scheme_id, body)
+            db.execute('UPDATE model_scheme_editors SET payload=?,updated_at=? WHERE scheme_id=?', ('{}', now(), scheme_id))
+            self._bump_draft(db, scheme_id)
+        return self.get(record['id'])
+
+    @staticmethod
+    def _check_draft(db, scheme_id, body):
+        current = db.execute('SELECT revision FROM model_scheme_draft_versions WHERE scheme_id=?', (scheme_id,)).fetchone()
+        if 'draftRevision' in body and body['draftRevision'] != (current[0] if current else 0):
+            raise RuntimeError('草稿已在另一页面修改，请重新读取后保存')
+        saved = db.execute('SELECT revision FROM model_schemes WHERE id=?', (scheme_id,)).fetchone()
+        if 'revision' in body and body['revision'] != (saved[0] if saved else 0):
+            raise RuntimeError('方案已在另一页面保存，请重新读取后编辑')
+
+    @staticmethod
+    def _bump_draft(db, scheme_id):
+        db.execute('INSERT INTO model_scheme_draft_versions VALUES (?,1) ON CONFLICT(scheme_id) DO UPDATE SET revision=revision+1', (scheme_id,))
 
     def create(self, body):
         if not isinstance(body, dict) or set(body) - {'name', 'context', 'editor'}:
@@ -144,18 +200,20 @@ class ModelSchemes:
 
     def save_editor(self, scheme_id, body):
         self.get(scheme_id)
-        if not isinstance(body, dict) or set(body) != {'editor'}:
+        if not isinstance(body, dict) or set(body) - {'editor', 'revision', 'draftRevision'} or 'editor' not in body:
             raise ValueError('方案内容无效')
         payload, instant = self._editor_payload(body['editor']), now()
         with self.database.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self._check_draft(db, scheme_id, body)
             db.execute('INSERT INTO model_scheme_editors VALUES (?,?,?) ON CONFLICT(scheme_id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at', (scheme_id, payload, instant))
-            db.execute('UPDATE model_schemes SET updated_at=? WHERE id=?', (instant, scheme_id))
+            self._bump_draft(db, scheme_id)
         return self.get(scheme_id)
 
     def save(self, body):
         if isinstance(body, dict) and 'definition' not in body and not body.get('id'):
             return self.create(body)
-        if not isinstance(body, dict) or set(body) - {'id', 'revision', 'name', 'definition', 'calculationDraft'}:
+        if not isinstance(body, dict) or set(body) - {'id', 'revision', 'name', 'definition', 'calculationDraft', 'editor', 'draftRevision'}:
             raise ValueError('方案保存字段无效')
         name = body.get('name', '').strip()
         if not name or len(name) > 80:
@@ -187,16 +245,26 @@ class ModelSchemes:
             old = db.execute('SELECT revision FROM model_schemes WHERE id=?', (scheme_id,)).fetchone()
             if expected != (old['revision'] if old else 0):
                 raise RuntimeError('方案已在另一页面修改，请重新读取后保存')
-            previous = db.execute('SELECT definition_sha256 FROM model_scheme_revisions WHERE scheme_id=? AND revision=?', (scheme_id, expected)).fetchone()
-            revision = expected if previous and previous['definition_sha256'] == digest else expected + 1
+            self._check_draft(db, scheme_id, body)
+            previous = db.execute('SELECT definition_sha256,calculation_draft FROM model_scheme_revisions WHERE scheme_id=? AND revision=?', (scheme_id, expected)).fetchone()
+            calculation_digest = manifest_digest(calculation_identity(draft))
+            unchanged = previous and previous['definition_sha256'] == digest and manifest_digest(calculation_identity(json.loads(previous['calculation_draft']))) == calculation_digest
+            prior_snapshot=db.execute('SELECT editor FROM model_scheme_snapshots WHERE scheme_id=? AND revision=?',(scheme_id,expected)).fetchone()
+            prior_editor=json.loads(prior_snapshot['editor']) if prior_snapshot else {}
+            editor=self._editor_payload(body.get('editor') if 'editor' in body else prior_editor)
+            if prior_snapshot and manifest_digest(editor_identity(json.loads(editor)))!=manifest_digest(editor_identity(prior_editor)):
+                unchanged=False
+            revision = expected if unchanged else expected + 1
             db.execute('INSERT INTO model_schemes VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,revision=excluded.revision,updated_at=excluded.updated_at', (scheme_id, name, revision, instant))
             if revision != expected:
                 db.execute('INSERT INTO model_scheme_revisions VALUES (?,?,?,?,?,?)', (scheme_id, revision, payload, digest, draft_payload, instant))
-            else:
-                db.execute('UPDATE model_scheme_revisions SET calculation_draft=? WHERE scheme_id=? AND revision=?', (draft_payload, scheme_id, revision))
+            if not unchanged or not db.execute('SELECT 1 FROM model_scheme_snapshots WHERE scheme_id=? AND revision=?', (scheme_id, revision)).fetchone():
+                db.execute('INSERT OR IGNORE INTO model_scheme_snapshots VALUES (?,?,?,?)', (scheme_id, revision, editor, calculation_digest))
+            db.execute('INSERT INTO model_scheme_editors VALUES (?,?,?) ON CONFLICT(scheme_id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at', (scheme_id, '{}', instant))
+            self._bump_draft(db, scheme_id)
         return self.get(scheme_id)
 
-    def freeze(self, request):
+    def freeze(self, request, *, strict=False):
         request = copy.deepcopy(request)
         selection = request.get('scheme')
         if selection:
@@ -209,6 +277,8 @@ class ModelSchemes:
                 raise ValueError('方案与计算流域或尺度不一致')
             if input_definition(request, request.get('inputs', {}).get('rainfallMethod', record['definition']['inputs'].get('rainfallMethod', 'reuse'))) != record['definition']:
                 raise ValueError('提交输入与方案修订不一致，请保存当前方案后重新计算')
+            if strict and record['calculationSHA256'] and manifest_digest(calculation_identity(request)) != record['calculationSHA256']:
+                raise ValueError('计算参数与方案版本不一致，请保存新版本后重新计算')
             request['lineage'] = {**request.get('lineage', {}), 'schemeId': record['id'],
                                   'schemeRevision': record['revision'], 'schemeName': record['name'],
                                   'schemeDefinitionSHA256': record['definitionSHA256']}

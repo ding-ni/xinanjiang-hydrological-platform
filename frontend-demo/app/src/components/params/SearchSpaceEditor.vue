@@ -2,12 +2,12 @@
   <details class="search-editor" open>
     <summary>{{ title || '率定参数' }} <span>{{ activeCount }} 项参与率定</span></summary>
     <fieldset :disabled="disabled">
-      <div class="scope-actions"><button type="button" class="btn" @click="emit('update:modelValue', null)">预设范围</button><template v-if="!routing"><button type="button" class="btn" @click="choose('storage')">仅蓄水产流</button><button type="button" class="btn" @click="choose('sources')">仅水源划分</button></template><button type="button" class="btn" @click="emit('update:modelValue', {})">全部固定</button></div>
+      <div class="scope-actions"><button type="button" class="btn" @click="choose()">全选</button><template v-if="!routing"><button type="button" class="btn" @click="choose('storage')">仅蓄水产流</button><button type="button" class="btn" @click="choose('sources')">仅水源划分</button></template><button type="button" class="btn" @click="emit('update:modelValue', {})">全部固定</button></div>
       <div class="search-rows">
         <div class="search-head"><span>参与率定</span><span>起始值</span><span>下限</span><span>上限</span><span>单位</span></div>
         <div v-for="row in definitions" :key="row.key" class="search-row" :class="{ fixed: !enabled(row.key) }">
           <label class="select-parameter"><input type="checkbox" :checked="enabled(row.key)" :disabled="Boolean(row.unavailable)" :aria-label="`${row.key} 参与率定`" @change="toggle(row, $event.target.checked)" /><span><b>{{ row.symbol }}</b> {{ row.label }}</span></label>
-          <div class="search-bounds"><span :title="String(current[row.key])">{{ number(current[row.key]) }}</span><template v-if="enabled(row.key)"><input type="number" class="input" step="any" :min="row.limitMin" :max="row.limitMax" :value="value(row).minimum" :aria-label="`${row.key} 搜索下限`" @change="bound(row, 'minimum', $event.target.value)" /><input type="number" class="input" step="any" :min="row.limitMin" :max="row.limitMax" :value="value(row).maximum" :aria-label="`${row.key} 搜索上限`" @change="bound(row, 'maximum', $event.target.value)" /></template><b v-else class="fixed-label">固定 {{ number(current[row.key]) }}</b><small>{{ row.unit === '1' ? '—' : row.unit }}</small></div>
+          <div class="search-bounds"><input type="number" class="input" step="any" :value="current[row.key]" :aria-label="`${row.key} 初值`" @change="emit('initial-value', row.key, $event.target.value)" /><input type="number" class="input" step="any" :min="row.limitMin" :max="row.limitMax" :value="value(row).minimum" :aria-label="`${row.key} 搜索下限`" @change="bound(row, 'minimum', $event.target.value)" /><input type="number" class="input" step="any" :min="row.limitMin" :max="row.limitMax" :value="value(row).maximum" :aria-label="`${row.key} 搜索上限`" @change="bound(row, 'maximum', $event.target.value)" /><small>{{ row.unit === '1' ? '—' : row.unit }}</small></div>
         </div>
       </div>
       <p v-for="row in definitions.filter(item => item.unavailable)" :key="row.key" class="space-note">{{ row.unavailable }}</p>
@@ -19,24 +19,28 @@
 <script setup>
 import { computed } from 'vue'
 import { searchCoordinates, selectedSearchParameters } from '@/services/calibrationSpaceService'
-const props = defineProps({ modelValue: { type: Object, default: null }, definitions: { type: Array, required: true }, params: { type: Object, required: true }, routing: Boolean, joint: Boolean, title: String, disabled: Boolean, error: String })
-const emit = defineEmits(['update:modelValue'])
+const props = defineProps({ modelValue: { type: Object, default: null }, definitions: { type: Array, required: true }, params: { type: Object, required: true }, ranges: { type: Object, default: () => ({}) }, routing: Boolean, joint: Boolean, title: String, disabled: Boolean, error: String })
+const emit = defineEmits(['update:modelValue', 'update:ranges', 'initial-value'])
 const current = computed(() => props.routing ? props.params : searchCoordinates(props.params))
 const enabled = key => !props.definitions.find(row => row.key === key)?.unavailable && (props.modelValue === null || Object.hasOwn(props.modelValue, key))
-const value = row => props.modelValue?.[row.key] || row
+const value = row => props.ranges[row.key] || props.modelValue?.[row.key] || row
 const activeCount = computed(() => props.definitions.filter(row => enabled(row.key)).length)
 const number = value => Number.isFinite(value) ? Number(value.toPrecision(6)) : '—'
-function choose(group) { emit('update:modelValue', selectedSearchParameters(props.definitions, props.definitions.filter(row => row.group === group).map(row => row.key))) }
+function choose(group) { emit('update:modelValue', Object.fromEntries(props.definitions.filter(row => !row.unavailable && (!group || row.group === group)).map(row => [row.key, { minimum: value(row).minimum, maximum: value(row).maximum }]))) }
 function toggle(row, active) {
   const next = props.modelValue === null ? selectedSearchParameters(props.definitions) : JSON.parse(JSON.stringify(props.modelValue))
-  if (active) next[row.key] = { minimum: row.minimum, maximum: row.maximum }
-  else delete next[row.key]
+  if (active) next[row.key] = { minimum: value(row).minimum, maximum: value(row).maximum }
+  else {
+    emit('update:ranges', { ...props.ranges, [row.key]: { minimum: value(row).minimum, maximum: value(row).maximum } })
+    delete next[row.key]
+  }
   emit('update:modelValue', next)
 }
 function bound(row, key, text) {
   const next = props.modelValue === null ? selectedSearchParameters(props.definitions) : JSON.parse(JSON.stringify(props.modelValue))
-  next[row.key][key] = text.trim() && Number.isFinite(Number(text)) ? Number(text) : null
-  emit('update:modelValue', next)
+  const bounds = { minimum: value(row).minimum, maximum: value(row).maximum, [key]: text.trim() && Number.isFinite(Number(text)) ? Number(text) : null }
+  emit('update:ranges', { ...props.ranges, [row.key]: bounds })
+  if (enabled(row.key)) { next[row.key] = bounds; emit('update:modelValue', next) }
 }
 </script>
 

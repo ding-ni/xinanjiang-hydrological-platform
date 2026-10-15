@@ -6,6 +6,7 @@
       <p v-if="operationError" class="warn-text" role="alert">{{ operationError }}</p>
       <div class="table-wrap"><table class="table daily-table"><thead><tr><th>计算</th><th>参数</th><th>状态</th><th>时间</th><th></th></tr></thead><tbody><tr v-for="row in visibleOperations" :key="operationId(row)" :class="{active:operationId(row)===operationId(activeDailyOperation)}"><td>{{ operationName(row) }}</td><td>{{ row.runConfig?.parameterSnapshot?.name || row.parameterSchemeName || savedParameters.find(item=>item.id===(row.runConfig?.parameterSchemeId||row.request?.parameterSchemeId||row.parameterSchemeId))?.name || '—' }}</td><td>{{ operationStatuses[row.status] || row.status }}</td><td>{{ formatCreated(row.createdAt) }}</td><td><button class="btn mini" type="button" @click="inspectOperation(row)">查看</button><button v-if="completedOperation(row)" class="btn mini" type="button" @click="restoreOperation(row)">打开条件</button></td></tr><tr v-if="!visibleOperations.length"><td colspan="5" class="empty-cell">{{ operationLoading ? '正在读取计算…' : '暂无计算成果' }}</td></tr></tbody></table></div>
       <DailyOperationProgress v-if="activeDailyOperation" :operation="activeDailyOperation" @cancel="cancelDailyOperation" />
+      <div v-if="activeDailyOperation && completedOperation(activeDailyOperation)" class="btn-row"><span>方案版本 {{ activeDailyOperation.lineage?.schemeRevision || activeDailyOperation.runConfig?.request?.scheme?.revision || '—' }}</span><button class="btn" :disabled="activeDailyOperation.replayability?.available === false" @click="rerunDailyResult">按原条件复算</button><span v-if="activeDailyOperation.replayability?.available === false" class="warn-text">{{ activeDailyOperation.replayability.reasons.join('；') }}</span></div>
       <p v-if="dailyResultError" class="warn-text" role="alert">{{ dailyResultError }}</p>
       <div v-if="dailyResult?.bestParameters" class="btn-row named-parameter"><button class="btn" type="button" @click="saveNamedParameter(activeDailyOperation)">保存参数</button><button class="btn" type="button" @click="openBestSimulation(activeDailyOperation,dailyResult)">采用此参数模拟</button></div>
       <DailyResultPanel v-if="dailyResult" :operation="activeDailyOperation" :result="dailyResult" :task-id="dailyResult.primaryTaskId || dailyResult.sourceTaskId" :comparison-options="dailyComparisonOptions" :title="operationName(activeDailyOperation)" />
@@ -56,6 +57,7 @@
         </tbody>
       </table></div>
       <details v-if="selectedTask" class="task-inspector"><summary>冻结计算条件</summary><div class="task-inspector-fields">
+        <span v-if="selectedTask.replayability">{{ selectedTask.replayability.available ? '可按原条件复算（计算前再次校验文件摘要）' : '无法复算：'+selectedTask.replayability.reasons.join('；') }}</span>
         <b>{{ selectedTask.runTypeLabel }} · {{ selectedTask.taskId }}</b>
         <span>方案：{{ selectedTaskLineage.schemeName || '历史计算' }} · 修订 {{ selectedTaskLineage.schemeRevision || '—' }}</span>
         <span>来源任务：{{ selectedTaskLineage.sourceTaskId || selectedTask.sourceTaskId || '首次作业' }}</span>
@@ -70,7 +72,7 @@
       <section v-if="selectedTask?.resultSource === 'model-backend'" class="backend-result-inspector">
         <p v-if="taskResultError" class="warn-text">{{ taskResultError }}</p>
         <template v-if="taskResult">
-          <div class="btn-row"><button v-if="taskResult.bestParameters || taskResult.parameters || taskResult.endStateVersionId" class="btn" @click="openStates">状态分布</button><button v-if="taskResult.stateCalculationTaskId || taskResult.endStateVersionId" class="btn" @click="router.push({ path: '/diagnostics', query: { source: taskResult.stateCalculationTaskId || selectedTask.taskId } })">河道流量</button><button v-if="taskResult.bestParameters || taskResult.parameters" class="btn" @click="saveNamedParameter()">保存参数</button><button v-if="selectedTask.runConfig?.sourcePlan || selectedTask.runConfig?.originalCalibrationPlan" class="btn" @click="rerunOriginal">原条件重算</button></div>
+          <div class="btn-row"><button v-if="taskResult.bestParameters || taskResult.parameters || taskResult.endStateVersionId" class="btn" @click="openStates">状态分布</button><button v-if="taskResult.stateCalculationTaskId || taskResult.endStateVersionId" class="btn" @click="router.push({ path: '/diagnostics', query: { source: taskResult.stateCalculationTaskId || selectedTask.taskId } })">河道流量</button><button v-if="taskResult.bestParameters || taskResult.parameters" class="btn" @click="saveNamedParameter()">保存参数</button><button v-if="selectedTask.runConfig?.period || selectedTask.runConfig?.originalCalibrationPlan" class="btn" @click="rerunOriginal">原条件重算</button></div>
           <p v-if="taskResult.stateCalculationError" class="warn-text">最佳参数状态保存失败：{{ taskResult.stateCalculationError }}。可按最佳参数独立模拟后查看状态。</p>
           <ResultWorkbench :key="selectedTask.taskId" :task="selectedTask" :result="taskResult" :tasks="contextTasks" :metadata="resultMetadata" :definitions="app.backendCase?.parameterDefinitions || []" @saved="saveResultMetadata" @open="openTask" @simulate="openBestSimulation" />
         </template>
@@ -458,12 +460,21 @@ async function openStates() {
 async function rerunOriginal() {
   try {
     const config = selectedTask.value.runConfig
-    const source = config.sourcePlan || { parameterVersionId: config.lineage?.parameterVersionId || taskResult.value.parameterVersionId }
-    const payload = await modelApi(`parameter-versions/${encodeURIComponent(source.parameterVersionId)}/original-plan?operation=search`)
-    const operation = await dailyClient.submit({ operation: 'calibration', request: payload.request, rainfallMethod: 'reuse', name: '原条件重算' })
+    let operation
+    if (!config.period && (config.sourcePlan || config.originalCalibrationPlan)) {
+      const source = config.sourcePlan || { parameterVersionId: config.lineage?.parameterVersionId || taskResult.value.parameterVersionId }
+      const payload = await modelApi(`parameter-versions/${encodeURIComponent(source.parameterVersionId)}/original-plan?operation=search`)
+      operation = await dailyClient.submit({ operation: 'calibration', request: payload.request, rainfallMethod: 'reuse', name: '原条件重算' })
+    } else operation = await dailyClient.submit({ operation: 'rerun', sourceTaskId: selectedTask.value.taskId, name: '按原条件复算' })
     await refreshOperations()
     await inspectDailyOperation(operation.taskId)
   } catch (failure) { ElMessage.error(failure.message) }
+}
+async function rerunDailyResult(){
+  try{
+    const operation=await dailyClient.submit({operation:'rerun',sourceTaskId:operationId(activeDailyOperation.value),name:operationName(activeDailyOperation.value)+' · 原条件复算'})
+    await refreshOperations();await inspectDailyOperation(operation.taskId)
+  }catch(failure){operationError.value=failure.message}
 }
 
 async function saveNamedParameter(task=selectedTask.value){

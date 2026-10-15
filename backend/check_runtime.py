@@ -16,6 +16,9 @@ def main():
         if not dataset["precipitation"].size:
             raise ValueError("Empty precipitation input")
     import worker
+    import numba
+    import llvmlite
+    print(f"Numerical acceleration available: Numba {numba.__version__}, llvmlite {llvmlite.__version__}; first use compiles the cached kernel.")
     print(f"Runtime OK: Python {sys.version.split()[0]}, HDF5 {h5py.version.hdf5_version}; real model and inputs available.")
     return 0
 

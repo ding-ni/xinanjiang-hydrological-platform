@@ -7,8 +7,8 @@ from common import MODEL, read_json
 SPACE_FILE = MODEL / 'config/parameter_space_runoff_multievent_stage2_daily_source.json'
 STORAGE = {'WM', 'WUM', 'WLM', 'B', 'IM'}
 REFERENCE_LIMITS = {
-    'WM': (50, 300), 'WUM': (5, 80), 'WLM': (20, 200), 'B': (.01, .8),
-    'SM': (5, 100), 'EX': (.5, 2.5), 'IM': (0, .1),
+    'WM': (10, 1000), 'WUM': (1, 150), 'WLM': (1, 600), 'B': (0, 3),
+    'SM': (.1, 200), 'EX': (0, 5), 'IM': (0, .999),
 }
 
 

@@ -17,6 +17,63 @@ from test_unified_backend import simulation, calibration
 
 
 class SchemeEditorTests(unittest.TestCase):
+    def test_event_result_rerun_keeps_every_flood_instead_of_only_the_primary(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as temporary, patch('hydrological_operations.ThreadPoolExecutor'):
+            manager=SimpleNamespace(runtime_root=Path(temporary),get=Mock(return_value={'runConfig':{'period':{}}}))
+            operations=HydrologicalOperations(manager,None)
+            rows=[{'eventId':key,'taskId':'JOB-'+key,'start':'2020-01-01T00:00','end':'2020-01-01T01:00'} for key in ('A','B')]
+            graphs={key:{'forecast':[{'time':'2020-01-01T00:00','value':value},{'time':'2020-01-01T01:00','value':value+1}]} for key,value in (('A',1),('B',10))}
+            outputs=[{'taskId':'JOB-new-'+key,'endStateVersionId':'STATE-new-'+key,'hydrograph':graphs[key]} for key in ('A','B')]
+            operations.child=Mock(side_effect=outputs)
+            request={'sourceEventResult':{'primaryTaskId':'JOB-A','hydrographs':graphs,'eventStates':rows},'frozenEventRequests':[{'taskId':'JOB-'+key,'request':{}} for key in ('A','B')]}
+            result=operations.rerun_event_result('OP-repeat',request)
+            self.assertEqual(set(result['hydrographs']),{'A','B'})
+            self.assertEqual([row['taskId'] for row in result['eventStates']],['JOB-new-A','JOB-new-B'])
+            self.assertEqual(operations.child.call_count,2)
+
+    def test_missing_grid_process_prepares_only_from_its_bound_station_source(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from hydrological_operations import PreparationIssues
+        for source_id in ('SRC-bound',None):
+            with self.subTest(source=source_id), tempfile.TemporaryDirectory() as temporary, patch('hydrological_operations.ThreadPoolExecutor'):
+                manager=SimpleNamespace(runtime_root=Path(temporary),products=SimpleNamespace(resolve=Mock(return_value={'manifest':{'sourceId':source_id}})))
+                inputs=SimpleNamespace(get=Mock(return_value={'registeredBundleVersionId':'INPUT-ready'}))
+                operations=HydrologicalOperations(manager,inputs)
+                operations.update=Mock()
+                issues=[{'eventId':'A','missingIntervals':[{'start':'2020-01-01','end':'2020-01-02'}]}]
+                operations.wait=Mock(side_effect=[{'issues':issues},{'issues':[]}])
+                request=simulation();request['inputs']['bundleVersionId']='INPUT-original'
+                with patch('scheme_inputs.reuse_preparation',return_value={'taskId':'DATA-check'}) as prepare:
+                    if source_id:
+                        output=operations.prepare('OP-check',request,'reuse')
+                        self.assertEqual(prepare.call_count,2)
+                        self.assertEqual(prepare.call_args.args[1]['stationSourceId'],source_id)
+                        self.assertEqual(output['inputs']['stationSourceId'],source_id)
+                        self.assertEqual(output['lineage']['automaticInputPreparation']['rainfallMethod'],'stationIdw')
+                    else:
+                        with self.assertRaises(PreparationIssues): operations.prepare('OP-check',request,'reuse')
+                        self.assertEqual(prepare.call_count,1)
+
+    def test_rerun_uses_frozen_request_without_current_defaults_or_draft(self):
+        with tempfile.TemporaryDirectory() as temporary, patch('hydrological_operations.ThreadPoolExecutor'):
+            manager = TaskManager(Path(temporary) / 'tasks')
+            manager.operations = HydrologicalOperations(manager, None)
+            try:
+                request = simulation()
+                request.update(inputs={'bundleVersionId':'frozen-A'}, routing={'versionId':'routing-A'}, science={'versionId':'science-A'})
+                write_json(manager.root / 'JOB-saved' / 'status.json', {'taskId':'JOB-saved','status':'completed','runConfig':request})
+                write_json(manager.root / 'JOB-saved' / 'result.json', {'taskId':'JOB-saved'})
+                with patch.object(manager, 'available_artifact', return_value=True), patch.object(manager.schemes, 'defaults', side_effect=AssertionError('must not load defaults')):
+                    row = manager.operations.submit({'operation':'rerun','sourceTaskId':'JOB-saved','context':request['context']})
+                self.assertEqual(row['runConfig']['frozenRequest']['inputs']['bundleVersionId'], 'frozen-A')
+                self.assertEqual(row['runConfig']['frozenRequest']['routing'], request['routing'])
+                self.assertNotIn('preparationDefaults', row['runConfig'])
+                self.assertNotIn('scheme', row['runConfig']['frozenRequest'])
+            finally:
+                manager.close()
     def test_state_replay_rejects_changed_flow_and_accepts_roundoff(self):
         original = {'forecast': [{'time': '2024-07-01T00:00', 'value': 10}]}
         HydrologicalOperations.assert_same_flow(original, {'forecast': [{'time': '2024-07-01T00:00:00', 'value': 10 + 1e-10}]})
@@ -103,6 +160,36 @@ class SchemeEditorTests(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get('XAJ_OPERATION_NUMERIC_TEST') == '1', 'explicit real model acceptance')
 class RealOperationTests(unittest.TestCase):
+    def test_local_git_kernel_snapshot_replays_with_its_original_identity(self):
+        from implementation_versions import register_git_implementation
+        with tempfile.TemporaryDirectory() as temporary:
+            manager=TaskManager(Path(temporary)/'tasks')
+            manager.operations=HydrologicalOperations(manager,None)
+            def finish(task):
+                deadline=time.monotonic()+240
+                while time.monotonic()<deadline:
+                    row=manager.get(task['taskId'])
+                    if row['status'] not in {'queued','running'}:
+                        self.assertEqual(row['status'],'completed',row.get('errorMessage'))
+                        return manager.result(task['taskId'])
+                    time.sleep(.25)
+                self.fail('frozen executable timed out')
+            try:
+                snapshot=register_git_implementation(manager.runtime_root,'c570027')
+                current=finish(manager.submit(simulation()))
+                request=simulation();request['requestId']='OLD-KERNEL'
+                request['lineage']['modelImplementationSHA256']=snapshot['modelImplementationSHA256']
+                legacy=finish(manager.submit(request))
+                self.assertEqual(legacy['lineage']['modelImplementationSHA256'],snapshot['modelImplementationSHA256'])
+                self.assertEqual(current['hydrograph'],legacy['hydrograph'])
+                state=manager.states.checkpoint(legacy['endStateVersionId'])
+                continuation=simulation('2017-06-20T12:00','2017-06-20T13:00')
+                continuation['requestId']='OLD-KERNEL-CONTINUE'
+                continuation['period'].update(initialStateVersionId=state['stateVersionId'],warmupDays=0)
+                continued=finish(manager.submit(continuation))
+                self.assertEqual(continued['lineage']['modelImplementationSHA256'],snapshot['modelImplementationSHA256'])
+            finally: manager.close()
+
     def test_named_scheme_calibration_prepares_and_keeps_final_event_states(self):
         with tempfile.TemporaryDirectory() as temporary:
             manager = TaskManager(Path(temporary) / 'tasks')
@@ -177,8 +264,19 @@ class RealOperationTests(unittest.TestCase):
             try:
                 task = manager.submit(simulation())
                 original = finish(task, manager)
+                replay_status = manager.replayability(task['taskId'])
+                self.assertTrue(replay_status['available'], replay_status)
+                replay = finish(manager.operations.submit({'operation':'rerun', 'sourceTaskId':task['taskId'], 'context':simulation()['context']}), manager.operations)
+                self.assertEqual(replay['hydrograph'], original['hydrograph'])
+                first_state = manager.states.checkpoint(original['endStateVersionId'])
+                replay_state = manager.states.checkpoint(replay['endStateVersionId'])
+                for field in ('time','land','routing','parameters','routingTopology'):
+                    self.assertEqual(first_state[field], replay_state[field], field)
                 parameter = manager.parameter_schemes.save({'name': '已保存参数', 'sourceTaskId': task['taskId']})
                 self.assertEqual(len(manager.parameter_schemes.list()['schemes']), 1)
+                before_name = dict(parameter)
+                renamed = manager.parameter_schemes.rename(parameter['id'], {'name':'改名后的参数'})
+                self.assertEqual({k:v for k,v in renamed.items() if k not in {'name','updatedAt'}}, {k:v for k,v in before_name.items() if k not in {'name','updatedAt'}})
                 body = {'parameterSchemeId': parameter['id'], 'context': simulation()['context']}
                 modeled = finish(manager.operations.submit({**body, 'operation': 'continuousSimulation',
                     'period': {'startTime': '2017-06-19T11:00', 'endTime': '2017-06-20T11:00'}}), manager.operations)

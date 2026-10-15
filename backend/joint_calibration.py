@@ -70,7 +70,7 @@ def validate(calibration, runoff=None, routing=None):
         allowed = {row['key']: row for row in defs[scope]}
         if selected is None:
             continue
-        if not isinstance(selected, dict) or not selected or set(selected) - set(allowed):
+        if not isinstance(selected, dict) or set(selected) - set(allowed):
             raise ValueError('联合率定须选择已登记的' + scope + '参数')
         if profile == 'fixed-kc-c-14' and scope == 'runoff' and set(selected).intersection({'KC', 'C'}):
             raise ValueError('固定 KC/C 方案不能同时搜索 KC 或 C')
@@ -85,6 +85,8 @@ def validate(calibration, runoff=None, routing=None):
                 raise ValueError(key + ' 搜索范围超出登记边界')
             if current.get(key) is not None and not lo <= current[key] <= hi:
                 raise ValueError(key + ' 当前参数须在搜索范围内')
+    if calibration.get('searchParameters') == {} and calibration.get('routingSearchParameters') == {}:
+        raise ValueError('请至少选择一个参与搜索的参数')
     if routing is not None:
         if calibration.get('optimizer', {}).get('initializationPolicy') != 'SOURCE_INITIAL_CANDIDATES':
             validate_routing(routing)

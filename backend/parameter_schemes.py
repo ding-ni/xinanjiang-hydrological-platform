@@ -23,6 +23,17 @@ class ParameterSchemes:
         return {'schemes': sorted([read_json(path) for path in self.root.glob('*.json')],
                                   key=lambda row: row['createdAt'], reverse=True)}
 
+    def rename(self, identifier, body):
+        with self.lock:
+            record = self.get(identifier)
+            name = str(body.get('name') or '').strip()
+            if set(body) != {'name'} or not name or len(name) > 80:
+                raise ValueError('参数名称须为1至80个字符')
+            # The values and their provenance remain byte-for-byte equivalent.
+            record.update(name=name, updatedAt=now())
+            write_json(self.root / (identifier + '.json'), record)
+            return record
+
     def initialization_rule(self, request, source, descriptor):
         initial = request.get('initialization') or source.get('initialization')
         if initial and initial.get('strategy'):

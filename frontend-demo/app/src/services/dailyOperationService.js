@@ -5,7 +5,7 @@ export const operationLabels = {
   eventSimulation: '洪水模拟', continuousSimulation: '连续模拟', continuation: '续算',
   hindcast: '单次回算', rollingHindcast: '滚动回算',
   eventCalibration: '洪水率定', continuousCalibration: '连续率定'
-  , calibration: '参数率定', manualTrial: '人工试调'
+  , calibration: '参数率定', manualTrial: '人工试调', rerun: '按原条件复算', stateReplay: '计算状态'
 }
 export const operationStatuses = {
   queued: '等待计算', preparing: '准备资料', running: '正在计算', cancelling: '正在停止',

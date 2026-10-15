@@ -1,15 +1,18 @@
 <template>
   <section class="state-view">
-    <header class="page-heading"><div><h2>模拟状态</h2><span>{{ sourceLabel }}</span></div><RouterLink to="/archive" class="btn">计算成果</RouterLink></header>
-    <section v-if="!sourceId && !route.query.operation" class="panel empty"><p>从计算成果查看模拟状态</p><RouterLink to="/archive" class="btn primary">选择计算成果</RouterLink></section>
+    <header class="page-heading"><div><h2>模拟状态</h2><span>{{ sourceLabel }} / {{ payload?.frozenRequest?.scheme?.revision ? '版本 ' + payload.frozenRequest.scheme.revision + ' / ' : '' }}{{ payload?.primaryTaskId || sourceId }} / {{ entry?.label }}</span></div><RouterLink to="/archive" class="btn">计算成果</RouterLink></header>
+    <section v-if="!sourceId && !route.query.operation" class="panel empty"><p>从计算成果查看模拟状态</p><RouterLink to="/archive" class="btn primary">选择计算成果</RouterLink> <RouterLink to="/state/advanced" class="btn">打开状态库</RouterLink></section>
     <template v-else>
       <section class="panel panel-pad time-toolbar">
+        <RouterLink to="/state/advanced" class="btn">状态库</RouterLink>
+        <button v-if="checkpoint?.stateVersionId && atFinalTime" class="btn" @click="saveFinalState">命名保存末状态</button>
         <label v-if="entries.length>1">洪水 / 起报时刻<select v-model="entryId" class="input" aria-label="状态所属过程"><option v-for="row in entries" :key="row.id" :value="row.id">{{ row.label }}</option></select></label>
         <label v-if="catalog">状态时刻<select v-model="time" class="input" aria-label="状态回放时刻"><option v-for="value in catalog.times" :key="value" :value="value">{{ hourText(value) }}</option></select></label>
         <span v-else>{{ loading?'读取状态…':checkpoint?.time ? hourText(checkpoint.time) : '' }}</span>
-        <button v-if="checkpoint?.stateVersionId && replayTaskId && (!catalog || time===checkpoint.time)" type="button" class="btn" @click="continueFromResult">继续模拟</button>
+        <button v-if="checkpoint?.stateVersionId && replayTaskId && atFinalTime" type="button" class="btn" @click="continueFromResult">继续模拟</button>
         <button v-if="replayTaskId" type="button" class="btn" @click="router.push({path:'/diagnostics',query:{source:replayTaskId,label:sourceLabel}})">河道流量</button>
       </section>
+      <section v-if="process?.forecast?.length || process?.times?.length" class="panel panel-pad state-process"><CalibrationProcessChart :hydrograph="process" :forcing="process.forcing || {precipitation:[]}" :visible-components="{}" @select-time="selectStateTime" /><label v-if="catalog?.times?.length" class="state-slider">{{ hourText(time) }}<input type="range" min="0" :max="catalog.times.length-1" :value="catalog.times.indexOf(time)" aria-label="拖动查看逐时状态" @input="time = catalog.times[Number($event.target.value)]" /></label></section>
       <p v-if="error" class="failure" role="alert">{{ error }}</p>
       <div v-if="cells.length" class="state-layout">
         <aside class="panel panel-pad variables">
@@ -43,11 +46,26 @@ import { dailyClient, hourText, resultEntries } from '@/services/dailyOperationS
 import { loadGridHistoryCatalog, loadGridStateFrame, loadGridStateSeries } from '@/services/taskDiagnosticService'
 import BasinMap from '@/components/map/BasinMap.vue'
 import BaseChart from '@/components/charts/BaseChart.vue'
+import CalibrationProcessChart from '@/components/charts/CalibrationProcessChart.vue'
+import { ElMessageBox, ElMessage } from 'element-plus'
 const route=useRoute(),router=useRouter(),app=useAppStore()
 const sourceId=computed(()=>String(route.query.source||route.query.task||''))
 const sourceLabel=ref(''),payload=ref(null),entryId=ref(''),catalog=ref(null),checkpoint=ref(null),frame=ref(null),series=ref(null),time=ref(''),loading=ref(false),error=ref(''),seriesError=ref(''),selectedId=ref(null),variable=ref('soil')
 const entries=computed(()=>resultEntries(payload.value||{},sourceId.value))
 const entry=computed(()=>entries.value.find(row=>row.id===entryId.value))
+const process=computed(()=>entry.value?.hydrograph || payload.value?.hydrographs?.[entry.value?.eventId || entryId.value] || payload.value?.hydrograph)
+const atFinalTime=computed(()=>!catalog.value || String(time.value).replace(' ','T').slice(0,16)===String(checkpoint.value?.time).replace(' ','T').slice(0,16))
+function selectStateTime(value){const selected=catalog.value?.times?.find(item=>item.slice(0,16)===String(value).slice(0,16));if(selected)time.value=selected}
+async function saveFinalState(){
+  try{
+    const {value}=await ElMessageBox.prompt('为该成果的完整末状态命名','保存到状态库',{inputValue:sourceLabel.value+' · '+hourText(checkpoint.value.time),inputValidator:value=>Boolean(value?.trim())&&value.trim().length<=80})
+    const id=checkpoint.value.stateVersionId
+    const states=await modelApi('state-catalog')
+    const row=states.metadata?.[id]
+    await modelApi('states/'+encodeURIComponent(id)+'/metadata',{method:'POST',body:{name:value.trim(),favorite:true,revision:row?.revision||0}})
+    ElMessage.success('完整末状态已保存到状态库')
+  }catch(failure){if(failure instanceof Error)error.value=failure.message}
+}
 const replayTaskId=computed(()=>entry.value?.taskId||payload.value?.stateCalculationTaskId||sourceId.value)
 const replaying=ref(false),replayProgress=ref('')
 const layers={rain:false,hydro:false,water:false,section:true,river:true,subbasin:true,rainField:false,dem:false,grid:true}
@@ -133,7 +151,8 @@ watch([replayTaskId,entryId],async([id])=>{
     if(catalogResult.status==='fulfilled'){
       if(catalogResult.value.context?.contextKey!==app.contextKey)throw new Error('请在该成果所属流域查看状态')
       const bounds=entry.value
-      catalog.value={...catalogResult.value,times:catalogResult.value.times.filter(value=>(!bounds?.start||value>=String(bounds.start).replace(' ','T'))&&(!bounds?.end||value.slice(0,16)<=String(bounds.end).replace(' ','T').slice(0,16)))}
+      const first=bounds?.start || process.value?.forecast?.[0]?.time,last=bounds?.end || process.value?.forecast?.at(-1)?.time
+      catalog.value={...catalogResult.value,times:catalogResult.value.times.filter(value=>(!first||value.slice(0,16)>=String(first).replace(' ','T').slice(0,16))&&(!last||value.slice(0,16)<=String(last).replace(' ','T').slice(0,16)))}
       time.value=catalog.value.times.at(-1)||''
     }else if(catalogResult.reason?.message!=='该成果尚未保存逐时状态')throw catalogResult.reason
   }catch(failure){if(token===replayRevision)error.value=failure.message}
@@ -154,6 +173,7 @@ watch([selectedId,catalog],async([id,source])=>{
 function continueFromResult(){router.push({path:'/simulation',query:{source:replayTaskId.value,continue:'1',label:sourceLabel.value}})}
 </script>
 <style scoped>
+.state-process{height:410px;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:12px}.state-slider{display:flex;align-items:center;gap:12px}.state-slider input{flex:1;accent-color:#287763}
 .routing-state summary{font-size:13px;color:#547460;cursor:pointer}.routing-tables{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:20px}.routing-tables h3{font-size:13px;color:#375d49}.routing-tables .table-wrap{max-height:300px;overflow:auto}.routing-tables td{font-size:12px}@media(max-width:700px){.routing-tables{grid-template-columns:1fr}}
 .state-view{display:grid;gap:18px;min-width:0}.page-heading{display:flex;align-items:center;justify-content:space-between;gap:20px}.page-heading>div{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap}.page-heading h2{font-family:'Noto Serif CJK SC','SimSun',serif;color:#2e5142;font-size:23px;margin:0}.page-heading span{color:#7b8b80;font-size:12px}.time-toolbar{display:flex;align-items:end;gap:16px;flex-wrap:wrap}.time-toolbar label{display:grid;gap:7px;font-size:12px;color:#587362}.time-toolbar .input{min-width:210px}.time-toolbar>span{flex:1;color:#74867a;font-size:12px}.state-layout{display:grid;grid-template-columns:200px minmax(0,1fr) 290px;gap:16px;min-height:540px}.variables h3,.grid-detail h3{margin:0 0 18px;color:#345748;font-size:15px}.variables>button{display:grid;gap:5px;padding:10px 12px;width:100%;text-align:left;border:0;border-left:3px solid transparent;background:transparent;color:#4e6a58;cursor:pointer}.variables>button small{color:#7d9081;font-size:10px}.variables>button.active{background:#eaf2e9;border-color:#47815c}.mean{display:grid;gap:10px;padding:22px 0;border-top:1px solid #e1e8e0;margin-top:15px;color:#6a806f;font-size:11px}.mean b{font-size:24px;font-weight:500;color:#335e48}.mean small{font-size:12px}.variables details{font-size:11px;color:#748579}.conditions{display:grid;gap:8px;padding-top:12px;overflow-wrap:anywhere}.map-panel{overflow:hidden;min-height:540px}.values{display:grid;gap:10px}.values>div{display:flex;justify-content:space-between;font-size:12px;color:#738579}.values b{font-weight:500;color:#2c5542;font-variant-numeric:tabular-nums}.grid-id{color:#326047;font-size:13px}.trend{height:255px;margin-top:22px}.grid-empty{color:#809184;font-size:12px;padding-top:45px}.empty{padding:80px 25px;text-align:center;color:#718579}.empty p{margin-bottom:22px}.failure{color:#a24338;font-size:12px;line-height:1.8}@media(max-width:1150px){.state-layout{grid-template-columns:190px minmax(0,1fr)}.grid-detail{grid-column:1/-1}.values{grid-template-columns:repeat(4,1fr);gap:20px}.values>div{display:grid;gap:8px}.trend{height:250px}}@media(max-width:650px){.state-layout{grid-template-columns:1fr}.variables{display:flex;flex-wrap:wrap;gap:6px}.variables h3{width:100%}.variables>button{width:auto}.variables .mean{padding:10px}.map-panel{min-height:440px}.time-toolbar .input{min-width:0;width:100%}.values{grid-template-columns:repeat(2,1fr)}}
 .state-view :is(label,p,small,summary,td,th,.page-heading span,.time-toolbar>span,.values>div,.grid-id,.conditions,.mean){font-size:14px}

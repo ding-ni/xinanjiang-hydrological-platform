@@ -157,6 +157,31 @@ def required_drive_intervals(request):
     return [{'start': start.isoformat(), 'end': end.isoformat()} for start, end in merged]
 
 
+def query_mdb_window(snapshot, folder, select, start, end, *, query=None):
+    """Bounded read-only queries; only real timeouts are retried in smaller windows."""
+    from mdb_import import query_mdb_copy
+    query = query or query_mdb_copy
+    start, end = (hourly_time(value.isoformat() if hasattr(value, 'isoformat') else value) for value in (start, end))
+    records = []
+    cursor = start
+    while cursor <= end:
+        last = min(end, cursor + timedelta(days=90) - timedelta(hours=1))
+        lo, hi = cursor.strftime('%m/%d/%Y %H:%M:%S'), last.strftime('%m/%d/%Y %H:%M:%S')
+        try:
+            records.extend(query(snapshot, folder, select.format(window=f' BETWEEN #{lo}# AND #{hi}#'), timeout=60))
+        except RuntimeError as failure:
+            if 'MDB_DRIVER_TIMEOUT' not in str(failure):
+                raise
+            hours = int((last - cursor).total_seconds() // 3600)
+            if hours == 0:
+                raise ValueError(f'MDB资料读取超时：{cursor.isoformat()} 至 {last.isoformat()}，请检查所选来源') from failure
+            middle = cursor + timedelta(hours=hours // 2)
+            records.extend(query_mdb_window(snapshot, folder, select, cursor, middle, query=query))
+            records.extend(query_mdb_window(snapshot, folder, select, middle + timedelta(hours=1), last, query=query))
+        cursor = last + timedelta(hours=1)
+    return records
+
+
 def station_block(products, parent, start, end, folder):
     """Return rain and outlet flow from one declared observation source."""
     import numpy as np
@@ -171,14 +196,15 @@ def station_block(products, parent, start, end, folder):
     outlet = network['flowStation']
     source_id = manifest.get('sourceId')
     if source_id and products.source(source_id)['manifest'].get('sourceType') == 'mdb':
-        from mdb_import import query_mdb_copy, normalize_records
+        from mdb_import import normalize_records
         source = products.source(source_id)
         snapshot = products._path(read_json(source['path'])['databaseFile'])
-        lo, hi = start.strftime('%m/%d/%Y %H:%M:%S'), end.strftime('%m/%d/%Y %H:%M:%S')
-        clause = f' BETWEEN #{lo}# AND #{hi}#'
-        station_list = ','.join("'" + key + "'" for key in ids)
-        rain = query_mdb_copy(snapshot, folder, 'SELECT HS_Code,YMDHM,DTRN FROM ReFactorDT WHERE HS_Code IN (' + station_list + ') AND YMDHM' + clause + ' ORDER BY YMDHM,HS_Code', timeout=120)
-        flow = query_mdb_copy(snapshot, folder, "SELECT stcd,ymdhm,q FROM st_river_r WHERE stcd='" + outlet + "' AND ymdhm" + clause + ' ORDER BY ymdhm', timeout=120)
+        # The delivered MDB HS_Code column is numeric. Quoting numeric aliases
+        # makes Access report a type mismatch; nonnumeric station identifiers
+        # still use escaped SQL text literals.
+        station_list = ','.join(str(int(key)) if key.isdigit() else "'" + key.replace("'", "''") + "'" for key in ids)
+        rain = query_mdb_window(snapshot, folder, 'SELECT HS_Code,YMDHM,DTRN FROM ReFactorDT WHERE HS_Code IN (' + station_list + ') AND YMDHM{window} ORDER BY YMDHM,HS_Code', start, end)
+        flow = query_mdb_window(snapshot, folder, "SELECT stcd,ymdhm,q FROM st_river_r WHERE stcd='" + outlet + "' AND ymdhm{window} ORDER BY ymdhm", start, end)
         rain, _ = normalize_records(rain, station_field='HS_Code', time_field='YMDHM', value_field='DTRN', allowed_stations=set(ids))
         flow, _ = normalize_records(flow, station_field='stcd', time_field='ymdhm', value_field='q', allowed_stations={outlet})
         times = pd.date_range(start, end, freq='h')

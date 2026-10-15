@@ -8,17 +8,33 @@ export function selectedSearchParameters(definitions, keys = null) {
     .map(row => [row.key, { minimum: row.minimum, maximum: row.maximum }]))
 }
 
+export const SEARCH_RANGE_TEMPLATES = {
+  project: {},
+  standard: { WM: [120, 200], B: [.1, .4], SM: [10, 50], EX: [1, 1.5], IM: [.01, .04] },
+  extended: { B: [.1, 3], SM: [1, 80], EX: [.7, 2], IM: [.0005, .1] }
+}
+
+export function applySearchRangeTemplate(selection, definitions, template) {
+  if (!Object.hasOwn(SEARCH_RANGE_TEMPLATES, template)) throw new Error('范围模板未登记')
+  const active = selection == null ? selectedSearchParameters(definitions) : selection
+  return Object.fromEntries(Object.keys(active).map(key => {
+    const row = definitions.find(item => item.key === key)
+    const bounds = SEARCH_RANGE_TEMPLATES[template][key]
+    return [key, bounds ? { minimum: bounds[0], maximum: bounds[1] } : { minimum: row.minimum, maximum: row.maximum }]
+  }))
+}
+
 export function routingSearchCoordinates(payload = {}) {
   const xs = [...new Set(Object.values(payload.reach_muskingum || {}).map(row => Number(row.x)))]
   return { ...Object.fromEntries(['RS', 'RI', 'RG'].map(key => [`${key}_k_hours`, payload.default_slope_k_hours?.[key]])),
     muskingum_k_scale: 1, muskingum_x: xs.length === 1 && Number.isFinite(xs[0]) ? xs[0] : null }
 }
 
-export function searchSelectionError(selection, definitions, params, strategy) {
+export function searchSelectionError(selection, definitions, params, strategy, allowEmpty = false) {
   if (selection == null) return ''
   if (typeof selection !== 'object' || Array.isArray(selection)) return '请选择已登记的率定参数'
   const keys = Object.keys(selection)
-  if (!keys.length) return '请至少选择一个率定参数，或使用人工试算'
+  if (!keys.length) return allowEmpty ? '' : '请至少选择一个率定参数，或使用人工试算'
   const current = searchCoordinates(params)
   for (const key of keys) {
     const definition = definitions.find(row => row.key === key)

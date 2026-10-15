@@ -18,7 +18,13 @@ If cn Is Nothing Then
   WScript.Quit 2
 End If
 On Error GoTo 0
+On Error Resume Next
 Set rs = cn.Execute(sql)
+If Err.Number <> 0 Then
+  WScript.StdErr.WriteLine "READ_ONLY_ACCESS_QUERY_FAILED: " & Err.Number & " " & Err.Description
+  WScript.Quit 3
+End If
+On Error GoTo 0
 line = ""
 For item = 0 To rs.Fields.Count - 1
   If item > 0 Then line = line & ","

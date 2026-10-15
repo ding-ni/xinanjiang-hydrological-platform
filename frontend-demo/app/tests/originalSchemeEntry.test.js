@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { originalCalibrationRecords, openOriginalCalibrationRecord, recoverActiveCalibrationOperation, calibrationEditor, restoreCalibrationEditor } from '../src/services/modelSchemeService.js'
+import { originalCalibrationRecords, openOriginalCalibrationRecord, recoverActiveCalibrationOperation, calibrationEditor, restoreCalibrationEditor, partitionSchemeWindows } from '../src/services/modelSchemeService.js'
 import { normalizeBackendTask } from '../src/services/modelBackendService.js'
 
 const context = { contextKey: 'nananxi-xufan:distributed-xinanjiang:nananxi-xufan-1km', projectId: 'nananxi-xufan', resolutionId: '1km', modelConfigId: 'nananxi-xufan-1km' }
@@ -20,6 +20,17 @@ const source = { context, runType: 'calibration', inputs: { bundleVersionId: 'IN
     optimizer: { algorithm: 'DIFFERENTIAL_EVOLUTION', seed: 20260820, maxEvaluations: 960, populationSize: 48 },
     objectives: { metrics: { nse: true }, weights: { nse: 1 } } } }
 
+test('same flood number with an old boundary never replaces the public directory boundary', () => {
+  const old={...events[0],start:'2021-08-01T00:00:00'}
+  const result=partitionSchemeWindows(events,[old,{...events[1],start:events[1].start.slice(0,16)}])
+  assert.equal(result.catalogue.length,3)
+  assert.equal(result.catalogue[0].start,events[0].start)
+  assert.equal(result.catalogue[0].purpose,'未使用')
+  assert.equal(result.windows.length,1)
+  assert.equal(result.windows[0].start,old.start)
+  assert.equal(result.windows[0].catalogueBoundaryOverride,true)
+})
+
 test('only verified-context source plans appear, with repeated parameter records merged into one original plan entry', () => {
   const manual = { ...record, candidateKind: 'manual-edit', parameterVersionId: 'PARAM-manual' }
   const foreign = { ...record, context: { contextKey: 'another-basin' } }
@@ -34,7 +45,7 @@ test('opening an original record preserves complete catalogue, exact accepted us
     'return { ' + load + ' }')(structuredClone, value => structuredClone(value), {}, {}, row => row)
   const cal = { ...actions, contextKey: context.contextKey, domainId: context.projectId, modelScale: '1km', modelConfigId: context.modelConfigId,
     backendContractVersion: '2.0', events: structuredClone(events), schemeWindows: [], idwPower: 2, minimumStations: 1,
-    saveCurrentWorkspace() {}, setEvent() {}, runResult: { taskId: 'JOB-old' } }
+    saveCurrentWorkspace() {}, resetCalibrationScheme() {}, setEvent() {}, runResult: { taskId: 'JOB-old' } }
   const app = { contextKey: context.contextKey, selectedInputBundleVersionId: 'INPUT-display', selectedRoutingVersionId: 'ROUTING-display' }
   const display = structuredClone(app)
   const saved = new Map(), calls = []
@@ -45,7 +56,7 @@ test('opening an original record preserves complete catalogue, exact accepted us
     if (path === 'model-schemes' && options.body) {
       const body = options.body
       const row = { id: 'SCHEME-original', name: body.name, revision: 1, latestRevision: 1, definition: body.definition,
-        calculationDraft: body.calculationDraft, editor: {} }
+        calculationDraft: body.calculationDraft, savedEditor: body.editor, editor: {} }
       saved.set(row.id, structuredClone(row)); return structuredClone(row)
     }
     if (path.endsWith('/draft')) { const row = saved.get('SCHEME-original'); row.editor = structuredClone(options.body.editor); return structuredClone(row) }
@@ -71,7 +82,8 @@ test('opening an original record preserves complete catalogue, exact accepted us
   assert.equal(cal.running, false)
   await openOriginalCalibrationRecord(cal, app, record, api)
   assert.equal(calls.filter(([path, method]) => path === 'model-schemes' && method === 'POST').length, 1)
-  assert.equal(saved.get('SCHEME-original').editor.events.length, events.length)
+  assert.equal(saved.get('SCHEME-original').savedEditor.events.length, events.length)
+  assert.equal(calls.some(([path]) => path.endsWith('/draft')), false)
   assert.equal(calls.some(([path]) => /operations|calibration-tasks|scheme-preparations/.test(path)), false)
 })
 

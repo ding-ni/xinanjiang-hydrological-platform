@@ -10,7 +10,7 @@ export function stateScienceBlockReason(state, modelImplementationSHA256) {
   if (!version || identityFields.some(key => !/^[0-9a-f]{64}$/i.test(checkpoint[key] || checkpoint.lineage?.[key] || ''))) {
     return '历史状态缺少计算条件记录，请重新生成初始状态；原状态仍可查看和导出。'
   }
-  if (modelImplementationSHA256 && (checkpoint.modelImplementationSHA256 || checkpoint.lineage?.modelImplementationSHA256) !== modelImplementationSHA256) {
+  if (modelImplementationSHA256 && (checkpoint.modelImplementationSHA256 || checkpoint.lineage?.modelImplementationSHA256) !== modelImplementationSHA256 && state?.implementationReplayable !== true && checkpoint.implementationReplayable !== true) {
     return '此状态由升级前模型生成，请重新初始化；原状态仍可查看和导出。'
   }
   return ''

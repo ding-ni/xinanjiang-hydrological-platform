@@ -98,10 +98,64 @@ class TaskManager:
                 status.update(read_json(folder / "progress.json"))
             return status
 
-    def list(self):
+    def list(self, include_replay=False):
         # Older numerical artifacts have no submission time; retain them without
         # inventing a date or allowing one legacy record to break all new jobs.
-        return sorted([self.get(p.parent.name) for p in self.root.glob("*/status.json")], key=lambda row: str(row.get("createdAt") or ""), reverse=True)
+        rows = sorted([self.get(p.parent.name) for p in self.root.glob("*/status.json")], key=lambda row: str(row.get("createdAt") or ""), reverse=True)
+        if include_replay:
+            audit_context={}
+            for row in rows:
+                row['replayability'] = self.replayability(row['taskId'], row, audit_context)
+        return rows
+
+    def replayability(self, task_id, status=None, audit_context=None):
+        """Cheap availability audit; full content hashes are checked on submit."""
+        reasons = []
+        audit_context={} if audit_context is None else audit_context
+        try:
+            row = status or self.get(task_id)
+            if row.get('status') not in {'completed', 'archived'}:
+                reasons.append('计算尚未完成或未成功')
+            folder = safe_task(self.root, task_id)
+            request = row.get('runConfig') or (read_json(folder / 'request.json') if (folder / 'request.json').is_file() else {})
+            if not (folder / 'result.json').is_file():
+                reasons.append('成果文件缺失')
+            if request.get('runType') not in {'calibration', 'simulation', 'stateInitialization'}:
+                reasons.append('历史记录不含支持复算的完整数值请求')
+            for key in ('context', 'inputs', 'routing', 'science', 'period'):
+                if not request.get(key):
+                    reasons.append('冻结条件缺少：' + key)
+            if request.get('inputs', {}).get('bundleVersionId'):
+                try:
+                    bundle = self.products.resolve(request['inputs']['bundleVersionId'], verify=False)
+                    if not bundle['precipitationDir'].is_dir() or any(not path.is_file() for path in bundle['paths'].values()):
+                        reasons.append('原输入资料文件缺失')
+                except (ValueError, KeyError, FileNotFoundError) as error:
+                    reasons.append('原输入资料不可用：' + str(error))
+            if request.get('routing', {}).get('versionId'):
+                try: self.routing_versions.resolve(request['routing']['versionId'])
+                except (ValueError, KeyError, FileNotFoundError) as error: reasons.append('原汇流版本不可用：' + str(error))
+            if request.get('science', {}).get('versionId'):
+                try: self.science_versions.resolve(request['science']['versionId'])
+                except (ValueError, KeyError, FileNotFoundError) as error: reasons.append('原科学配置不可用：' + str(error))
+            parent = request.get('period', {}).get('initialStateVersionId')
+            if parent and not (self.runtime_root / 'states' / (str(parent) + '.json')).is_file():
+                reasons.append('原起算状态文件缺失')
+            expected=(request.get('lineage') or {}).get('modelImplementationSHA256')
+            if expected:
+                from science_context import model_implementation_identity
+                if 'current' not in audit_context: audit_context['current']=model_implementation_identity()['modelImplementationSHA256']
+                if expected!=audit_context['current']:
+                    if expected not in audit_context:
+                        try:
+                            from implementation_versions import frozen_worker
+                            frozen_worker(expected,self.runtime_root)
+                            audit_context[expected]=None
+                        except (ValueError,KeyError,FileNotFoundError) as error: audit_context[expected]=str(error)
+                    if audit_context[expected]: reasons.append('原计算程序不可用：'+audit_context[expected])
+        except (ValueError, KeyError, FileNotFoundError) as error:
+            reasons.append('历史记录不可用：' + str(error))
+        return {'available': not reasons, 'reasons': reasons, 'verification': 'availability-only; content hashes checked before calculation'}
 
     def submit(self, request, operation_id=None, state_role=None):
         if isinstance(request, dict) and request.get('inputs', {}).get('sourceBundleVersionId'):
@@ -109,8 +163,14 @@ class TaskManager:
             preparation = safe_task(self.runtime_root / 'input-tasks', request['inputs'].get('preparationTaskId'))
             status, prepared, config = read_json(preparation / 'status.json'), read_json(preparation / 'result.json'), read_json(preparation / 'request.json')
             from scheme_inputs import normalize_preparation
+            effective_method = request.get('lineage', {}).get('automaticInputPreparation', {}).get('rainfallMethod') or request['inputs'].get('rainfallMethod', config.get('rainfallMethod', 'reuse'))
+            automatic_source=request.get('lineage', {}).get('automaticInputPreparation', {}).get('sourceId')
+            if automatic_source:
+                parent_manifest=self.products.resolve(source)['manifest']
+                if automatic_source!=(parent_manifest.get('sourceId') or (parent_manifest.get('sourceOrigin') or {}).get('sourceId')):
+                    raise ValueError('自动准备的站点来源与原资料来源不一致')
             check = normalize_preparation({key: config[key] for key in ('operation', 'requestId', 'name', 'projectId', 'resolutionId', 'rainfallMethod', 'idwPower', 'minimumStations', 'operationPurpose') if key in config} | {
-                'parentBundleVersionId': source, 'period': request['period'], 'idwPower': request['inputs'].get('idwPower', 2), 'minimumStations': request['inputs'].get('minimumStations', 1), 'rainfallMethod': request['inputs'].get('rainfallMethod', config.get('rainfallMethod', 'reuse')),
+                'parentBundleVersionId': source, 'period': request['period'], 'idwPower': request['inputs'].get('idwPower', 2), 'minimumStations': request['inputs'].get('minimumStations', 1), 'rainfallMethod': effective_method,
                 **({'stationSourceId': request['inputs']['stationSourceId']} if request['inputs'].get('stationSourceId') else {}),
                 'statePolicy': (request.get('calibration') or {}).get('statePolicy', 'continuous-origin' if request['period'].get('continuousOrigin') else 'independent-warmup'),
                 'science': request.get('science', {}), 'evaporation': request.get('inputs', {}).get('evaporation', {}),
@@ -151,6 +211,11 @@ class TaskManager:
         return self._enqueue(request, operation_id=operation_id, state_role=state_role)
 
     def _enqueue(self, request, task_prefix="JOB", run_type=None, label=None, source="model-backend", operation_id=None, state_role=None):
+        if self.worker_script.name=='worker.py' and (request.get('lineage') or {}).get('modelImplementationSHA256'):
+            from implementation_versions import snapshot_current, frozen_worker
+            actual=snapshot_current(self.runtime_root)
+            if request['lineage']['modelImplementationSHA256']!=actual:
+                frozen_worker(request['lineage']['modelImplementationSHA256'],self.runtime_root)
         if request.get("runType") == "calibration" and request.get("period", {}).get("mode") == "continuous":
             run_type = run_type or "continuousCalibration"
             label = label or "连续时段率定"
@@ -209,7 +274,15 @@ class TaskManager:
             environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUTF8": "1", "XAJ_RUNTIME_DIR": str(self.runtime_root)}
             log = (folder / "task.log").open("w", encoding="utf-8")
             try:
-                process = subprocess.Popen([sys.executable, "-B", "-u", str(self.worker_script), "--task", str(folder)],
+                worker_script=self.worker_script
+                if worker_script.name=='worker.py':
+                    from science_context import model_implementation_identity
+                    from implementation_versions import frozen_worker, execution_environment
+                    expected=(read_json(folder/'request.json').get('lineage') or {}).get('modelImplementationSHA256')
+                    if expected and expected!=model_implementation_identity()['modelImplementationSHA256']:
+                        worker_script=frozen_worker(expected,self.runtime_root)
+                        environment.update(execution_environment(worker_script,self.runtime_root))
+                process = subprocess.Popen([sys.executable, "-B", "-u", str(worker_script), "--task", str(folder)],
                                            cwd=ROOT, env=environment, stdout=log, stderr=subprocess.STDOUT,
                                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             except Exception as error:
@@ -433,6 +506,10 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                     payload = database.summary()
                 elif self.command == "GET" and operation == "stations":
                     payload = {"stations": database.stations()}
+                elif self.command == 'GET' and operation == 'station-directory':
+                    with database.connect() as db:
+                        payload = {'stations': [dict(row) for row in db.execute('SELECT station_id AS id,name,kind,lon,lat FROM stations WHERE project_id=? ORDER BY station_id', ('nananxi-xufan',))],
+                                   'aliases': [dict(row) for row in db.execute('SELECT * FROM station_aliases WHERE project_id=?', ('nananxi-xufan',))]}
                 elif self.command == 'GET' and operation == 'sources':
                     with database.connect() as db:
                         payload = {'sources': [dict(row) for row in db.execute('SELECT id,category,relative_path AS path,sha256 FROM source_files ORDER BY id')]}
@@ -501,6 +578,13 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 payload = manager.schemes.list() if self.command == 'GET' else manager.schemes.save(self.read_body())
                 self.send_json(200, payload)
                 return
+            if path.startswith(f'{prefix}/model-schemes/') and self.command == 'POST' and path.rsplit('/', 1)[-1] in {'rename', 'discard-draft'}:
+                pieces = path[len(f'{prefix}/model-schemes/'):].split('/')
+                if len(pieces) != 2:
+                    raise KeyError('方案不存在')
+                method = manager.schemes.rename if pieces[1] == 'rename' else manager.schemes.discard_editor
+                self.send_json(200, method(pieces[0], self.read_body()))
+                return
             if path.startswith(f'{prefix}/model-schemes/') and path.endswith('/draft') and self.command == 'POST':
                 pieces = path[len(f'{prefix}/model-schemes/'):].split('/')
                 if len(pieces) != 2:
@@ -518,14 +602,20 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
             if path.startswith(f'{prefix}/parameter-schemes/') and self.command == 'GET':
                 self.send_json(200, manager.parameter_schemes.get(path.rsplit('/', 1)[-1]))
                 return
+            if path.startswith(f'{prefix}/parameter-schemes/') and path.endswith('/rename') and self.command == 'POST':
+                pieces = path[len(f'{prefix}/parameter-schemes/'):].split('/')
+                if len(pieces) != 2:
+                    raise KeyError('参数不存在')
+                self.send_json(200, manager.parameter_schemes.rename(pieces[0], self.read_body()))
+                return
             if path == f'{prefix}/operations' and self.command in {'GET', 'POST'}:
                 self.send_json(200 if self.command == 'GET' else 202,
-                    manager.operations.list() if self.command == 'GET' else manager.operations.submit(self.read_body()))
+                    manager.operations.list(include_replay=True) if self.command == 'GET' else manager.operations.submit(self.read_body()))
                 return
             if path.startswith(f'{prefix}/operations/'):
                 pieces = path[len(f'{prefix}/operations/'):].split('/')
                 if self.command == 'GET' and len(pieces) == 1:
-                    payload = manager.operations.get(pieces[0])
+                    payload = manager.operations.get(pieces[0],include_replay=True)
                 elif self.command == 'GET' and len(pieces) == 2 and pieces[1] == 'result':
                     payload = manager.operations.result(pieces[0])
                 elif self.command == 'POST' and len(pieces) == 2 and pieces[1] == 'cancel':
@@ -632,7 +722,7 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 self.send_json(200, payload)
                 return
             if path == f"{prefix}/tasks":
-                self.send_json(200 if self.command == "GET" else 202, {"tasks": manager.list()} if self.command == "GET" else manager.submit(self.read_body()))
+                self.send_json(200 if self.command == "GET" else 202, {"tasks": manager.list(include_replay=True)} if self.command == "GET" else manager.submit(self.read_body()))
                 return
             if self.command == "POST" and path in {f"{prefix}/calibration-tasks", f"{prefix}/simulation-tasks", f"{prefix}/forecast-tasks"}:
                 request = self.read_body()
@@ -656,6 +746,7 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                     raise KeyError("接口不存在")
                 if self.command == "GET" and not operation:
                     payload = manager.get(task_id)
+                    payload['replayability'] = manager.replayability(task_id, payload)
                 elif self.command == "GET" and operation == "result":
                     payload = manager.result(task_id)
                 elif self.command == 'GET' and operation in {'spatial-package', 'spatial-preview'}:
@@ -742,6 +833,15 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 return
             if self.command == "GET" and path == f"{prefix}/states":
                 rows = [read_json(p) for p in sorted((manager.runtime_root / "states").glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)]
+                from science_context import model_implementation_identity
+                from implementation_versions import frozen_worker
+                available={model_implementation_identity()['modelImplementationSHA256']:True}
+                for row in rows:
+                    identity=row.get('modelImplementationSHA256') or row.get('lineage',{}).get('modelImplementationSHA256')
+                    if identity not in available:
+                        try: frozen_worker(identity,manager.runtime_root);available[identity]=True
+                        except (ValueError,KeyError,FileNotFoundError): available[identity]=False
+                    row['implementationReplayable']=available[identity]
                 self.send_json(200, {"states": [row for row in rows if manager.available_artifact(row["sourceTaskId"])]})
                 return
             if self.command == "GET" and path == f"{prefix}/parameter-versions":

@@ -291,6 +291,7 @@ function createWorkspace(context) {
     populationSize: 48,
     searchStrategy: 'joint',
     searchParameters: null,
+    searchRangeOverrides: {},
     calibrationTarget: 'runoff',
     routingSearchParameters: null,
     jointProfile: 'reference-16', statePolicy: 'independent-warmup',
@@ -321,6 +322,7 @@ function createWorkspace(context) {
     runMessage: isSelinco ? '当前为前端试算演示，选择洪水场次和评价指标。' : '计算服务尚未接入，可整理当前案例的资料和计算条件。',
     runResult: null,
     trialRecords: [],
+    modelSchemeDraftRevision: null, editorTrialMode: 'automatic', manualRoutingPayload: null,
     runCount: 0
     ,backendContractVersion: null, backendDefinitions: [], backendMigration: null, backendInputBundleVersionId: null
   }
@@ -379,7 +381,7 @@ const WORKSPACE_FIELDS = [
   'activeTaskId',
   'runMessage',
   'runResult',
-  'trialRecords',
+  'trialRecords', 'modelSchemeDraftRevision', 'editorTrialMode', 'manualRoutingPayload', 'searchRangeOverrides',
   'runCount'
   , 'backendContractVersion', 'backendDefinitions', 'backendMigration', 'backendInputBundleVersionId'
 ]
@@ -727,6 +729,7 @@ export const useCalibrationStore = defineStore('calibration', {
     },
     resetCalibrationScheme(defaults = {}, backend = {}) {
       this.modelSchemeId = null; this.modelSchemeRevision = 0; this.modelSchemeLatestRevision = 0; this.modelSchemeName = ''
+      this.modelSchemeDraftRevision = null; this.editorTrialMode = 'automatic'; this.manualRoutingPayload = null
       this.schemeWindows = []; this.runResult = null; this.simulationResult = null; this.activeTaskId = null
       this.activeOperationId = null; this.activeOperationRequest = null; this.operationProgress = null
       this.events = this.events.map(row => ({ ...row, purpose: '未使用' }))
@@ -734,9 +737,9 @@ export const useCalibrationStore = defineStore('calibration', {
       this.params = { ...(backend?.parameters || this.baseline) }; this.baseline = { ...this.params }
       this.paramVersion = backend?.parameterVersionId || null
       this.algorithm = backend?.algorithms?.[0]?.id || this.algorithm
-      this.maxEvaluations = backend?.defaultMaxEvaluations || this.maxEvaluations
+      this.maxEvaluations = 120
       this.populationSize = 12; this.searchStrategy = 'joint'; this.searchSeed = 42
-      this.searchParameters = null; this.routingSearchParameters = null; this.calibrationTarget = 'runoff'
+      this.searchParameters = null; this.routingSearchParameters = null; this.searchRangeOverrides = {}; this.calibrationTarget = 'runoff'
       this.optimizerSettings = {}; this.searchParameterOrder = null; this.criteria = criteriaTemplate()
       this.requiredInputBundleVersionId = null; this.eventAssignment = null; this.trialRecords = []
       this.scienceVersionId = null; this.scienceDescriptor = null; this.candidateWarmupHours = null
@@ -744,7 +747,7 @@ export const useCalibrationStore = defineStore('calibration', {
       this.sourcePlan = null; this.sourcePlanRequestTemplate = null; this.originalCalibrationPlan = null
       this.originalPlanChanged = false
       this.evaporationMode = 'monthly-climatology-assumption'; this.warmupDays = backend?.defaultWarmupDays ?? 7
-      this.rainfallMethod = defaults.rainfallMethod || 'stationIdw'; this.stationSourceId = defaults.stationSourceId || 'LOCAL_OBSERVATIONS'
+      this.rainfallMethod = defaults.rainfallMethod || 'stationIdw'; this.stationSourceId = Object.hasOwn(defaults,'stationSourceId') ? defaults.stationSourceId : 'LOCAL_OBSERVATIONS'
       this.schemeSourceBundleVersionId = defaults.sourceBundleVersionId || useAppStore().selectedInputBundleVersionId
       this.schemeRoutingVersionId = useAppStore().selectedRoutingVersionId
       this.idwPower = defaults.idwPower ?? 2; this.minimumStations = defaults.minimumStations ?? 1
@@ -1374,11 +1377,13 @@ export const useCalibrationStore = defineStore('calibration', {
       if (!['runoff', 'routing', 'joint'].includes(value) || this.running) return
       this.detachOriginalPlan()
       if (value !== this.calibrationTarget) {
-        this.searchParameters = null
-        this.routingSearchParameters = null
         this.searchParameterOrder = null
       }
       this.calibrationTarget = value
+      if (value === 'runoff' && this.searchParameters) {
+        const allowed=new Set((useAppStore().backendCase?.searchParameterDefinitions || []).map(row=>row.key))
+        if(allowed.size) this.searchParameters=Object.fromEntries(Object.entries(this.searchParameters).filter(([key])=>allowed.has(key)))
+      }
       if (value !== 'runoff') this.searchStrategy = 'joint'
       this.markNeedsRun('率定参数组已调整。')
       this.saveCurrentWorkspace()

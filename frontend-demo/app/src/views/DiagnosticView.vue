@@ -78,7 +78,7 @@ const resultContext = computed(() => Boolean(route.query.source))
 const resultMetadata = ref({})
 const sourceName = row => calculationName(row, resultMetadata.value)
 const supported = computed(() => app.usesModelBackend && app.basinId === 'nananxi-xufan' && app.modelScale === '1km')
-const tabs = [{ id: 'point', label: '河道流量查询' }, { id: 'routing', label: '汇流与拓扑设置' }, { id: 'experiment', label: '进阶：参数稳定性' }, { id: 'workflow', label: '进阶：模型综合检验' }]
+const tabs = [{ id: 'point', label: '河道流量查询' }, { id: 'routing', label: '汇流与拓扑设置' }]
 const tab = ref('point'), loading = ref(false), busy = ref(false), error = ref(''), message = ref('')
 const pointStart = ref(''), pointEnd = ref(''), querySpatial = ref(null)
 const versions = ref([]), tasks = ref([]), spatial = ref(null), editVersion = ref(''), parameters = ref(null), versionName = ref('')

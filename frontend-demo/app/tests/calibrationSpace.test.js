@@ -1,6 +1,6 @@
 import { it } from 'node:test'
 import assert from 'node:assert/strict'
-import { searchCoordinates, selectedSearchParameters, searchSelectionError } from '../src/services/calibrationSpaceService.js'
+import { searchCoordinates, selectedSearchParameters, searchSelectionError, applySearchRangeTemplate } from '../src/services/calibrationSpaceService.js'
 import { buildCalibrationRequest } from '../src/services/calibrationSubmissionService.js'
 import { normalizeBackendTask } from '../src/services/modelBackendService.js'
 
@@ -9,6 +9,18 @@ const definitions = [
   { key: 'WM', symbol: 'WM', minimum: 120, maximum: 240, limitMin: 50, limitMax: 300, group: 'storage' }
 ]
 const params = { SM: 20, WM: 150, KI: .02, KG: .01 }
+
+it('templates only replace bounds, preserve selected dimensions, and keep unselected sets empty', () => {
+  const initial = {...params}
+  const selection = {SM:{minimum:8,maximum:60}}
+  assert.deepEqual(applySearchRangeTemplate(selection, definitions, 'standard'), {SM:{minimum:10,maximum:50}})
+  assert.deepEqual(applySearchRangeTemplate(selection, definitions, 'extended'), {SM:{minimum:1,maximum:80}})
+  assert.deepEqual(applySearchRangeTemplate({}, definitions, 'standard'), {})
+  assert.deepEqual(Object.keys(applySearchRangeTemplate(null, definitions, 'standard')), ['SM','WM'])
+  assert.deepEqual(selection, {SM:{minimum:8,maximum:60}})
+  assert.deepEqual(params, initial)
+  assert.equal(searchSelectionError({}, definitions, params, 'joint', true), '')
+})
 
 it('search bounds are independent copies and daily coordinates match the declared conversion', () => {
   const selection = selectedSearchParameters(definitions, ['SM'])

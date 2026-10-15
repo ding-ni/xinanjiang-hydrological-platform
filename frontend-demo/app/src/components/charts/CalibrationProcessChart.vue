@@ -8,7 +8,7 @@
       <span v-for="trial in visibleComparisons" :key="trial.taskId"><i class="line" :style="{ borderColor: trial.color }" />{{ trial.label }}</span>
       <span v-for="item in activeComponentLegends" :key="item.key"><i class="line component" :style="{ borderColor: item.color, borderTopStyle: item.style }" />{{ item.name }}</span>
     </div>
-    <BaseChart class="hydrology-chart" :option="option" />
+    <BaseChart class="hydrology-chart" :option="option" @select-time="index => emit('select-time', hydrograph.times?.[index] || hydrograph.forecast?.[index]?.time || hydrograph.obs?.[index]?.time)" />
   </div>
 </template>
 
@@ -16,6 +16,7 @@
 import { computed } from 'vue'
 import BaseChart from '@/components/charts/BaseChart.vue'
 import { alignedTrialSeries } from '@/services/manualCalibrationService'
+const emit = defineEmits(['select-time'])
 
 const props = defineProps({
   hydrograph: { type: Object, required: true },

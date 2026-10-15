@@ -8,6 +8,9 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import time
+import json
+from collections import OrderedDict
 import sys
 from pathlib import Path
 
@@ -179,6 +182,11 @@ class ModelJob:
         payload = {"progress": round(float(percent), 1), "stageLabel": stage}
         if hasattr(self, 'search_history'):
             payload['searchProgress'] = {'evaluations': len(self.search_history), 'budget': self.request['calibration']['optimizer']['maxEvaluations'], 'history': self.search_history[-200:]}
+            elapsed = time.perf_counter() - self.search_started
+            completed = len(self.search_history)
+            payload['searchProgress'].update(elapsedSeconds=round(elapsed, 2),
+                remainingSeconds=round(elapsed / completed * max(0, self.request['calibration']['optimizer']['maxEvaluations'] - completed), 1) if completed else None,
+                cacheHits=getattr(self, 'evaluation_cache_hits', 0))
         write_json(self.folder / "progress.json", payload)
         print(stage, flush=True)
 
@@ -441,6 +449,7 @@ class ModelJob:
                              '蒸散发采用冻结科学配置：' + self.science['petMode']]}
 
     def calibrate(self):
+        preparation_started = time.perf_counter()
         continuous = self.period.get("mode") == "continuous"
         groups = {"率定": "CALIBRATION", "验证": "VALIDATION", "独立检验": "INDEPENDENT_TEST"}
         selected = [row for row in self.period["windows" if continuous else "events"]
@@ -543,22 +552,53 @@ class ModelJob:
         specs = joint_calibration.resolve_space(self.request['calibration']) if joint_search else routing_calibration.resolve_space(self.request['calibration']) if routing_search else resolve_space(self.request['calibration'])
         config = self.request["calibration"]["optimizer"]
 
+        # These caches live within one frozen job. Inputs, network, periods,
+        # science and kernel cannot change during their lifetime. Runoff is
+        # reused only when every runoff parameter and its initial state is fixed.
+        fixed_runoff = {}
+        if routing_search:
+            self.progress(7, '固定产流参数：准备可复用产流过程（首次编译预热）')
+            for event in ([timeline] if timeline is not None else events):
+                # Keep the exact float64 path of route_event_fast. The vendor's
+                # legacy offline cache intentionally stores float32; use a
+                # platform-local container without altering that scientific file.
+                rs, ri, rg, land = kernels.vectorized_xaj(event.precip, self.params,
+                    np.ones(event.precip.shape[1]), kernels.DEFAULT_TEMP_C, event.pet_mm_h,
+                    state=self.initial_state(self.params), return_state=True)
+                fixed_runoff[id(event)] = kernels.PreparedRunoff(event, rs @ self.mapping,
+                    ri @ self.mapping, rg @ self.mapping, land)
+        preparation_seconds = time.perf_counter() - preparation_started
+
         def simulate(event, params):
             runoff = params['runoff'] if joint_search else self.params if routing_search else params
             routing = kernels.read_parameters_json_from_mapping(params['routing'] if joint_search else params) if (routing_search or joint_search) else self.routing
             joint_calibration.validate_routing(params['routing'] if joint_search else params if routing_search else self.routing_payload)
-            series = kernels.route_event_fast(event, runoff, routing, self.router, self.mapping, self.initial_state(runoff))[0]
+            series = (kernels.route_prepared_runoff(fixed_runoff[id(event)], routing, self.router)[0] if routing_search else
+                      kernels.route_event_fast(event, runoff, routing, self.router, self.mapping, self.initial_state(runoff))[0])
             if not series.index.equals(event.times) or not np.isfinite(series.to_numpy()).all() or (series < 0).any():
                 raise ValueError(f"{event.event_id} 模拟流量存在无效值或时间缺口")
             return series
 
         self.search_history = []
+        self.search_started = time.perf_counter()
+        self.evaluation_cache_hits = 0
+        self.progress(8, '准备数值内核；首次运行正在编译预热')
+        evaluation_cache = OrderedDict()
         def objective(params):
             loss = None
             try:
+                identity = joint_calibration.resolved(params) if joint_search else routing_calibration.resolved(params) if routing_search else kernels.resolved_runoff_parameters(params)
+                key = json.dumps(identity, sort_keys=True, allow_nan=False)
+                if key in evaluation_cache:
+                    self.evaluation_cache_hits += 1
+                    loss = evaluation_cache[key]
+                    return loss
                 shared = simulate(timeline, params) if timeline is not None else None
                 frame = pd.DataFrame([kernels.metrics(e.observed, (shared if shared is not None else simulate(e, params)).loc[e.start:e.end]) for e in events if e.group == "CALIBRATION"])
                 loss = kernels.objective_loss(frame, terms)
+                evaluation_cache[key] = loss
+                if len(evaluation_cache) > 4096:
+                    evaluation_cache.popitem(last=False)
                 return loss
             finally:
                 previous = self.search_history[-1]['bestLoss'] if self.search_history else None
@@ -574,6 +614,8 @@ class ModelJob:
         best, outcome = run_search(specs, config, initial, objective,
                                    joint_calibration.candidate_payload if joint_search else routing_calibration.candidate_payload if routing_search else kernels.candidate_params,
                                    joint_calibration.resolved if joint_search else routing_calibration.resolved if routing_search else resolve_runoff, search, self.progress)
+        search_seconds = time.perf_counter() - self.search_started
+        evaluation_started = time.perf_counter()
         # Preserve the delivered diagnostic report's search-coordinate contract.
         runoff_best = best['runoff'] if joint_search else self.params if routing_search else best
         search_values = joint_calibration.resolved(best) if joint_search else routing_calibration.resolved(best) if routing_search else kernels.resolved_runoff_parameters(best)
@@ -670,6 +712,18 @@ class ModelJob:
                    "lineage": {**self.request.get("lineage", {}), "inputBundleVersionId": self.bundle_version,
                                "inputBundleManifestSHA256": self.bundle_digest, "inputManifestSHA256": self.input_digest,
                                "forcingVersion": self.forcing_version, "observationVersion": self.observation_version}})
+        result['timings'] = {'preparationSeconds': round(preparation_seconds, 3), 'searchSeconds': round(search_seconds, 3),
+                             'finalEvaluationSeconds': round(time.perf_counter() - evaluation_started, 3)}
+        result['cache'] = {'evaluationHits': self.evaluation_cache_hits, 'fixedRunoffProcesses': len(fixed_runoff), 'scope': 'frozen-job'}
+        try:
+            import numba
+            from runoff_platform.models import xaj_vectorized
+            from calibration_platform.routing_kernel import route_arrays
+            compiled = {'runoff': bool(getattr(xaj_vectorized._array_kernel, 'signatures', [])),
+                        'routing': bool(getattr(route_arrays, 'signatures', []))}
+            result['acceleration'] = {'enabled': all(compiled.values()), 'numbaVersion': numba.__version__, 'compiledKernels': compiled}
+        except ImportError:
+            result['acceleration'] = {'enabled': False, 'reason': '未安装Numba'}
         return result
 
     def run(self):

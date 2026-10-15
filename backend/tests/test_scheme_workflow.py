@@ -20,6 +20,59 @@ from test_continuous_calibration import continuous_request
 
 
 class SchemeTests(unittest.TestCase):
+    def test_saved_unselected_bounds_are_versioned_but_viewed_event_is_not(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo=ModelSchemes(HydroDatabase(directory))
+            request=simulation();request['inputs']['bundleVersionId']='source-A'
+            body={'name':'范围记忆','definition':input_definition(request),'calculationDraft':request,'editor':{'eventId':'A','searchRangeOverrides':{'SM':{'minimum':8,'maximum':60}}}}
+            first=repo.save(body)
+            body['editor']['eventId']='B'
+            second=repo.save({**body,'id':first['id'],'revision':1})
+            self.assertEqual(second['revision'],1)
+            body['editor']['searchRangeOverrides']['SM']['maximum']=80
+            third=repo.save({**body,'id':first['id'],'revision':1})
+            self.assertEqual(third['revision'],2)
+            self.assertEqual(repo.get(first['id'],1)['savedEditor']['searchRangeOverrides']['SM']['maximum'],60)
+            self.assertEqual(third['savedEditor']['searchRangeOverrides']['SM']['maximum'],80)
+    def test_drafts_are_conflict_checked_and_never_overlay_saved_versions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = ModelSchemes(HydroDatabase(directory))
+            request = simulation()
+            request['inputs']['bundleVersionId'] = 'source-A'
+            first = repo.save({'name': '原名', 'definition': input_definition(request), 'calculationDraft': request,
+                               'editor': {'params': {'B': .2}}})
+            body = {'editor': {'params': {'B': .6}}, 'revision': 1, 'draftRevision': first['draftRevision']}
+            draft = repo.save_editor(first['id'], body)
+            with self.assertRaisesRegex(RuntimeError, '另一页面'):
+                repo.save_editor(first['id'], body)
+            self.assertEqual(draft['savedEditor']['params']['B'], .2)
+            renamed = repo.rename(first['id'], {'name': '新名'})
+            self.assertEqual(renamed['revision'], 1)
+            self.assertEqual(renamed['calculationDraft'], first['calculationDraft'])
+            discarded = repo.discard_editor(first['id'], {'revision': 1, 'draftRevision': draft['draftRevision']})
+            self.assertFalse(discarded['hasDraft'])
+            self.assertEqual(discarded['savedEditor'], first['savedEditor'])
+
+    def test_mdb_timeout_splits_without_duplicate_hours_and_rejects_other_errors(self):
+        from scheme_inputs import query_mdb_window
+        import re
+        from datetime import datetime
+        calls = []
+        def query(snapshot, folder, sql, timeout):
+            self.assertEqual(timeout, 60)
+            dates = [datetime.strptime(value, '%m/%d/%Y %H:%M:%S') for value in re.findall(r'#([^#]+)#', sql)]
+            calls.append(dates)
+            if dates[0] != dates[1]:
+                raise RuntimeError('MDB_DRIVER_TIMEOUT')
+            return [dates[0].isoformat()]
+        values = query_mdb_window(None, None, 'SELECT * WHERE TM{window}', '2020-01-01T00:00', '2020-01-01T03:00', query=query)
+        self.assertEqual(len(values), 4)
+        self.assertEqual(len(set(values)), 4)
+        with self.assertRaisesRegex(RuntimeError, 'bad source'):
+            query_mdb_window(None, None, '{window}', '2020-01-01T00:00', '2020-01-01T03:00', query=lambda *a, **kw: (_ for _ in ()).throw(RuntimeError('bad source')))
+        with self.assertRaisesRegex(ValueError, '2020-01-01T00:00'):
+            query_mdb_window(None, None, '{window}', '2020-01-01T00:00', '2020-01-01T00:00', query=lambda *a, **kw: (_ for _ in ()).throw(RuntimeError('MDB_DRIVER_TIMEOUT')))
+
     def test_input_revision_and_calculation_draft_are_distinct_and_freeze_is_checked(self):
         with tempfile.TemporaryDirectory() as directory:
             repository = ModelSchemes(HydroDatabase(directory))
@@ -29,15 +82,19 @@ class SchemeTests(unittest.TestCase):
             first = repository.save(body)
             request['parameters']['B'] = .4
             second = repository.save({**body, 'id': first['id'], 'revision': 1, 'calculationDraft': request})
-            self.assertEqual(second['revision'], 1)
+            self.assertEqual(second['revision'], 2)
+            self.assertEqual(repository.get(first['id'], 1)['calculationDraft']['parameters']['B'], first['calculationDraft']['parameters']['B'])
             request['period']['endTime'] = '2017-06-22T00:00'
-            third = repository.save({**body, 'id': first['id'], 'revision': 1, 'definition': input_definition(request), 'calculationDraft': request})
-            self.assertEqual(third['revision'], 2)
+            third = repository.save({**body, 'id': first['id'], 'revision': 2, 'definition': input_definition(request), 'calculationDraft': request})
+            self.assertEqual(third['revision'], 3)
             self.assertNotEqual(repository.get(first['id'], 1)['definition'], third['definition'])
             with self.assertRaises(RuntimeError):
                 repository.save({**body, 'id': first['id'], 'revision': 1, 'definition': input_definition(request)})
-            request['scheme'] = {'id': first['id'], 'revision': 2}
-            self.assertEqual(repository.freeze(request)['lineage']['schemeRevision'], 2)
+            request['scheme'] = {'id': first['id'], 'revision': 3}
+            self.assertEqual(repository.freeze(request, strict=True)['lineage']['schemeRevision'], 3)
+            request['parameters']['B'] = .5
+            with self.assertRaisesRegex(ValueError, '计算参数'):
+                repository.freeze(request, strict=True)
             request['period']['endTime'] = '2017-06-23T00:00'
             with self.assertRaisesRegex(ValueError, '修订不一致'):
                 repository.freeze(request)

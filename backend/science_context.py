@@ -332,7 +332,10 @@ def inherit_state_science(request, checkpoint, runtime_root=None, model_root=Non
         raise ValueError('历史状态缺少模型实现或科学配置身份，请重新初始化')
     registry = ScienceVersions(runtime_root, model_root)
     if checkpoint['modelImplementationSHA256'] != model_implementation_identity(registry.model)['modelImplementationSHA256']:
-        raise ValueError('父状态的模型实现已更新，请按所选方案重新初始化')
+        from implementation_versions import frozen_worker
+        try: frozen_worker(checkpoint['modelImplementationSHA256'],runtime_root or RUNTIME)
+        except (ValueError,FileNotFoundError) as error: raise ValueError('父状态的模型实现已更新；'+str(error)) from None
+        request.setdefault('lineage',{})['modelImplementationSHA256']=checkpoint['modelImplementationSHA256']
     version = checkpoint.get('scienceVersionId')
     if not isinstance(version, str) or not VERSION.fullmatch(version):
         raise ValueError('父状态缺少完整的蒸散发与初态方案，请重新初始化')
@@ -368,6 +371,12 @@ def freeze_science_selection(request, runtime_root=None, model_root=None):
     registry = ScienceVersions(runtime_root, model_root)
     descriptor = registry.for_request(request)
     descriptor.update(model_implementation_identity(registry.model))
+    expected_implementation=(request.get('lineage') or {}).get('modelImplementationSHA256')
+    if expected_implementation and expected_implementation!=descriptor['modelImplementationSHA256']:
+        from implementation_versions import frozen_worker
+        try: frozen_worker(expected_implementation,runtime_root or RUNTIME)
+        except (ValueError,FileNotFoundError) as error: raise ValueError('任务模型实现或科学配置已改变；'+str(error)) from None
+        descriptor['modelImplementationSHA256']=expected_implementation
     selection = request.get("science", {})
     for key, expected in (("configurationSHA256", descriptor["scienceConfigurationSHA256"]), ("petConfigurationSHA256", descriptor["petConfigurationSHA256"])):
         if key in selection and selection[key] != expected:

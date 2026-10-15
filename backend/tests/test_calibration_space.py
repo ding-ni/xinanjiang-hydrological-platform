@@ -39,7 +39,7 @@ class SearchSpaceTests(unittest.TestCase):
         values = [{}, [], True, {'UNKNOWN': {}}, {'SM': None}, {'SM': {'minimum': 8}},
                   {'SM': {'minimum': True, 'maximum': 60}}, {'SM': {'minimum': float('nan'), 'maximum': 60}},
                   {'SM': {'minimum': 8, 'maximum': float('inf')}}, {'SM': {'minimum': 60, 'maximum': 8}},
-                  {'SM': {'minimum': 4, 'maximum': 60}}, {'SM': {'minimum': 8, 'maximum': 101}},
+                  {'SM': {'minimum': .09, 'maximum': 60}}, {'SM': {'minimum': 8, 'maximum': 201}},
                   {'SM': {'minimum': 90, 'maximum': 100}}, {'KI': {'minimum': .001, 'maximum': .05}},
                   {'SM': {'minimum': 8, 'maximum': 60, 'extra': 1}}]
         for value in values:
@@ -47,6 +47,15 @@ class SearchSpaceTests(unittest.TestCase):
                 request = selected_request()
                 request['calibration']['searchParameters'] = value
                 normalize_request(request, case_catalog())
+
+    def test_literature_bounds_fit_physical_limits_without_changing_project_defaults(self):
+        project = {row['key']: row for row in definitions()}
+        self.assertEqual((project['SM']['minimum'], project['SM']['maximum']), (8, 60))
+        for lo, hi in ((10, 50), (1, 80)):
+            request = selected_request()
+            request['calibration']['searchParameters']['SM'] = {'minimum': lo, 'maximum': hi}
+            actual = normalize_request(request, case_catalog())
+            self.assertEqual(actual['calibration']['searchParameters']['SM'], {'minimum': lo, 'maximum': hi})
 
     def test_staged_requires_both_groups_and_wlm_does_not_override_custom(self):
         with self.assertRaisesRegex(ValueError, '分阶段'):

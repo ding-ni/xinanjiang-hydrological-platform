@@ -1,11 +1,11 @@
 <template>
   <section class="simulation-view">
-    <header class="page-heading"><h2>{{ continuing ? '继续模拟' : '洪水模拟' }}</h2><RouterLink to="/archive" class="btn">计算成果</RouterLink></header>
+    <header class="page-heading"><h2>{{ continuing ? '继续模拟' : '洪水模拟' }}</h2><div><RouterLink to="/state/advanced" class="btn">状态库</RouterLink> <RouterLink to="/archive" class="btn">计算成果</RouterLink></div></header>
     <div class="simulation-layout">
       <section class="panel panel-pad conditions">
         <form @submit.prevent="run">
           <template v-if="!continuing">
-            <label for="simulation-parameter">参数<select id="simulation-parameter" v-model="parameterSchemeId" class="input" :disabled="loading || running" @change="rememberParameter"><option value="" disabled>选择已保存参数</option><option v-for="row in parameters" :key="row.id" :value="row.id">{{ row.name }}</option></select></label>
+            <label for="simulation-parameter">参数库 <button type="button" class="text-button" title="修改参数名称" :disabled="!parameterSchemeId || running" @click="renameParameter">✎</button><select id="simulation-parameter" v-model="parameterSchemeId" class="input" :disabled="loading || running" @change="rememberParameter"><option value="" disabled>选择已保存参数</option><option v-for="row in parameters" :key="row.id" :value="row.id">{{ row.name }}</option></select></label>
             <RouterLink v-if="!loading && !parameters.length" to="/calibration" class="empty-link">进入参数率定</RouterLink>
             <div class="mode-switch" role="tablist" aria-label="模拟方式"><button type="button" role="tab" :aria-selected="mode === 'event'" :class="{active:mode === 'event'}" :disabled="running" @click="mode='event'">洪水场次</button><button type="button" role="tab" :aria-selected="mode === 'continuous'" :class="{active:mode === 'continuous'}" :disabled="running" @click="mode='continuous'">连续时段</button></div>
             <template v-if="mode === 'event'"><div class="selected-count">已选 {{ selectedEvents.length }} 场洪水<button type="button" class="text-button" :disabled="running || !selectedEvents.length" @click="selectedIds=[]">清空</button></div></template>
@@ -33,6 +33,7 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { modelApi } from '@/services/modelBackendService'
 import { activeOperation, belongsToOperationContext, dailyClient, dailyOperationSelection, historicalParameterId, hourInput, hourText, operationContext, operationId, preparationIssueText, readDailySelection, rememberedParameter, saveDailySelection } from '@/services/dailyOperationService'
@@ -51,6 +52,10 @@ const years = computed(() => [...new Set(floods.value.map(row=>String(row.start)
 const filteredFloods = computed(() => floods.value.filter(row=>(!year.value || String(row.start).startsWith(year.value)) && (!search.value || `${row.name || row.id} ${row.start} ${row.end}`.includes(search.value))))
 const canRun = computed(() => !loading.value && !running.value && (continuing.value ? Boolean(endTime.value) : Boolean(parameterSchemeId.value) && (mode.value==='event' ? selectedEvents.value.length>0 : Boolean(startTime.value && endTime.value))))
 const number = value => value != null && Number.isFinite(Number(value)) ? Number(value).toFixed(1) : '—'
+async function renameParameter(){
+  try{const row=parameters.value.find(item=>item.id===parameterSchemeId.value);const {value}=await ElMessageBox.prompt('填写参数名称','修改参数名称',{inputValue:row.name,inputValidator:value=>Boolean(value?.trim())&&value.trim().length<=80});const saved=await modelApi('parameter-schemes/'+row.id+'/rename',{method:'POST',body:{name:value.trim()}});row.name=saved.name}
+  catch(failure){if(failure instanceof Error)pageError.value=failure.message}
+}
 function selectVisible() { selectedIds.value=[...new Set([...selectedIds.value,...filteredFloods.value.map(row=>row.id)])] }
 let revision=0
 watch(()=>[app.contextKey,route.query.source,route.query.operation,route.query.continue,route.query.task,route.query.legacyConditionId,route.query.sourceTask,route.query.parameter], async()=>{

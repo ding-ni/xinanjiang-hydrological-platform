@@ -15,7 +15,7 @@ from input_products import manifest_digest, hourly_time
 
 LABELS = {'calibration': '参数率定', 'manualTrial': '人工试调', 'eventSimulation': '洪水模拟',
           'continuousSimulation': '连续模拟', 'hindcast': '历史回算',
-          'rollingHindcast': '滚动回算', 'continuation': '继续模拟', 'stateReplay': '计算状态'}
+          'rollingHindcast': '滚动回算', 'continuation': '继续模拟', 'stateReplay': '计算状态', 'rerun': '按原条件复算'}
 ACTIVE = {'queued', 'running', 'cancelling'}
 CONTEXT = {'contextKey': 'nananxi-xufan:distributed-xinanjiang:nananxi-xufan-1km',
            'projectId': 'nananxi-xufan', 'resolutionId': '1km', 'modelConfigId': 'nananxi-xufan-1km'}
@@ -61,12 +61,27 @@ class HydrologicalOperations:
                 write_json(path, {**read_json(path), 'status': 'failed', 'stageLabel': '计算已中断',
                                   'errorMessage': '服务关闭时本次计算尚未完成', 'completedAt': now()})
 
-    def get(self, identifier):
-        return read_json(safe_task(self.root, identifier) / 'status.json')
+    def get(self, identifier, include_replay=False):
+        row=read_json(safe_task(self.root, identifier) / 'status.json')
+        if include_replay: row['replayability']=self.replayability(identifier)
+        return row
 
-    def list(self):
-        return {'operations': sorted([read_json(path) for path in self.root.glob('*/status.json')],
-                                     key=lambda row: row['createdAt'], reverse=True)}
+    def replayability(self,identifier,audit_context=None):
+        path=safe_task(self.root,identifier)/'result.json'
+        if not path.is_file(): return {'available':False,'reasons':['原成果文件缺失或计算尚未完成']}
+        result=read_json(path)
+        sources=[row['taskId'] for row in result.get('eventStates',[]) if row.get('taskId')] if result.get('hydrographs') and not result.get('bestParameters') else []
+        sources=sources or [result.get('primaryTaskId') or result.get('taskId')]
+        audits=[self.manager.replayability(source,audit_context=audit_context) for source in dict.fromkeys(sources)]
+        return {'available':all(row['available'] for row in audits),'reasons':list(dict.fromkeys(reason for row in audits for reason in row['reasons'])),'verification':'availability-only; content hashes checked before calculation'}
+
+    def list(self, include_replay=False):
+        rows = sorted([read_json(path) for path in self.root.glob('*/status.json')], key=lambda row: row['createdAt'], reverse=True)
+        if include_replay:
+            audit_context={}
+            for row in rows:
+                row['replayability']=self.replayability(row['taskId'],audit_context)
+        return {'operations': rows}
 
     def update(self, identifier, **changes):
         with self.lock:
@@ -91,7 +106,44 @@ class HydrologicalOperations:
             raise ValueError('当前计算对应南安溪徐畈1 km模型')
         request['context'] = context
         kind = request['operation']
-        if kind in {'calibration', 'manualTrial'}:
+        if kind == 'rerun':
+            source_id = request.get('sourceTaskId')
+            source_result = None
+            if str(source_id).startswith('OP-'):
+                source_result = self.result(source_id)
+                source_id = source_result.get('primaryTaskId') or source_result.get('taskId')
+            model = self.frozen_request(source_id)
+            if not self.manager.available_artifact(source_id):
+                raise ValueError('原计算成果不可用')
+            if model.get('runType') not in {'calibration', 'simulation', 'stateInitialization'}:
+                raise ValueError('该历史记录不含可复算的完整计算请求')
+            missing = [key for key in ('context', 'inputs', 'routing', 'science', 'period') if not model.get(key)]
+            if missing:
+                raise ValueError('原计算条件缺少：' + '、'.join(missing))
+            if any(model['context'].get(key)!=context.get(key) for key in CONTEXT):
+                raise ValueError('请选择当前流域的计算成果')
+            # The frozen product is authoritative. A replay never prepares new
+            # station data or substitutes today's defaults or editor settings.
+            model.pop('scheme', None)
+            for key in ('sourceBundleVersionId', 'preparationTaskId'):
+                model['inputs'].pop(key, None)
+            model.setdefault('lineage', {})['replayOfTaskId'] = source_id
+            request['frozenRequest'] = model
+            if source_result and source_result.get('hydrographs') and source_result.get('eventStates') and not source_result.get('bestParameters'):
+                request['sourceEventResult']=source_result
+                frozen_events=[]
+                for task_id in dict.fromkeys(row['taskId'] for row in source_result['eventStates']):
+                    child=self.frozen_request(task_id)
+                    if not self.manager.available_artifact(task_id) or child.get('runType')!='simulation':
+                        raise ValueError('原洪水模拟任务不完整：'+task_id)
+                    if any(child.get('context',{}).get(key)!=context.get(key) for key in CONTEXT):
+                        raise ValueError('原洪水模拟包含其他流域的任务')
+                    child.pop('scheme',None)
+                    for key in ('sourceBundleVersionId','preparationTaskId'): child.get('inputs',{}).pop(key,None)
+                    child.setdefault('lineage',{})['replayOfTaskId']=task_id
+                    frozen_events.append({'taskId':task_id,'request':child})
+                request['frozenEventRequests']=frozen_events
+        elif kind in {'calibration', 'manualTrial'}:
             model = request.get('request')
             if not isinstance(model, dict) or model.get('runType') != 'calibration':
                 raise ValueError('请选定率定方案与洪水')
@@ -104,7 +156,7 @@ class HydrologicalOperations:
                     settings.pop(key, None)
             elif model.get('calibration', {}).get('evaluationMode', 'automatic') != 'automatic':
                 raise ValueError('自动率定须使用参数搜索设置')
-            request['request'] = self.manager.schemes.freeze(model)
+            request['request'] = self.manager.schemes.freeze(model, strict=True)
         elif kind == 'stateReplay':
             source_id = request.get('sourceTaskId')
             if not self.manager.available_artifact(source_id):
@@ -122,7 +174,7 @@ class HydrologicalOperations:
                 missing.append('产流参数')
             if missing:
                 raise ValueError('该成果缺少' + '、'.join(missing) + '，请恢复计算条件后模拟')
-            if source.get('context') != context:
+            if any(source.get('context',{}).get(key)!=context.get(key) for key in CONTEXT):
                 raise ValueError('请在该成果所属流域计算状态')
             request['requestId'] = 'STATE-' + source_id
         elif kind == 'continuation':
@@ -162,7 +214,7 @@ class HydrologicalOperations:
                     raise ValueError('最后起报时刻不能早于首次起报时刻')
                 if type(request.get('leadHours')) is not int or request['leadHours'] < 1:
                     raise ValueError('预见期须为正整数小时')
-        if kind != 'stateReplay':
+        if kind not in {'stateReplay', 'rerun'}:
             request['preparationDefaults'] = self.manager.schemes.defaults()
         key = request.get('requestId')
         digest = manifest_digest(request)
@@ -218,19 +270,23 @@ class HydrologicalOperations:
         self.executor.shutdown(wait=True)
 
     def wait(self, identifier, task, service, stage, offset=0, span=100):
+        previous = None
         while True:
             self.check_cancelled(identifier)
             current = service.get(task['taskId'])
-            self.update(identifier, stageLabel=stage,
-                        progress=max(self.get(identifier).get('progress', 0), min(99, offset + round(span * current.get('progress', 0) / 100))),
-                        **({'searchProgress': current['searchProgress']} if current.get('searchProgress') else {}))
+            changes = dict(stageLabel=stage,
+                           progress=min(99, offset + round(span * current.get('progress', 0) / 100)),
+                           **({'searchProgress': current['searchProgress']} if current.get('searchProgress') else {}))
+            if changes != previous:
+                self.update(identifier, **changes)
+                previous = changes
             if current['status'] not in ACTIVE:
                 if current['status'] not in {'completed', 'archived'}:
                     if current['status'] == 'cancelled':
                         raise OperationCancelled()
                     raise ValueError(current.get('errorMessage') or stage + '未完成')
                 return service.result(task['taskId'])
-            time.sleep(.15)
+            time.sleep(.5)
 
     def prepare(self, identifier, request, method, purpose='calibration', origin=None, preceding_hour=False):
         from scheme_inputs import reuse_preparation
@@ -267,6 +323,19 @@ class HydrologicalOperations:
             task = reuse_preparation(self.inputs, options)
             self.update(identifier, preparationTaskId=task['taskId'])
         result = self.wait(identifier, task, self.inputs, '正在备齐雨流资料', 0, 18)
+        automatic_source = None
+        if (method=='reuse' and not request.get('sourcePlan') and result.get('issues')
+                and any(row.get('missingIntervals') or row.get('flowMissingIntervals') for row in result['issues'])):
+            parent=self.manager.products.resolve(source)
+            automatic_source=parent['manifest'].get('sourceId') or (parent['manifest'].get('sourceOrigin') or {}).get('sourceId')
+            if automatic_source:
+                # Keep the source declared by this input; defaults cannot fill it.
+                options.update(rainfallMethod='stationIdw',stationSourceId=automatic_source,requestId='PREP-'+uuid.uuid4().hex)
+                with self.lock:
+                    self.check_cancelled(identifier)
+                    task=reuse_preparation(self.inputs,options)
+                    self.update(identifier,preparationTaskId=task['taskId'])
+                result=self.wait(identifier,task,self.inputs,'网格资料缺过程：正在用同一来源站网自动准备',0,18)
         if result.get('issues'):
             raise PreparationIssues(result['issues'])
         status = self.inputs.get(task['taskId'])
@@ -275,6 +344,9 @@ class HydrologicalOperations:
             raise ValueError('雨流资料未准备完成')
         prepared = copy.deepcopy(request)
         prepared['inputs'].update(bundleVersionId=ready, rainfallMethod=method)
+        if automatic_source:
+            prepared['inputs']['stationSourceId']=automatic_source
+            prepared.setdefault('lineage',{})['automaticInputPreparation']={'rainfallMethod':'stationIdw','sourceId':automatic_source,'preparationTaskId':task['taskId']}
         # The completed queue product has already been verified. Child windows
         # can differ from the preparation's encompassing interval.
         for key in ('sourceBundleVersionId', 'preparationTaskId', 'bundleManifestSHA256'):
@@ -436,6 +508,7 @@ class HydrologicalOperations:
 
     def calibration(self, identifier, request):
         from contracts import continuous_windows
+        preparation_started = time.perf_counter()
         model = copy.deepcopy(request['request'])
         if model['period'].get('mode') == 'continuous' and not model['calibration'].get('statePolicy'):
             model['calibration']['statePolicy'] = 'continuous-origin'
@@ -460,6 +533,7 @@ class HydrologicalOperations:
         if model.get('scheme') and not source_plan:
             model['inputs']['sourceBundleVersionId'] = request['request']['inputs'].get('sourceBundleVersionId') or request['request']['inputs']['bundleVersionId']
             model['inputs']['preparationTaskId'] = model['lineage']['preparationTaskId']
+        preparation_seconds = time.perf_counter() - preparation_started
         output = self.child(identifier, model, '正在率定参数' if request['operation'] == 'calibration' else '正在试算参数')
         frozen = self.manager.get(output['taskId'])['runConfig']
         if output.get('bestRoutingParameters') and not output.get('routingCandidate'):
@@ -467,10 +541,13 @@ class HydrologicalOperations:
                 'parentVersionId': model.get('routing', {}).get('versionId', 'control-split-v2'), 'parameters': output['bestRoutingParameters']})
             output['routingCandidate'] = candidate
             write_json(safe_task(self.manager.root, output['taskId']) / 'result.json', output)
-        return self.final_states(identifier, output, frozen)
+        result = self.final_states(identifier, output, frozen)
+        result.setdefault('timings', {})['inputPreparationSeconds'] = round(preparation_seconds, 3)
+        return result
 
     def final_states(self, identifier, output, frozen):
         from calibration_groups import group_windows
+        state_started = time.perf_counter()
         science = self.manager.science_versions.resolve(frozen['science']['versionId'])
         settings = frozen.get('calibration') or {}
         policy = output.get('statePolicy') or settings.get('statePolicy') or science['statePolicy']['strategy']
@@ -513,6 +590,7 @@ class HydrologicalOperations:
                                'trajectoryStart': group['start'], 'trajectoryEnd': group['end']})
         links = {'eventStates': states, 'stateCalculationTaskId': states[0]['taskId'] if states else None,
                  'endStateVersionId': states[0]['endStateVersionId'] if states else None}
+        output.setdefault('timings', {})['stateSavingSeconds'] = round(time.perf_counter() - state_started, 3)
         self.check_cancelled(identifier)
         write_json(safe_task(self.manager.root, output['taskId']) / 'result.json', {**output, **links})
         return {**output, 'frozenRequest': frozen, 'primaryTaskId': output['taskId'], 'sourceTaskId': output['taskId'], 'eventStates': states,
@@ -546,6 +624,25 @@ class HydrologicalOperations:
         if not isinstance(source, dict) or not source:
             raise ValueError('该成果缺少保存的计算条件，请恢复计算条件后模拟')
         return copy.deepcopy(source)
+
+    def rerun_event_result(self,identifier,request):
+        original=request['sourceEventResult']
+        outputs={}
+        for index,row in enumerate(request['frozenEventRequests']):
+            outputs[row['taskId']]=self.child(identifier,row['request'],f'正在按原条件复算洪水过程 {index+1}/{len(request["frozenEventRequests"])}','event')
+        graphs,states={},[]
+        for row in original['eventStates']:
+            output=outputs[row['taskId']]
+            graph=self.slice_hydrograph(output['hydrograph'],row['start'],row['end'])
+            self.assert_same_flow(original['hydrographs'][row['eventId']],graph)
+            graphs[row['eventId']]=graph
+            states.append({**row,'taskId':output['taskId'],'endStateVersionId':output['endStateVersionId']})
+        primary=outputs[original['primaryTaskId']]['taskId']
+        result={key:copy.deepcopy(value) for key,value in original.items() if key not in {'operationId','taskId','timings','frozenRequest'}}
+        result.update(primaryTaskId=primary,sourceTaskId=primary,hydrographs=graphs,hydrograph=next(iter(graphs.values())),eventStates=states,
+                      eventMetrics=[{'eventId':key,**(value.get('metrics') or {})} for key,value in graphs.items()],
+                      frozenRequest=self.manager.get(primary)['runConfig'])
+        return result
 
     def state_replay(self, identifier, request):
         source_id = request['sourceTaskId']
@@ -672,7 +769,17 @@ class HydrologicalOperations:
                 request = read_json(folder / 'request.json')
                 self.update(identifier, status='running', stageLabel='正在准备计算', startedAt=now())
             kind = request['operation']
-            if kind in {'calibration', 'manualTrial'}:
+            started = time.perf_counter()
+            if kind == 'rerun' and request.get('frozenEventRequests'):
+                result=self.rerun_event_result(identifier,request)
+            elif kind == 'rerun':
+                output = self.child(identifier, request['frozenRequest'], '正在按冻结条件复算')
+                frozen = self.manager.get(output['taskId'])['runConfig']
+                if frozen['runType'] == 'calibration':
+                    result = self.final_states(identifier, output, frozen)
+                else:
+                    result = {**output, 'primaryTaskId': output['taskId'], 'stateCalculationTaskId': output['taskId'], 'frozenRequest': frozen}
+            elif kind in {'calibration', 'manualTrial'}:
                 result = self.calibration(identifier, request)
             elif kind == 'stateReplay':
                 result = self.state_replay(identifier, request)
@@ -697,6 +804,7 @@ class HydrologicalOperations:
                 self.check_cancelled(identifier)
                 result.update(operationId=identifier, operation=kind, context=request['context'], resultSource='model-backend',
                               name=self.get(identifier)['name'])
+                result.setdefault('timings', {})['operationSeconds'] = round(time.perf_counter() - started, 3)
                 write_json(folder / 'result.json', result)
                 self.update(identifier, status='completed', progress=100, stageLabel='计算完成', completedAt=now(),
                             primaryTaskId=result.get('primaryTaskId'), lineage=result.get('lineage', {}))

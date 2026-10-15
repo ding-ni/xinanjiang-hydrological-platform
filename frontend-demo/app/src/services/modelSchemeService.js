@@ -25,30 +25,36 @@ export async function saveModelScheme(cal, request, api = modelApi) {
   else delete request.inputs.stationNetwork
   const row = await api('model-schemes', { method: 'POST', body: {
     ...(cal.modelSchemeId ? { id: cal.modelSchemeId, revision: cal.modelSchemeLatestRevision || cal.modelSchemeRevision } : {}),
-    name: cal.modelSchemeName, definition: schemeDefinition(request, cal.rainfallMethod), calculationDraft: request
+    name: cal.modelSchemeName, definition: schemeDefinition(request, cal.rainfallMethod), calculationDraft: request,
+    editor: calibrationEditor(cal), ...(cal.modelSchemeDraftRevision != null ? { draftRevision: cal.modelSchemeDraftRevision } : {})
   } })
   cal.modelSchemeId = row.id; cal.modelSchemeRevision = row.revision; cal.modelSchemeLatestRevision = row.latestRevision; cal.modelSchemeName = row.name
+  cal.modelSchemeDraftRevision = row.draftRevision
   cal.saveCurrentWorkspace()
   return row
 }
 
-export async function restoreModelScheme(cal, app, row) {
+export async function restoreModelScheme(cal, app, row, { draft = false } = {}) {
+  row = { ...row, editor: draft ? row.editor : row.savedEditor || {} }
   const request = row.calculationDraft
   const context = request?.context || row.editor?.context || row.definition?.context
   if (context?.contextKey && context.contextKey !== app.contextKey) throw new Error('请选择当前流域的方案')
+  cal.resetCalibrationScheme({}, app.backendCase)
   if (!request?.period) {
     restoreCalibrationEditor(cal, row.editor || {})
     cal.modelSchemeId = row.id; cal.modelSchemeRevision = row.revision; cal.modelSchemeLatestRevision = row.latestRevision; cal.modelSchemeName = row.name
+    cal.modelSchemeDraftRevision = row.draftRevision
     cal.saveCurrentWorkspace()
     return
   }
   const type = request.runType === 'simulation' ? 'continuousSimulation' : request.period.mode === 'continuous' ? 'continuousCalibration' : 'eventCalibration'
-  const catalogueIds = new Set(cal.events.map(event => event.id))
+  const catalogue = cal.events.map(event=>({...event}))
   cal.loadFromTaskConfig(type, normalizeBackendTask({ runConfig: request }).runConfig)
-  cal.events = cal.events.filter(event => catalogueIds.has(event.id))
-  cal.schemeWindows = (request.period.events || []).filter(event => !catalogueIds.has(event.id)).map(event => ({ ...event,
-    sourceBundleVersionId: request.inputs.sourceBundleVersionId || request.inputs.bundleVersionId, runtimeRegistered: false, status: 'active' }))
+  const partition=partitionSchemeWindows(catalogue,request.period.events || [])
+  cal.events=partition.catalogue
+  cal.schemeWindows=partition.windows.map(event=>({...event,sourceBundleVersionId:request.inputs.sourceBundleVersionId || request.inputs.bundleVersionId,runtimeRegistered:false,status:event.status || 'active'}))
   cal.modelSchemeId = row.id; cal.modelSchemeRevision = row.revision; cal.modelSchemeLatestRevision = row.latestRevision; cal.modelSchemeName = row.name
+  cal.modelSchemeDraftRevision = row.draftRevision
   cal.rainfallMethod = row.definition.inputs.rainfallMethod || 'reuse'
   cal.stationSourceId = row.definition.inputs.stationSourceId || null
   cal.idwPower = row.definition.inputs.idwPower ?? 2; cal.minimumStations = row.definition.inputs.minimumStations ?? 1
@@ -65,6 +71,15 @@ export async function restoreModelScheme(cal, app, row) {
   cal.saveCurrentWorkspace()
 }
 
+export function partitionSchemeWindows(catalogue, events) {
+  const sameTime=(a,b)=>String(a||'').replace(' ','T').slice(0,16)===String(b||'').replace(' ','T').slice(0,16)
+  const originals=new Map(catalogue.map(row=>[row.id,row]))
+  const selected=new Map(events.map(row=>[row.id,row]))
+  const changed=row=>{const original=originals.get(row.id);return original?.start&&original?.end&&row.start&&row.end&&(!sameTime(original.start,row.start)||!sameTime(original.end,row.end))}
+  return {catalogue:catalogue.map(row=>({...row,start:row.start||selected.get(row.id)?.start,end:row.end||selected.get(row.id)?.end,purpose:selected.get(row.id)&&!changed(selected.get(row.id)) ? selected.get(row.id).purpose : '未使用'})),
+    windows:events.filter(row=>!originals.has(row.id)||changed(row)).map(row=>({...row,...(changed(row)?{catalogueBoundaryOverride:true}:{})}))}
+}
+
 // Editing is stored before the selected periods are ready for calculation.
 export const CALIBRATION_EDITOR_FIELDS = [
   'section', 'calibrationMode', 'eventId', 'schemeWindows', 'rainfallMethod', 'stationSourceId', 'idwPower', 'minimumStations',
@@ -73,7 +88,7 @@ export const CALIBRATION_EDITOR_FIELDS = [
   'searchStrategy', 'searchParameters', 'routingSearchParameters', 'calibrationTarget', 'jointProfile', 'searchSeed', 'optimizerSettings',
   'searchParameterOrder', 'eventSplitSeed', 'eventAssignment', 'warmupDays', 'statePolicy', 'continuousOrigin', 'scienceVersionId',
   'scienceDescriptor', 'evaporationMode', 'candidateWarmupHours', 'sourcePlan', 'sourcePlanRequestTemplate', 'originalCalibrationPlan',
-  'activeOperationId', 'activeOperationRequest'
+  'activeOperationId', 'activeOperationRequest', 'editorTrialMode', 'manualRoutingPayload', 'searchRangeOverrides'
 ]
 
 export function calibrationEditor(cal) {
@@ -84,13 +99,19 @@ export function calibrationEditor(cal) {
   }))
 }
 
+export function calibrationEditorIdentity(editor) {
+  const copy = JSON.parse(JSON.stringify(editor))
+  for (const key of ['eventId', 'activeOperationId', 'activeOperationRequest']) delete copy[key]
+  return JSON.stringify(copy)
+}
+
 export function restoreCalibrationEditor(cal, editor) {
   for (const key of CALIBRATION_EDITOR_FIELDS) if (editor[key] !== undefined) cal[key] = JSON.parse(JSON.stringify(editor[key]))
   if (Array.isArray(editor.events)) {
-    const selected = new Map(editor.events.map(row => [row.id, row]))
-    cal.events = cal.events.map(row => ({ ...row, ...(selected.get(row.id) || { purpose: '未使用' }) }))
+    const partition=partitionSchemeWindows(cal.events,editor.events)
+    cal.events=partition.catalogue
     const windows = new Map((cal.schemeWindows || []).map(row => [row.id, row]))
-    for (const row of editor.events) if (!cal.events.some(event => event.id === row.id)) {
+    for (const row of partition.windows) {
       windows.set(row.id, { ...row, ...windows.get(row.id), status: row.status || 'active', runtimeRegistered: false,
         sourceBundleVersionId: cal.schemeSourceBundleVersionId })
     }
@@ -106,7 +127,11 @@ export function restoreCalibrationEditor(cal, editor) {
 
 export async function saveCalibrationEditor(cal, api = modelApi) {
   if (!cal.modelSchemeId) return null
-  return api(`model-schemes/${cal.modelSchemeId}/draft`, { method: 'POST', body: { editor: calibrationEditor(cal) } })
+  const row = await api(`model-schemes/${cal.modelSchemeId}/draft`, { method: 'POST', body: { editor: calibrationEditor(cal),
+    revision: cal.modelSchemeLatestRevision || cal.modelSchemeRevision || 0,
+    ...(cal.modelSchemeDraftRevision != null ? { draftRevision: cal.modelSchemeDraftRevision } : {}) } })
+  cal.modelSchemeDraftRevision = row.draftRevision
+  return row
 }
 
 export async function recoverActiveCalibrationOperation(cal, api = modelApi) {
@@ -154,12 +179,10 @@ export async function openOriginalCalibrationRecord(cal, app, record, api = mode
   const rows = (await api('model-schemes')).schemes || []
   for (const row of rows) {
     const saved = await api(`model-schemes/${row.id}`)
-    const source = saved.editor?.originalCalibrationPlan || saved.calculationDraft?.sourcePlan
+    const source = saved.savedEditor?.originalCalibrationPlan || saved.editor?.originalCalibrationPlan || saved.calculationDraft?.sourcePlan
     if (source?.planSHA256 === plan.planSHA256 && source?.planId === plan.planId) {
       await restoreModelScheme(cal, app, saved)
       cal.originalCalibrationPlan = JSON.parse(JSON.stringify(plan))
-      makeSchemeEditable(cal, record)
-      await saveCalibrationEditor(cal, api)
       return saved
     }
   }
@@ -178,6 +201,5 @@ export async function openOriginalCalibrationRecord(cal, app, record, api = mode
   editableRequest.calibration.initialParameters = JSON.parse(JSON.stringify(cal.params))
   for (const key of ['initializationPolicy', 'initialCandidates', 'effectiveInitialCandidates']) delete editableRequest.calibration.optimizer[key]
   const saved = await saveModelScheme(cal, editableRequest, api)
-  await saveCalibrationEditor(cal, api)
   return saved
 }

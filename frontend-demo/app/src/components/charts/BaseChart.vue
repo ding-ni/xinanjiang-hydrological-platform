@@ -12,6 +12,7 @@ const props = defineProps({
 })
 
 const el = ref(null)
+const emit = defineEmits(['select-time'])
 const chart = shallowRef(null)
 let ro = null
 
@@ -22,6 +23,7 @@ function render() {
 
 onMounted(() => {
   chart.value = echarts.init(el.value)
+  chart.value.on('click', event => emit('select-time', event.dataIndex))
   render()
   if (props.autoresize) {
     ro = new ResizeObserver(() => chart.value?.resize())

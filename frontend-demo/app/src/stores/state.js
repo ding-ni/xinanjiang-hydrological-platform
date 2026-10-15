@@ -158,6 +158,7 @@ export const useStateStore = defineStore('state', {
         analysisStatus: stateScienceBlockReason(row, useAppStore().backendCase?.modelImplementationSHA256) ? '仅供查看' : '可续算',
         parameters: Object.fromEntries(Object.entries(row.parameters).map(([key, value]) => [key.replace('runoff.', ''), value])),
         parameterVersionId: row.parameterVersionId,
+        implementationReplayable: row.implementationReplayable === true,
         parentStateVersionId: row.parentStateVersionId,
         inputBundleVersionId: frozenInputBundleVersionId(row),
         inputBundleManifestSHA256: row.inputBundleManifestSHA256 || row.lineage?.inputBundleManifestSHA256 || null,

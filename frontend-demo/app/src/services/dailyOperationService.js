@@ -103,7 +103,7 @@ export function createDailyClient(api = modelApi) {
     async list(contextKey) { const payload = await api('operations'); return (payload.operations || []).filter(row => belongsToOperationContext(row, contextKey)) },
     submit(body) { return api('operations', { method: 'POST', body: { requestId: uniqueRequestId('OP'), ...body } }) },
     read(id) { return api(`operations/${encodeURIComponent(id)}`) },
-    result(id) { return api(`operations/${encodeURIComponent(id)}/result`) },
+    result(id) { return api(`${String(id).startsWith('OP-') ? 'operations' : 'tasks'}/${encodeURIComponent(id)}/result`) },
     cancel(id) { return api(`operations/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: {} }) },
     saveParameter(body) { return api('parameter-schemes', { method: 'POST', body }) }
   }

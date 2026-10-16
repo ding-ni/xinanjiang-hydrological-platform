@@ -103,6 +103,6 @@ test('changing the original objective removes its source identity and keeps the 
   assert.equal(workspace.sourcePlan, null)
   assert.equal(workspace.originalPlanChanged, true)
   assert.equal(workspace.criteria.weights.kge, .3)
-  assert.equal(workspace.searchParameterOrder, null)
-  assert.deepEqual(workspace.optimizerSettings, {})
+  assert.deepEqual(workspace.searchParameterOrder, ['runoff.KC'])
+  assert.deepEqual(workspace.optimizerSettings, { differentialWeight: .8 })
 })

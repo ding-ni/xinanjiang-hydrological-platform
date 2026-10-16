@@ -1,7 +1,7 @@
 <template>
   <div class="routing-workbench" :class="{ 'query-only': queryOnly }">
     <form v-if="!queryOnly" class="version-bar" @submit.prevent="$emit('register')">
-      <label class="version-field">已登记汇流版本<select class="input" :value="editVersion" :disabled="disabled" @change="requestVersion"><option v-for="row in versions" :key="row.routingVersionId" :value="row.routingVersionId">{{ row.name }}</option></select></label>
+      <label class="version-field">当前方案的汇流参数<select class="input" :value="editVersion" :disabled="disabled" @change="requestVersion"><option v-for="row in versions" :key="row.routingVersionId" :value="row.routingVersionId">{{ row.name }}</option></select></label>
       <button type="button" class="btn" :disabled="disabled || dirty || editVersion === selectedVersionId || !parameters" @click="$emit('select')"><Check class="tool-icon" />选用此版本</button>
       <label class="name-field">新版本名称<input class="input" :value="name" :disabled="disabled" maxlength="120" required placeholder="例如：徐畈洪水汇流方案" @input="$emit('update:name', $event.target.value)" /></label>
       <button class="btn primary" :disabled="disabled || !parameters"><Plus class="tool-icon" />登记新版本</button>
@@ -10,7 +10,7 @@
     <div class="routing-layout">
       <div class="map-workspace">
           <div ref="mapHost" class="topology-map" aria-label="真实流域拓扑地图"></div>
-          <div class="map-caption"><span><i class="legend river" />南安溪河网</span><span><i class="legend unit" />汇流单元出口</span><span><i class="legend control" />徐畈断面</span><button class="btn sm" :disabled="!pointCoordinates" @click="$emit('point', pointCoordinates)"><Location class="tool-icon" />查询选定点</button></div>
+          <div class="map-caption"><span><i class="legend river" />南安溪河网</span><span><i class="legend unit" />汇流单元出口</span><span><i class="legend control" />徐畈断面</span><button class="btn sm" :disabled="!pointCoordinates" @click="$emit('point', pointCoordinates)"><Location class="tool-icon" />{{ queryOnly ? '选用此位置' : '查询选定点' }}</button></div>
           <div v-if="pointCoordinates" class="point-coordinate" role="status">选定点 {{ pointCoordinates[0].toFixed(6) }}° E / {{ pointCoordinates[1].toFixed(6) }}° N</div>
       </div>
       <div v-if="!queryOnly" class="parameter-workspace">

@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 
 const routes = [
+  { path: '/results/:id/sections', name: 'result-sections', component: () => import('@/views/RiverSectionView.vue'), meta: { title: '断面流量' } },
   { path: '/system', name: 'system', component: () => import('@/views/SystemView.vue'), meta: { title: '工作区与系统' } },
   { path: '/', redirect: '/realtime' },
   { path: '/data', name: 'data', component: () => import('@/views/DataView.vue'), meta: { title: '水文资料库' } },

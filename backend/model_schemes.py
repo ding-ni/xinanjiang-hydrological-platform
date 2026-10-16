@@ -20,6 +20,22 @@ def editor_identity(editor):
     return {key:value for key,value in editor.items() if key not in {'eventId','activeOperationId','activeOperationRequest'}}
 
 
+def change_summary(before, after):
+    if not before:
+        return '首次保存'
+    changes = []
+    for key, label in (('period', '洪水与时段'), ('inputs', '输入与处理'), ('parameters', '初始参数'),
+                       ('routing', '汇流参数'), ('science', '蒸散发与起算')):
+        if before.get(key) != after.get(key):
+            changes.append(label)
+    old, new = before.get('calibration') or {}, after.get('calibration') or {}
+    if old.get('initialParameters') != new.get('initialParameters'):
+        changes.append('初始参数')
+    if {k:v for k,v in old.items() if k != 'initialParameters'} != {k:v for k,v in new.items() if k != 'initialParameters'}:
+        changes.append('率定设置')
+    return '、'.join(dict.fromkeys(changes)) or '方案设置'
+
+
 def preparation_binding_key(record, request):
     # Parameter-only versions share inputs; PET/science changes require their
     # own coverage check even when the selected floods have not changed.
@@ -77,6 +93,9 @@ class ModelSchemes:
                 CREATE TABLE IF NOT EXISTS scheme_input_assets (
                     asset_id TEXT PRIMARY KEY, scheme_id TEXT, scheme_revision INTEGER,
                     role TEXT NOT NULL, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS model_scheme_history_notes (
+                    scheme_id TEXT NOT NULL, revision INTEGER NOT NULL, note TEXT NOT NULL,
+                    PRIMARY KEY(scheme_id,revision));
             ''')
 
     def defaults(self, body=None):
@@ -147,7 +166,13 @@ class ModelSchemes:
             editing = json.loads(editor['payload']) if editor else {}
             snapshot = db.execute('SELECT * FROM model_scheme_snapshots WHERE scheme_id=? AND revision=?', (scheme_id, selected)).fetchone()
             draft_version = db.execute('SELECT revision FROM model_scheme_draft_versions WHERE scheme_id=?', (scheme_id,)).fetchone()
-            revisions = [dict(r) for r in db.execute('SELECT revision,created_at FROM model_scheme_revisions WHERE scheme_id=? ORDER BY revision DESC', (scheme_id,))]
+            history = list(db.execute('SELECT r.revision,r.created_at,r.calculation_draft,n.note FROM model_scheme_revisions r LEFT JOIN model_scheme_history_notes n ON n.scheme_id=r.scheme_id AND n.revision=r.revision WHERE r.scheme_id=? ORDER BY r.revision', (scheme_id,)))
+            revisions, previous = [], {}
+            for item in history:
+                request = json.loads(item['calculation_draft'])
+                revisions.append({'revision': item['revision'], 'created_at': item['created_at'], 'note': item['note'] or '', 'summary': change_summary(previous, request)})
+                previous = request
+            revisions.reverse()
             return {**dict(scheme), 'latestRevision': scheme['revision'], 'revision': selected,
                     'definition': json.loads(row['definition']) if row else {'context': editing.get('context', {}), 'period': {}},
                     'calculationDraft': json.loads(row['calculation_draft']) if row else {},
@@ -166,6 +191,14 @@ class ModelSchemes:
             raise ValueError('方案名称须为1至80个字符')
         with self.database.connect() as db:
             db.execute('UPDATE model_schemes SET name=?,updated_at=? WHERE id=?', (name, now(), scheme_id))
+        return self.get(scheme_id)
+
+    def history_note(self, scheme_id, body):
+        if not isinstance(body, dict) or set(body) != {'revision', 'note'} or type(body['revision']) is not int or not isinstance(body['note'], str) or len(body['note'].strip()) > 160:
+            raise ValueError('修改历史备注最多160个字符')
+        self.get(scheme_id, body['revision'])
+        with self.database.connect() as db:
+            db.execute('INSERT INTO model_scheme_history_notes VALUES (?,?,?) ON CONFLICT(scheme_id,revision) DO UPDATE SET note=excluded.note', (scheme_id, body['revision'], body['note'].strip()))
         return self.get(scheme_id)
 
     def discard_editor(self, scheme_id, body):

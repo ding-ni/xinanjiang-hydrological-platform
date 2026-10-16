@@ -2,7 +2,7 @@
   <div class="basin-map" ref="rootEl">
     <div class="map-canvas" ref="mapEl" />
     <div v-if="!hasSpatialResources" class="spatial-pending">{{ spatialPendingText }}</div>
-    <div v-else-if="legendMode === 'rain' && (props.layers.qpfGrid || smoothRainEnabled) && !props.stations.some(station => station.type === 'rain' && station.rain1h != null && station.rain1h !== '' && Number.isFinite(Number(station.rain1h)) && Number(station.rain1h) >= 0) && !app.isSelinco" class="rain-empty" role="status">此时刻无雨量记录</div>
+    <div v-else-if="legendMode === 'rain' && (props.layers.qpfGrid || smoothRainEnabled) && !hasGridRainfall(props.qpfGridCells) && !app.isSelinco" class="rain-empty" role="status">此时刻网格雨量缺测；实测过程可在下方查看</div>
     <div v-if="terrainBadge" class="terrain-badge">
       <b>{{ terrainBadge.label }}</b>
       <span v-if="terrainBadge.cellCount">{{ terrainBadge.cellCount.toLocaleString() }} 有效网格</span>

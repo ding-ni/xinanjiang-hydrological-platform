@@ -1,6 +1,19 @@
 import { it } from 'node:test'
 import assert from 'node:assert/strict'
 import { searchCoordinates, selectedSearchParameters, searchSelectionError, applySearchRangeTemplate } from '../src/services/calibrationSpaceService.js'
+
+it('common and expanded ranges preserve selections and expanded intervals contain common intervals', () => {
+  const keys=['WM','WUM','WLM','B','SM','EX','K_total_day','groundwater_fraction','IM']
+  const definitions=keys.map(key=>({key,minimum:0,maximum:1}))
+  const common=applySearchRangeTemplate(null,definitions,'project')
+  const expanded=applySearchRangeTemplate(null,definitions,'extended')
+  assert.deepEqual(common.WM,{minimum:120,maximum:240})
+  assert.deepEqual(common.K_total_day,{minimum:.3,maximum:.9})
+  for(const key of keys){assert.ok(expanded[key].minimum<=common[key].minimum);assert.ok(expanded[key].maximum>=common[key].maximum)}
+  const selection={SM:{minimum:10,maximum:20}},before=structuredClone(selection)
+  assert.deepEqual(Object.keys(applySearchRangeTemplate(selection,definitions,'extended')),['SM'])
+  assert.deepEqual(selection,before)
+})
 import { buildCalibrationRequest } from '../src/services/calibrationSubmissionService.js'
 import { normalizeBackendTask } from '../src/services/modelBackendService.js'
 

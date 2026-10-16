@@ -5,7 +5,7 @@
       <div class="metric"><span>{{ app.hasLakeBalance ? '入湖控制断面' : '出口断面' }}</span><b>{{ displaySummary.targetSection }}</b></div>
       <div class="metric"><span>{{ usesModelInputs ? '实测流量' : '当前流量' }}</span><b>{{ metricValue(displaySummary.currentFlow, 'm³/s') }}</b></div>
       <div class="metric"><span>{{ app.hasLakeBalance ? '湖面水位' : usesModelInputs ? '实测水位' : '当前水位' }}</span><b>{{ metricValue(displaySummary.currentLevel, 'm') }}</b></div>
-      <div class="metric"><span>{{ usesModelInputs ? '徐畈控制区面雨量' : '流域面平均雨量' }}</span><b>{{ hasNananxiObservation ? `${basinRain} mm` : (app.hasLakeBalance ? `近 ${monitor.rainWindow} 小时 ${basinRain} mm` : '—') }}</b></div>
+      <div class="metric"><span>{{ usesModelInputs ? '本小时流域面雨量（插值）' : '流域面平均雨量' }}</span><b>{{ hasNananxiObservation ? `${basinRain} mm` : (app.hasLakeBalance ? `近 ${monitor.rainWindow} 小时 ${basinRain} mm` : '—') }}</b></div>
       <div class="metric"><span>{{ usesModelInputs ? '回放时刻' : '资料时间' }}</span><b>{{ (app.hasLakeBalance || hasNananxiObservation) ? monitor.currentTimeLabel : '待接入' }}</b></div>
     </div>
 
@@ -88,7 +88,6 @@
               <option v-for="station in projectStations" :key="station.id" :value="station.id">{{ station.name }} · {{ station.typeLabel || (station.type === 'rain' ? '雨量站' : '水文站') }}</option>
             </select>
           </div>
-          <p v-if="databaseError" class="time-hint" role="alert">{{ databaseError }}</p>
         </div>
       </div>
 
@@ -109,7 +108,7 @@
             :zoom="activeZoom"
             :playing="monitor.playing"
             :qpf-grid-cells="displayRainCells"
-            smooth-rain-source="station-idw"
+            smooth-rain-source="model-grid"
             legend-mode="rain"
             @select-station="onSelect"
           />
@@ -139,11 +138,12 @@
 
     <TimelineBar v-if="app.hasLakeBalance || hasNananxiObservation || usesModelInputs" />
     <div v-else class="timeline-pending">当前项目没有可回放的逐小时资料</div>
+    <ObservationProcess v-if="usesModelInputs && monitor.historicalPreview" :preview="monitor.historicalPreview" :summary="monitor.modelInputSummary" :stations="projectStations" :time-index="monitor.timeIndex" @select-time="monitor.setTimeIndex($event)" />
   </section>
 </template>
 
 <script setup>
-import { computed, onMounted, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
+import { computed, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMonitorStore } from '@/stores/monitor'
 import { useAppStore } from '@/stores/app'
@@ -153,12 +153,11 @@ import BasinMap from '@/components/map/BasinMap.vue'
 import StationDetail from '@/components/monitor/StationDetail.vue'
 import SelincoStationDetail from '@/components/monitor/SelincoStationDetail.vue'
 import TimelineBar from '@/components/monitor/TimelineBar.vue'
-import { loadJsonResource } from '@/services/projectDataService'
+import ObservationProcess from '@/components/monitor/ObservationProcess.vue'
+import { windowStation } from '@/services/observationProcessService'
 import { gridCellsAt, gridCellsAtTime, loadNananxiRainfallGrid } from '@/services/rainfallGridService'
 import { projectDataForContext } from '@/services/caseAvailabilityService'
 import { usesModelInputService, finiteInputValue } from '@/services/modelInputService'
-import { modelApi } from '@/services/modelBackendService'
-import { stationRainfallGrid } from '@/services/rainfallInterpolationService'
 
 const monitor = useMonitorStore()
 const app = useAppStore()
@@ -174,44 +173,10 @@ const precipLoading = ref(false)
 const precipError = ref('')
 const precipCellCache = new Map()
 let observationRequestId = 0
-const databaseMonitor = shallowRef(null)
-const databaseError = ref('')
-let databaseRevision = 0
-let databaseTimer
-onBeforeUnmount(() => { databaseRevision++; clearTimeout(databaseTimer) })
 
 const product = computed(() => app.latestForecastProduct)
 const caseData = computed(() => projectDataForContext(app.activeContext, app.projectData, { loading: app.projectDataLoading, error: app.projectDataError }))
 const usesModelInputs = computed(() => usesModelInputService(app.activeContext))
-const rainfallGeometry = shallowRef([])
-let geometryRevision = 0
-watch(() => [usesModelInputs.value, caseData.value?.spatial?.terrain?.gridUrl], async ([enabled, url]) => {
-  const token = ++geometryRevision
-  rainfallGeometry.value = []
-  if (!enabled || !url) return
-  try {
-    const grid = await loadJsonResource(url, '降雨显示网格')
-    if (token === geometryRevision) rainfallGeometry.value = (grid.features || []).map((feature, index) => ({
-      id: feature.properties?.id || `rain-${index}`, bounds: feature.geometry?.coordinates?.[0] || []
-    }))
-  } catch (failure) { if (token === geometryRevision) rainGridError.value = failure.message }
-}, { immediate: true })
-watch([usesModelInputs, () => monitor.currentTimeLabel, () => app.basinId], () => {
-  const current = ++databaseRevision
-  clearTimeout(databaseTimer)
-  databaseMonitor.value = null
-  databaseError.value = ''
-  const end = monitor.currentTimeLabel.replace(' ', 'T')
-  if (!usesModelInputs.value || !/^\d{4}-\d{2}-\d{2}T\d{2}:00$/.test(end)) return
-  databaseTimer = setTimeout(async () => {
-    try {
-      const result = await modelApi(`database/monitor?${new URLSearchParams({ end })}`)
-      if (current === databaseRevision) databaseMonitor.value = result
-    } catch (error) {
-      if (current === databaseRevision) databaseError.value = error.message
-    }
-  }, 100)
-}, { immediate: true })
 const hasNananxiObservation = computed(() => Boolean(caseData.value) && app.hasObservationCatalog && monitor.hasHistoricalObservations
   && (!usesModelInputs.value || (app.modelScale === '1km' && !app.backendError && ['model-qc','database-observed'].includes(monitor.historicalPreview?.sourceType))))
 const projectStations = computed(() => {
@@ -221,17 +186,17 @@ const projectStations = computed(() => {
   ]
   return [...new Map(rows.map((row) => [row.id, row])).values()].map((row) => ({
     ...row,
-    ...(usesModelInputs.value ? databaseMonitor.value?.stations[String(row.code || row.id)] || {
+    ...(usesModelInputs.value ? windowStation(monitor.historicalPreview, String(row.code || row.id), monitor.timeIndex) || {
       observationReady: false, hasRainObservation: false, hasRiverObservation: false,
       rain1h: null, rainTotal: null, level: null, flow: null, sourceType: 'database-observed',
-      quality: databaseError.value ? '查询失败' : databaseMonitor.value ? '此时段无记录' : '正在查询',
+      quality: monitor.historicalPreview ? '此时段无记录' : '正在读取',
       sourceLabel: '水文资料库 · 原始实测记录', rainSeries: [], flowSeries: [], levelSeries: []
     } : hasNananxiObservation.value ? monitor.historicalStationSnapshot(row.code || row.id) : null)
   }))
 })
 const displaySummary = computed(() => {
   if (app.hasLakeBalance) return selincoSummary
-  const outlet = usesModelInputs.value ? databaseMonitor.value?.stations['70115800'] : hasNananxiObservation.value ? monitor.historicalStationSnapshot('70115800') : null
+  const outlet = usesModelInputs.value ? windowStation(monitor.historicalPreview, '70115800', monitor.timeIndex) : hasNananxiObservation.value ? monitor.historicalStationSnapshot('70115800') : null
   return {
     basinName: app.basinName,
     targetSection: projectStations.value.find((station) => station.type === 'section')?.name || '待登记',
@@ -287,13 +252,11 @@ const currentPrecipCells = computed(() => {
   const index = Math.min(product.times.length - 1, monitor.timeIndex)
   return product.cells.map((cell) => ({ id: cell.id, bounds: cell.bounds, qpf: cell.values[index] == null ? null : Number(cell.values[index]) }))
 })
-const displayRainCells = computed(() => usesModelInputs.value ? stationRainfallGrid(currentPrecipCells.value.length ? currentPrecipCells.value : rainfallGeometry.value, activeStations.value) : currentPrecipCells.value)
+const displayRainCells = computed(() => currentPrecipCells.value)
 const basinRain = computed(() => {
   if (usesModelInputs.value) {
-    const cells = displayRainCells.value.filter(cell => typeof cell.qpf === 'number' && Number.isFinite(cell.qpf))
-    const area = cell => Number(cell.areaKm2 ?? cell.area_km2) || 1
-    const weight = cells.reduce((sum, cell) => sum + area(cell), 0)
-    return weight ? (cells.reduce((sum, cell) => sum + cell.qpf * area(cell), 0) / weight).toFixed(1) : '—'
+    const value = finiteInputValue(monitor.modelInputSummary?.arealRainfallMm?.[monitor.timeIndex])
+    return value == null ? '—' : value.toFixed(1)
   }
   if (hasNananxiObservation.value) {
     const values = projectStations.value.map((station) => station.rain1h).filter((value) => value != null)
@@ -537,10 +500,11 @@ function bringToForecast() {
 .station-picker .input { width: 100%; min-width: 0; }
 .view-realtime {
   display: grid;
-  grid-template-rows: 46px minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(460px, 1fr) auto auto;
   gap: 10px;
   width: 100%;
-  height: 100%;
+  height: auto;
+  min-height:100%;
   min-height: 0;
 }
 .view-realtime.has-product { grid-template-rows: 46px auto minmax(0, 1fr) auto; }

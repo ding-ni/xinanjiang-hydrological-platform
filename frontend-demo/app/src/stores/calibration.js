@@ -295,7 +295,7 @@ function createWorkspace(context) {
     calibrationTarget: 'runoff',
     routingSearchParameters: null,
     jointProfile: 'reference-16', statePolicy: 'independent-warmup',
-    scienceVersionId: null, scienceDescriptor: null, evaporationMode: 'constant-zero',
+    scienceVersionId: null, scienceDescriptor: null, evaporationMode: 'constant-zero', scienceConditionsDraft: null,
     continuousOrigin: null, requiredInputBundleVersionId: null,
     candidateWarmupHours: null,
     searchSeed: 42,
@@ -361,7 +361,7 @@ const WORKSPACE_FIELDS = [
   'searchParameters',
   'calibrationTarget',
   'routingSearchParameters',
-  'jointProfile', 'statePolicy', 'scienceVersionId', 'scienceDescriptor', 'evaporationMode',
+  'jointProfile', 'statePolicy', 'scienceVersionId', 'scienceDescriptor', 'evaporationMode', 'scienceConditionsDraft',
   'continuousOrigin', 'requiredInputBundleVersionId',
   'candidateWarmupHours',
   'searchSeed',
@@ -740,10 +740,12 @@ export const useCalibrationStore = defineStore('calibration', {
       this.algorithm = backend?.algorithms?.[0]?.id || this.algorithm
       this.maxEvaluations = 120
       this.populationSize = 12; this.searchStrategy = 'joint'; this.searchSeed = 42
-      this.searchParameters = null; this.routingSearchParameters = null; this.searchRangeOverrides = {}; this.calibrationTarget = 'runoff'
+      this.searchParameters = Object.fromEntries((backend?.searchParameterDefinitions || []).map(row=>[row.key,{minimum:row.minimum,maximum:row.maximum}]))
+      this.routingSearchParameters = {}; this.searchRangeOverrides = {}; this.calibrationTarget = 'joint'; this.jointProfile='reference-16'
       this.optimizerSettings = {}; this.searchParameterOrder = null; this.criteria = criteriaTemplate()
       this.requiredInputBundleVersionId = null; this.eventAssignment = null; this.trialRecords = []
       this.scienceVersionId = null; this.scienceDescriptor = null; this.candidateWarmupHours = null
+      this.scienceConditionsDraft = null
       this.statePolicy = 'independent-warmup'; this.continuousOrigin = null; this.initialStateVersionId = null
       this.sourcePlan = null; this.sourcePlanRequestTemplate = null; this.originalCalibrationPlan = null
       this.originalPlanChanged = false
@@ -752,7 +754,7 @@ export const useCalibrationStore = defineStore('calibration', {
       this.rainfallMethod = defaults.rainfallMethod || 'stationIdw'; this.stationSourceId = Object.hasOwn(defaults,'stationSourceId') ? defaults.stationSourceId : 'LOCAL_OBSERVATIONS'
       this.schemeSourceBundleVersionId = defaults.sourceBundleVersionId || 'HISTORICAL_SPATIAL_V1'
       this.schemeDataMode = 'historical-database'; this.schemeStationNetwork = null
-      this.schemeRoutingVersionId = useAppStore().selectedRoutingVersionId
+      this.schemeRoutingVersionId = defaults.routingVersionId || 'control-split-v2'
       this.idwPower = defaults.idwPower ?? 2; this.minimumStations = defaults.minimumStations ?? 1
       this.dirty = true; this.running = false; this.runStatus = 'needs-run'; this.runMessage = ''
       this.saveCurrentWorkspace()
@@ -994,9 +996,11 @@ export const useCalibrationStore = defineStore('calibration', {
       this.sourcePlan = null
       this.sourcePlanRequestTemplate = null
       this.originalPlanChanged = true
-      this.searchParameterOrder = null
-      this.optimizerSettings = {}
-      this.eventAssignment = null
+      // Editing detaches delivery identity, not its numerical choices.
+      if (this.optimizerSettings) {
+        const { initializationPolicy, initialCandidates, effectiveInitialCandidates, ...settings } = this.optimizerSettings
+        this.optimizerSettings = settings
+      }
     },
     setParam(key, value) {
       if (!(key in this.params)) return
@@ -1372,6 +1376,7 @@ export const useCalibrationStore = defineStore('calibration', {
     },
     setSearchParameters(value) {
       this.detachOriginalPlan()
+      if (JSON.stringify(Object.keys(value || {}).sort()) !== JSON.stringify(Object.keys(this.searchParameters || {}).sort())) this.searchParameterOrder = null
       this.searchParameters = clonePlain(value)
       this.markNeedsRun('率定参数范围已调整。')
       this.saveCurrentWorkspace()
@@ -1393,6 +1398,7 @@ export const useCalibrationStore = defineStore('calibration', {
     },
     setRoutingSearchParameters(value) {
       this.detachOriginalPlan()
+      if (JSON.stringify(Object.keys(value || {}).sort()) !== JSON.stringify(Object.keys(this.routingSearchParameters || {}).sort())) this.searchParameterOrder = null
       this.routingSearchParameters = clonePlain(value)
       this.markNeedsRun('坡面汇流搜索范围已调整。')
       this.saveCurrentWorkspace()

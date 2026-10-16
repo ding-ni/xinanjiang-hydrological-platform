@@ -32,8 +32,7 @@ const mainNav = [
 ]
 const modelNav = [
   {path:'/calibration',label:'参数率定',icon:TrendCharts},
-  {path:'/config',label:'模型与资料',icon:SetUp},
-  {path:'/diagnostics',label:'进阶诊断',icon:Operation}
+  {path:'/config',label:'模型与资料',icon:SetUp}
 ]
 </script>
 

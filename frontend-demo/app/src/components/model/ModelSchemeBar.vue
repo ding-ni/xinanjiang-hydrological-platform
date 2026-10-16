@@ -1,6 +1,6 @@
 <template>
   <section v-if="!opened" class="scheme-list" aria-label="率定方案">
-    <header><div><h1>参数率定</h1><p>{{ app.basinName }} · {{ cal.section }}</p></div><button class="btn primary" :disabled="busy" @click="beginCreate">新建方案</button></header>
+    <header><div><span class="scheme-eyebrow">{{ app.basinName }} · 参数率定</span><h1>我的率定方案</h1><p>选择洪水，设置初值，率定并保存成果。</p></div><button class="btn primary" :disabled="busy" @click="beginCreate">＋ 新建方案</button></header>
     <form v-if="creating" class="scheme-create" @submit.prevent="create">
       <label for="new-scheme-name">方案名称</label>
       <input id="new-scheme-name" ref="nameInput" v-model.trim="newName" class="input" required maxlength="80" placeholder="填写名称" :disabled="busy" />
@@ -8,39 +8,32 @@
       <button type="button" class="btn" :disabled="busy" @click="creating = false">取消</button>
     </form>
     <p v-if="error" role="alert" class="scheme-error">{{ error }}</p>
+    <div class="scheme-list-tools"><input v-model="query" type="search" class="input" placeholder="查找方案名称" aria-label="查找方案" /><select v-model="sort" class="input" aria-label="方案排序"><option value="recent">最近修改</option><option value="name">按名称</option></select><span>{{ filteredRows.length }} 个方案</span></div>
     <div v-if="rows.length" class="scheme-cards">
-      <button v-for="row in rows" :key="row.id" class="scheme-choice" :data-scheme-id="row.id" :disabled="busy" @click="load(row.id)">
-        <div><b>{{ row.name }}</b><p>{{ row.origin || '自建方案' }}<template v-if="row.configurationPending"> · 待完善方案 · 保留 {{ row.deliverySelectionCount }} 场原选取，尚未指定用途</template></p><p v-if="row.summary?.mode !== 'continuous'">已选 {{ row.summary?.selectedCount || 0 }} 场 · 率定 {{ row.summary?.calibration || 0 }} · 验证 {{ row.summary?.validation || 0 }} · 独立检验 {{ row.summary?.independent || 0 }}</p><p v-else>连续时段率定</p><p v-if="row.latestCalculation">最近计算：{{ operationStatuses[row.latestCalculation.status] || row.latestCalculation.status }} · {{ dateLabel(row.latestCalculation.completedAt || row.latestCalculation.createdAt) }}</p></div><span>{{ dateLabel(row.updated_at || row.updatedAt) }}</span><i aria-hidden="true">→</i>
+      <button v-for="row in pagedRows" :key="row.id" class="scheme-choice" :data-scheme-id="row.id" :disabled="busy" @click="load(row.id)">
+        <div><b>{{ row.name }}</b><p><span class="scheme-origin">{{ row.origin || '自建方案' }}</span><template v-if="row.configurationPending"> · 待完善 · 已保留 {{ row.deliverySelectionCount }} 场选取</template><template v-else-if="row.summary?.mode !== 'continuous'"> · 已选 {{ row.summary?.selectedCount || 0 }} 场 · 率定 {{ row.summary?.calibration || 0 }} · 验证 {{ row.summary?.validation || 0 }}</template><template v-else> · 连续率定</template></p><p v-if="row.latestCalculation">最近计算：{{ operationStatuses[row.latestCalculation.status] || row.latestCalculation.status }} · {{ dateLabel(row.latestCalculation.completedAt || row.latestCalculation.createdAt) }}</p></div><span>{{ dateLabel(row.updated_at || row.updatedAt) }}</span><i aria-hidden="true">打开 →</i>
       </button>
     </div>
+    <footer v-if="filteredRows.length" class="scheme-pagination"><span>第 {{ page }} / {{ pages }} 页</span><button class="btn" :disabled="page <= 1" @click="page--">上一页</button><button class="btn" :disabled="page >= pages" @click="page++">下一页</button></footer>
     <p v-else-if="!busy && !creating && !error" class="empty">暂无率定方案</p>
-    <details v-if="historicalAssets.length" class="original-records"><summary>待关联历史记录 · {{ historicalAssets.length }}</summary><p v-for="asset in historicalAssets" :key="asset.asset_id">{{ asset.details.name || asset.asset_id }}：{{ asset.details.reason }}</p></details>
   </section>
   <header v-else class="scheme-heading" aria-label="当前率定方案">
     <button class="btn" :disabled="busy" @click="back">← 方案列表</button><h1>{{ cal.modelSchemeName }}</h1><button class="btn icon-name" title="修改方案名称" aria-label="修改方案名称" :disabled="busy || cal.running" @click="rename">✎</button>
-    <span class="revision-label">版本 {{ cal.modelSchemeRevision || '待完善' }} · {{ editing ? '编辑草稿' : '查看' }}<template v-if="cal.configurationPending"> · 原选取 {{ cal.deliverySelection.length }} 场，须补齐用途和计算条件</template></span>
+    <span class="revision-label">{{ editing ? '正在编辑' : '已保存 · 查看' }}<template v-if="cal.configurationPending"> · 待完善计算条件</template></span>
     <button v-if="!editing" class="btn" :disabled="busy || cal.running" @click="beginEdit">编辑方案</button>
-    <button v-if="editing" class="btn primary" :disabled="busy || cal.running" @click="commit">保存新版本</button>
+    <button v-if="editing" class="btn primary" :disabled="busy || cal.running" @click="commit">保存修改</button>
     <button v-if="editing" class="btn" :disabled="busy || cal.running" @click="discard">放弃修改</button>
     <button class="btn" :disabled="busy || cal.running" @click="saveAs">另存方案</button>
     <button v-if="savedRow?.hasDraft && !editing" class="btn" :disabled="busy || cal.running" @click="resumeDraft">恢复上次草稿</button>
-    <select v-if="savedRow?.revisions?.length" class="input revision-select" aria-label="查看方案版本" :value="cal.modelSchemeRevision" :disabled="busy || editing || cal.running" @change="load(cal.modelSchemeId, Number($event.target.value))"><option v-for="version in savedRow.revisions" :key="version.revision" :value="version.revision">版本 {{ version.revision }} · {{ dateLabel(version.created_at) }}</option></select>
+    <button v-if="savedRow?.revisions?.length" class="btn" :disabled="busy || editing || cal.running" @click="historyDialog.showModal()">修改历史</button>
     <span v-if="saving" class="save-status" role="status">保存中</span>
     <span v-else-if="error" class="scheme-error" role="alert">{{ error }} <button class="text-button" @click="flush">重试</button></span>
   </header>
-  <details v-if="opened && linkedAssets.length" class="scheme-processing">
-    <summary>方案原始输入与处理记录 · {{ linkedAssets.length }}</summary>
-    <div v-for="asset in linkedAssets" :key="asset.asset_id">
-      <b>{{ asset.details.name || (asset.role === 'delivered-plan' ? '同事原始率定条件' : asset.asset_id) }}</b>
-      <span> · {{ asset.role === 'delivered-plan' ? '原方案条件' : asset.role === 'processing-ancestor' ? '加工前序记录' : '冻结输入' }}</span>
-      <p v-if="asset.details.reason">{{ asset.details.reason }}</p>
-      <details><summary>查看原记录</summary><pre>{{ JSON.stringify(asset.details, null, 2) }}</pre></details>
-    </div>
-  </details>
+  <dialog ref="historyDialog" class="scheme-history"><header><h2>修改历史</h2><button class="btn" @click="historyDialog.close()">关闭</button></header><p>恢复历史会保存为当前方案，已有成果保持原计算条件。</p><div v-for="item in savedRow?.revisions || []" :key="item.revision" class="history-item"><div><b>{{ dateLabel(item.created_at) }}</b><p>{{ item.summary || '保存方案' }}<template v-if="item.note"> · {{ item.note }}</template></p></div><button class="btn" @click="annotateHistory(item)">备注</button><button class="btn" :disabled="busy" @click="viewHistory(item)">查看条件</button><button class="btn" :disabled="busy || item.revision === cal.modelSchemeLatestRevision" @click="restoreHistory(item)">恢复此保存</button></div></dialog>
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { modelApi } from '@/services/modelBackendService'
@@ -54,17 +47,21 @@ const editing = ref(false), savedRow = ref(null), cleanIdentity = ref('')
 const app = useAppStore(), cal = useCalibrationStore()
 const route = useRoute()
 const rows = ref([]), opened = ref(false), busy = ref(false), saving = ref(false), creating = ref(false)
-const historicalAssets = ref([]), linkedAssets = ref([])
+const query = ref(''), sort = ref('recent'), page = ref(1), historyDialog = ref(null)
+const filteredRows = computed(() => rows.value.filter(row => row.name.toLowerCase().includes(query.value.trim().toLowerCase())).sort((a,b) => sort.value === 'name' ? a.name.localeCompare(b.name, 'zh-CN') : String(b.updated_at || '').localeCompare(String(a.updated_at || ''))))
+const pages = computed(() => Math.max(1, Math.ceil(filteredRows.value.length / 10)))
+const pagedRows = computed(() => filteredRows.value.slice((page.value - 1) * 10, page.value * 10))
+watch([query, sort], () => { page.value = 1 })
+watch(pages, value => { page.value = Math.min(page.value, value) })
 const newName = ref(''), nameInput = ref(null), error = ref('')
 const emit = defineEmits(['loaded', 'opened', 'editing'])
 let timer, loading = false, pendingSave = Promise.resolve(), restoringUnnamed = false
 
-function dateLabel(value) { return String(value || '').replace('T', ' ').slice(0, 16) }
+function dateLabel(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }).slice(0, 19) : '' }
 async function refresh() {
   try {
-    const [schemes, assets] = await Promise.all([modelApi('model-schemes'), modelApi('scheme-input-assets')])
+    const schemes = await modelApi('model-schemes')
     rows.value = (schemes.schemes || []).filter(row => !row.context?.contextKey || row.context.contextKey === app.contextKey)
-    historicalAssets.value = (assets.assets || []).filter(row => !row.scheme_id)
   }
   catch (failure) { error.value = failure.message }
 }
@@ -78,7 +75,6 @@ async function load(id, revision = null) {
   try {
     await refreshCatalog()
     savedRow.value = await modelApi('model-schemes/' + id + (revision ? '?revision=' + revision : ''))
-    linkedAssets.value = (await modelApi('scheme-input-assets?schemeId=' + encodeURIComponent(id))).assets || []
     await restoreModelScheme(cal, app, savedRow.value)
     setEditing(false)
     cleanIdentity.value = calibrationEditorIdentity(calibrationEditor(cal))
@@ -92,9 +88,10 @@ async function create() {
   busy.value = true; loading = true; error.value = ''
   try {
     if (!restoringUnnamed) {
-      const defaults = await modelApi('database/preparation-defaults')
+      const defaults = {...await modelApi('database/preparation-defaults'),...(await modelApi('database/routing-defaults'))}
       await refreshCatalog()
       cal.resetCalibrationScheme(defaults, app.backendCase)
+      if (route.query.event) {cal.setEventPurpose(String(route.query.event),'率定');cal.setEvent(String(route.query.event))}
     }
     cal.modelSchemeName = newName.value.trim()
     const editor = calibrationEditor(cal)
@@ -108,7 +105,7 @@ async function create() {
   } catch (failure) { error.value = failure.message }
   finally { busy.value = false; await nextTick(); loading = false }
 }
-function beginCreate() { restoringUnnamed = false; newName.value = ''; creating.value = true }
+function beginCreate() { restoringUnnamed = false; newName.value = route.query.event ? '洪水率定 · '+String(route.query.event).replace('xf-','') : ''; creating.value = true }
 async function restoreTask(taskId, schemeId, legacyConditionId = null) {
   busy.value = true; loading = true; error.value = ''
   try {
@@ -158,6 +155,7 @@ onMounted(async () => {
   if (route.query.legacyConditionId) await restoreTask(null, route.query.schemeId && String(route.query.schemeId), String(route.query.legacyConditionId))
   else if (route.query.taskId) await restoreTask(String(route.query.taskId), route.query.schemeId && String(route.query.schemeId))
   else if (route.query.schemeId) await load(String(route.query.schemeId))
+  else if (route.query.event) beginCreate()
   else if (cal.activeOperationId && cal.modelSchemeId) {
     try {
       if (await recoverActiveCalibrationOperation(cal)) { opened.value = true; emit('opened', true); emit('loaded') }
@@ -199,8 +197,8 @@ async function discard() {
 async function settleChanges() {
   if (!hasChanges()) return true
   try {
-    await ElMessageBox.confirm('方案有尚未保存的修改。保存为新版本后继续？选择放弃将恢复已保存版本。', '保存方案修改', {
-      confirmButtonText: '保存新版本', cancelButtonText: '放弃修改', distinguishCancelAndClose: true })
+    await ElMessageBox.confirm('方案有尚未保存的修改。保存修改后继续？选择放弃将恢复上次保存。关闭此窗口则继续编辑。', '保存方案修改', {
+      confirmButtonText: '保存修改', cancelButtonText: '放弃修改', distinguishCancelAndClose: true })
     return await commit()
   } catch (action) {
     if (action !== 'cancel') return false
@@ -215,8 +213,22 @@ async function rename() {
   try {
     const { value } = await ElMessageBox.prompt('填写方案名称', '修改方案名称', { inputValue: cal.modelSchemeName, inputValidator: value => Boolean(value?.trim()) && value.trim().length <= 80, confirmButtonText: '保存名称', cancelButtonText: '取消' })
     const row = await modelApi('model-schemes/' + cal.modelSchemeId + '/rename', { method: 'POST', body: { name: value.trim() } })
-    cal.modelSchemeName = row.name; cal.saveCurrentWorkspace()
+    cal.modelSchemeName = row.name; savedRow.value={...savedRow.value,name:row.name}; cal.saveCurrentWorkspace()
   } catch (failure) { if (failure instanceof Error) error.value = failure.message }
+}
+async function annotateHistory(item) {
+  try {
+    const { value } = await ElMessageBox.prompt('为这次保存填写备注', '修改历史备注', { inputValue: item.note, inputValidator: value => String(value || '').length <= 160 })
+    savedRow.value = await modelApi('model-schemes/' + cal.modelSchemeId + '/history-note', { method: 'POST', body: { revision: item.revision, note: value || '' } })
+  } catch (failure) { if (failure instanceof Error) error.value = failure.message }
+}
+async function viewHistory(item) { historyDialog.value.close(); await load(cal.modelSchemeId, item.revision) }
+async function restoreHistory(item) {
+  historyDialog.value.close()
+  await load(cal.modelSchemeId, item.revision)
+  if (error.value) return
+  setEditing(true)
+  await commit()
 }
 async function saveAs() {
   try {
@@ -243,4 +255,8 @@ defineExpose({ refresh, flush, load, ensureSaved })
 .scheme-list :is(label,p,span,summary,.btn,.input),.scheme-heading :is(span,.btn){font-size:14px}
 .scheme-list :is(.btn,.input),.scheme-heading .btn{min-height:36px}
 .scheme-processing{font-size:12px;color:#637c72;margin:4px 0 12px}.scheme-processing summary{cursor:pointer}.scheme-processing>div{padding:12px;background:#fff;border-bottom:1px solid #dce7e2}.scheme-processing pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto}
+</style>
+
+<style scoped>
+.scheme-list{width:100%;max-width:1180px;margin:16px auto;padding:30px}.scheme-eyebrow{display:block;color:#56837c;font-size:14px;margin-bottom:12px}.scheme-list h1{font-size:28px;font-weight:650}.scheme-list-tools{display:flex;align-items:center;gap:12px;padding:18px 0;border-top:1px solid #e0e9e5}.scheme-list-tools input{max-width:450px;flex:1}.scheme-list-tools select{width:150px}.scheme-list-tools>span{margin-left:auto;color:#71887f;font-size:14px}.scheme-cards{gap:0;border-top:1px solid #dce6e2}.scheme-choice{grid-template-columns:minmax(0,1fr) 180px 70px;border-width:0 0 1px;border-radius:0;padding:20px 12px;background:white;gap:20px}.scheme-choice b{font-size:18px;color:#285b54}.scheme-choice p{margin:8px 0 0;font-size:14px;line-height:1.5}.scheme-choice i{font-size:14px;color:#237b80}.scheme-origin{color:#617f73}.scheme-pagination{display:flex;gap:8px;align-items:center;margin-top:20px;font-size:14px}.scheme-pagination>span{margin-right:auto;color:#6e857a}.scheme-history{width:min(860px,94vw);max-height:85vh;border:1px solid #adc9c4;border-radius:8px;padding:24px;color:#34584e}.scheme-history::backdrop{background:#103f3650}.scheme-history header{display:flex;align-items:center;justify-content:space-between}.scheme-history h2{font-size:20px}.scheme-history p{font-size:14px;color:#72867d}.history-item{display:flex;gap:8px;align-items:center;padding:16px 0;border-top:1px solid #e1e9e5;font-size:14px}.history-item>div{margin-right:auto}.scheme-history .btn{min-height:36px}@media(max-width:900px){.scheme-choice{grid-template-columns:minmax(0,1fr) 70px}.scheme-choice>span{display:none}.scheme-list{padding:20px}.history-item{flex-wrap:wrap}.history-item>div{width:100%}}
 </style>

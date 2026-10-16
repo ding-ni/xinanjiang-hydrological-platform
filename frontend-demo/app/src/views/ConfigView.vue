@@ -31,6 +31,8 @@
       </aside>
 
       <main class="panel panel-pad">
+        <RoutingDefaults v-if="tab==='河网与汇流'" />
+        <section v-if="tab==='状态库'"><h2>状态库</h2><p class="hint">保存计算成果的完整末状态，用于继续模拟。</p><RouterLink class="btn primary" to="/state/advanced">打开状态库</RouterLink></section>
         <template v-if="tab === '水雨情资料'">
           <div class="panel-title-row">
             <h3 class="panel-title">水雨情资料</h3>
@@ -109,7 +111,7 @@
 
         <template v-else-if="tab === '模型方案'">
           <h3 class="panel-title">分布式模型方案</h3>
-          <p v-if="isModelInputWorkspace" class="hint"><RouterLink to="/diagnostics">编辑坡面与河网汇流参数</RouterLink></p>
+          <p v-if="isModelInputWorkspace" class="hint"><button class="link" @click="tab='河网与汇流'">查看河网与新方案默认汇流参数</button> · <RouterLink to="/calibration">编辑率定方案参数</RouterLink></p>
           <div class="scheme-summary">
             <div><span>方案</span><b>{{ activeConfig.name }}</b><small>{{ app.backendCase ? '参数库：' : '' }}{{ activeConfig.version }} · {{ activeConfig.status }}</small></div>
             <div><span>计算尺度</span><b>{{ activeConfig.grid }} / {{ activeConfig.gridCount.toLocaleString() }} 有效网格</b><small>{{ activeConfig.subbasins }} 个{{ app.hasLakeBalance ? '入湖流域' : '流域空间单元' }} · {{ activeConfig.dem }}</small></div>
@@ -215,11 +217,11 @@
               <p class="hint">命名参数保存产流、汇流参数和配套起算规则，可作为率定初值或直接用于洪水模拟。</p>
               <p v-if="namedParameterError" class="hint bad">{{ namedParameterError }}</p>
               <table class="table parameter-library-table"><thead><tr><th>参数名称</th><th>起算规则</th><th>来源成果</th><th>操作</th></tr></thead><tbody>
-                <tr v-for="row in namedParameters" :key="row.id"><td>{{ row.name }} <button class="link" :aria-label="'修改参数名称 '+row.name" @click="renameNamedParameter(row)">✎</button></td><td>{{ row.statePolicy === 'continuous-origin' ? '连续演算' : '分场预热' }} · {{ row.warmupDays }}天</td><td>{{ row.sourceTaskId }}</td><td><RouterLink :to="{path:'/calibration',query:{parameter:row.id}}">用作初值</RouterLink> · <RouterLink :to="{path:'/simulation',query:{parameter:row.id}}">洪水模拟</RouterLink></td></tr>
+              <tr v-for="row in namedParameters" :key="row.id"><td>{{ row.name }} <button class="link" :aria-label="'修改参数名称 '+row.name" @click="renameNamedParameter(row)">✎</button></td><td>{{ row.statePolicy === 'continuous-origin' ? '连续演算' : '分场预热' }} · {{ row.warmupDays }}天</td><td><RouterLink :to="{path:'/archive',query:{task:row.sourceTaskId}}">查看原计算</RouterLink></td><td><RouterLink :to="{path:'/calibration',query:{parameter:row.id}}">用作初值</RouterLink> · <RouterLink :to="{path:'/simulation',query:{parameter:row.id}}">洪水模拟</RouterLink></td></tr>
                 <tr v-if="!namedParameters.length"><td colspan="4">暂无命名参数，请从计算成果中保存。</td></tr>
               </tbody></table>
               <p class="hint"><RouterLink to="/simulation">洪水模拟</RouterLink> · <RouterLink to="/state/advanced">状态库</RouterLink> · <RouterLink to="/archive">查看计算成果</RouterLink></p>
-              <div class="parameter-library-note"><b>率定参数</b><strong>{{ parameterLibrary?.simulationRateLibrary?.status || '正在读取' }}</strong></div>
+              <details><summary>历史参数记录</summary><div class="parameter-library-note"><b>率定参数</b><strong>{{ parameterLibrary?.simulationRateLibrary?.status || '正在读取' }}</strong></div>
               <table class="table parameter-library-table">
                 <thead><tr><th>参数版本</th><th>状态</th><th>对应场次集</th><th>独立检验</th><th>操作</th></tr></thead>
                 <tbody>
@@ -227,6 +229,7 @@
                   <tr v-if="!(parameterLibrary?.simulationRateLibrary?.versions || []).length"><td colspan="5">暂无率定参数 <RouterLink to="/calibration">率定与模拟</RouterLink></td></tr>
                 </tbody>
               </table>
+              </details>
             </template>
             <template v-else>
               <div class="parameter-library-note production"><b>自动预报参数</b><strong>{{ parameterLibrary?.automaticForecastLibrary?.status || '暂无发布版本' }}</strong></div>
@@ -344,17 +347,6 @@
           </div>
         </template>
 
-        <template v-else>
-          <h3 class="panel-title">率定算法</h3>
-          <p class="hint">{{ isModelInputWorkspace ? '以下率定方法可用于当前模型任务。' : '以下为离线算法目录，仅供方案浏览。' }}</p>
-          <table class="table">
-            <thead><tr><th>算法</th><th>说明</th><th>适用作业</th><th>控制字段</th><th>状态</th></tr></thead>
-            <tbody>
-              <tr v-for="algorithm in displayedAlgorithms" :key="algorithm.id"><td><b>{{ algorithm.name || algorithm.label }}</b></td><td>{{ algorithm.description || algorithm.note }}</td><td>{{ (algorithm.runTypes || ['洪水场次率定']).join('、') }}</td><td>{{ (algorithm.controlFields || ['maxEvaluations', 'populationSize', 'seed']).join('、') }}</td><td><span class="tag">{{ isModelInputWorkspace ? '可用于率定' : '离线目录' }}</span></td></tr>
-              <tr v-if="!displayedAlgorithms.length"><td colspan="5">当前尺度没有已加载的算法目录</td></tr>
-            </tbody>
-          </table>
-        </template>
       </main>
     </div>
   </section>
@@ -371,6 +363,7 @@ import { useAppStore } from '@/stores/app'
 import { useCalibrationStore } from '@/stores/calibration'
 import { PARAMETER_VERSION_CATALOG } from '@/fixtures/catalogs/parameter-versions'
 import ContextStatusMetric from '@/components/common/ContextStatusMetric.vue'
+import RoutingDefaults from '@/components/config/RoutingDefaults.vue'
 import { loadNananxiEventPackages, loadNananxiEventStatistics, loadNananxiFloodEvents, loadNananxiObservationCatalog } from '@/services/historicalObservationService'
 import { formatObservationCoverage, formatObservationDate } from '@/services/observationCoverageService'
 import { eventDataQuality } from '@/services/floodEventService'
@@ -412,7 +405,7 @@ async function savePreparationDefaults() {
   try { preparationDefaults.value = await modelApi('database/preparation-defaults', { method: 'POST', body: { idwPower: preparationDefaults.value.idwPower, minimumStations: preparationDefaults.value.minimumStations } }); ElMessage.success('默认处理规则已保存，下次新建方案时采用') }
   catch (failure) { ElMessage.error(failure.message) }
 }
-const tabs = ['流域与站网', '模型方案', '参数库']
+const tabs = ['流域与站网', '河网与汇流', '模型方案', '参数库', '状态库']
 const tab = ref(tabs[0])
 const algorithmCatalog = ref([])
 const projectObservationCatalog = ref(null)

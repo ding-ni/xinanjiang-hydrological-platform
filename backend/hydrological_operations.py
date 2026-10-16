@@ -197,7 +197,7 @@ class HydrologicalOperations:
                     row = known[identifier]
                     if isinstance(item, dict) and any(item.get(key, row[key]) != row[key] for key in ('start', 'end')):
                         raise ValueError('洪水时段与资料库不一致')
-                    selected.append({key: row[key] for key in ('id', 'start', 'end')})
+                    selected.append({key: row[key] for key in ('id', 'name', 'start', 'end')})
                 request['events'] = selected
         if kind in {'continuousSimulation', 'continuation'}:
             period = request.get('period') or {}
@@ -292,6 +292,7 @@ class HydrologicalOperations:
             time.sleep(.5)
 
     def prepare(self, identifier, request, method, purpose='calibration', origin=None, preceding_hour=False):
+        preparation_started = time.perf_counter()
         from scheme_inputs import reuse_preparation
         if request['inputs'].get('dataMode') == 'historical-database':
             method = 'stationIdw'
@@ -381,6 +382,9 @@ class HydrologicalOperations:
                     'forcingVersion', 'observationVersion', 'bundleVersionId', 'bundleManifestSHA256'):
             prepared.setdefault('lineage', {}).pop(key, None)
         prepared['lineage']['preparationTaskId'] = task['taskId']
+        status_path=safe_task(self.root,identifier)/'status.json'
+        previous = (read_json(status_path).get('stageTimings') or {}) if status_path.is_file() else {}
+        self.update(identifier,stageTimings={**previous,'inputPreparationSeconds':round(previous.get('inputPreparationSeconds',0)+time.perf_counter()-preparation_started,3)})
         return prepared
 
     def child(self, identifier, request, stage, role='calculation'):
@@ -494,6 +498,7 @@ class HydrologicalOperations:
                                'start': window['start'], 'end': window['end']})
         return {'primaryTaskId': primary, 'sourceTaskId': primary, 'hydrographs': graphs,
                 'hydrograph': next(iter(graphs.values())), 'eventMetrics': metrics, 'eventStates': states,
+                'frozenRequest':prepared,
                 'parameters': request['parameterSnapshot']['parameters'], 'parameterSchemeId': request['parameterSnapshot']['id']}
 
     @staticmethod
@@ -668,7 +673,7 @@ class HydrologicalOperations:
         result={key:copy.deepcopy(value) for key,value in original.items() if key not in {'operationId','taskId','timings','frozenRequest'}}
         result.update(primaryTaskId=primary,sourceTaskId=primary,hydrographs=graphs,hydrograph=next(iter(graphs.values())),eventStates=states,
                       eventMetrics=[{'eventId':key,**(value.get('metrics') or {})} for key,value in graphs.items()],
-                      frozenRequest=self.manager.get(primary)['runConfig'])
+                      frozenRequest=copy.deepcopy(original.get('frozenRequest') or self.manager.get(primary)['runConfig']))
         return result
 
     def state_replay(self, identifier, request):
@@ -794,7 +799,10 @@ class HydrologicalOperations:
             with self.lock:
                 self.check_cancelled(identifier)
                 request = read_json(folder / 'request.json')
-                self.update(identifier, status='running', stageLabel='正在准备计算', startedAt=now())
+                instant=now()
+                created=datetime.fromisoformat((self.get(identifier).get('createdAt') or instant).replace('Z','+00:00'))
+                queue_seconds=max(0,(datetime.fromisoformat(instant.replace('Z','+00:00'))-created).total_seconds())
+                self.update(identifier, status='running', stageLabel='正在准备计算', startedAt=instant, stageTimings={'queueSeconds':round(queue_seconds,3)})
             kind = request['operation']
             started = time.perf_counter()
             if kind == 'rerun' and request.get('frozenEventRequests'):
@@ -832,6 +840,15 @@ class HydrologicalOperations:
                 result.update(operationId=identifier, operation=kind, context=request['context'], resultSource='model-backend',
                               name=self.get(identifier)['name'])
                 result.setdefault('timings', {})['operationSeconds'] = round(time.perf_counter() - started, 3)
+                result['timings'].update(self.get(identifier).get('stageTimings') or {})
+                # Child timings cover the same frozen model runs used for charts
+                # and full end states, not additional diagnostic simulations.
+                phases = ('loadingSeconds','warmupSeconds','runoffSeconds','routingSeconds','statePersistenceSeconds','checkpointSeconds','runoffFirstCallSeconds')
+                child_timings = [self.manager.result(child).get('timings',{}) for child in self.get(identifier)['childTaskIds']
+                    if self.manager.get(child)['status'] in {'completed','archived'}]
+                for phase in phases:
+                    if any(phase in row for row in child_timings):
+                        result['timings'][phase] = round(sum(row.get(phase,0) for row in child_timings),3)
                 write_json(folder / 'result.json', result)
                 self.update(identifier, status='completed', progress=100, stageLabel='计算完成', completedAt=now(),
                             primaryTaskId=result.get('primaryTaskId'), lineage=result.get('lineage', {}))

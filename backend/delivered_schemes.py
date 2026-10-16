@@ -8,6 +8,12 @@ from input_products import manifest_digest
 from model_schemes import calculation_identity, input_definition
 
 
+def delivered_name(plan):
+    years=sorted({str(row.get('start',''))[:4] for row in plan.get('sourceEvents',[]) if row.get('start')})
+    period=(' · '+years[0]+('—'+years[-1] if years[-1]!=years[0] else '')) if years else ''
+    return '同事优选洪水'+period
+
+
 def migrate_delivered_schemes(schemes, products):
     database = schemes.database
     with database.connect() as db:
@@ -27,7 +33,10 @@ def migrate_delivered_schemes(schemes, products):
     for digest, record in sorted(candidates.items()):
         asset = 'PLAN-' + digest
         with database.connect() as db:
-            if db.execute('SELECT 1 FROM scheme_input_assets WHERE asset_id=? AND scheme_id IS NOT NULL', (asset,)).fetchone():
+            linked=db.execute('SELECT a.scheme_id,s.name FROM scheme_input_assets a JOIN model_schemes s ON s.id=a.scheme_id WHERE a.asset_id=?', (asset,)).fetchone()
+            if linked:
+                if linked['name']=='同事优选洪水 · '+digest[:8]:
+                    db.execute('UPDATE model_schemes SET name=? WHERE id=?',(delivered_name(record['originalCalibrationPlan']),linked['scheme_id']))
                 continue
         try:
             from original_calibration_plan import original_plan_payload
@@ -55,7 +64,7 @@ def migrate_delivered_schemes(schemes, products):
                 else:
                     identifier, revision = 'SCHEME-' + uuid.uuid4().hex, 1
                     definition = input_definition(request)
-                    name = '同事优选洪水 · ' + digest[:8]
+                    name = delivered_name(plan)
                     db.execute('INSERT INTO model_schemes VALUES (?,?,?,?)', (identifier, name[:80], revision, now()))
                     db.execute('INSERT INTO model_scheme_revisions VALUES (?,?,?,?,?,?)',
                         (identifier, revision, json.dumps(definition), manifest_digest(definition), json.dumps(request), now()))

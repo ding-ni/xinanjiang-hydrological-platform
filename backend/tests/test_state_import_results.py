@@ -71,6 +71,18 @@ class ResultsHttpTests(unittest.TestCase):
         self.assertEqual(self.call('result-metadata/JOB-http', body)[0], 409)
         self.assertEqual(self.call('result-metadata/../../outside', body)[0], 400)
 
+    def test_daily_routing_defaults_and_science_conditions_http(self):
+        code,row=self.call('database/routing-defaults')
+        self.assertEqual(code,200)
+        self.assertTrue(row['parameters']['reach_muskingum'])
+        changed=copy.deepcopy(row['parameters']);changed['default_slope_k_hours']['RS']=3
+        code,saved=self.call('database/routing-defaults',{'parameters':changed,'revision':row['revision']})
+        self.assertEqual(code,200)
+        self.assertEqual(self.call('database/routing-defaults')[1]['parameters']['default_slope_k_hours']['RS'],3)
+        code,science=self.call('science-conditions',{'evaporation':{'mode':'constant-assumption','valueMmPerHour':0},'statePolicy':{'strategy':'independent-warmup','warmupHours':168}})
+        self.assertEqual(code,200)
+        self.assertEqual(self.call('science-conditions?versionId='+science['scienceVersionId'])[1]['evaporation']['valueMmPerHour'],0)
+
     def test_import_schema_origin_and_size_boundaries(self):
         self.assertTrue(self.call('state-catalog')[1]['checkpointImport'])
         self.assertEqual(self.call('states/import', {'checkpoint': {}})[0], 400)

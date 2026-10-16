@@ -142,6 +142,7 @@ class InputHttpTests(unittest.TestCase):
         self.assertEqual(catalog["caseKey"], "nananxi-xufan:1km")
         self.inputs.catalog.assert_called_once_with(project_id="nananxi-xufan", resolution_id="1km")
         self.assertEqual(headers["Cache-Control"], "no-store")
+
         code, window, _ = self.request("inputs/window")
         self.assertEqual(code, 200)
         self.inputs.window.assert_called_once_with(None, None, project_id="nananxi-xufan", resolution_id="1km")
@@ -153,6 +154,19 @@ class InputHttpTests(unittest.TestCase):
         self.assertEqual(event["warmupPeriod"]["hours"], 168)
         self.inputs.event.assert_called_with("xf-31170619", warmup_hours=168,
                                              project_id="nananxi-xufan", resolution_id="1km")
+
+    def test_verified_state_cache_invalidates_after_file_changes(self):
+        from task_diagnostics import TaskDiagnostics
+        folder,metadata=self.saved_history()
+        diagnostics=TaskDiagnostics(self.manager)
+        with patch.object(diagnostics,'_load_saved',wraps=diagnostics._load_saved) as load:
+            first=diagnostics.state('JOB-history',time_value=metadata['times'][0])
+            second=diagnostics.state('JOB-history',time_value=metadata['times'][1])
+            self.assertEqual(load.call_count,1)
+            self.assertNotEqual(first['cells'][0]['WU'],second['cells'][0]['WU'])
+            write_json(folder/'checkpoint.json',{**read_json(folder/'checkpoint.json'),'time':'2017-06-19T13:00:00'})
+            with self.assertRaises(RuntimeError):diagnostics.state('JOB-history')
+            self.assertEqual(load.call_count,2)
 
     def test_cross_case_resolution_and_explicit_empty_context_rejected(self):
         for query in ("projectId=selinco", "projectId=llpq", "resolutionId=0p1deg",

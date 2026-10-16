@@ -15,15 +15,19 @@
         </section>
         <section class="panel drafts"><h3>率定方案与场次草稿</h3><b :class="{ error: workspaceSync.error }">{{ workspaceSync.error || (workspaceSync.saving ? '正在保存' : workspaceSync.pending ? '有待保存修改' : workspaceSync.ready ? '已保存到工作区' : '本机草稿') }}</b><p class="subtle">场次用途、备注与率定草稿随工作区保存。</p><div class="actions"><button class="btn" :disabled="workspaceSync.saving" @click="retryDrafts">重新保存</button><button class="btn" @click="exportDrafts">导出本机草稿</button><button v-if="workspaceSync.error && workspaceSync.ready" class="btn" :disabled="workspaceSync.saving" @click="loadSharedDrafts">读取工作区版本</button></div><details><summary>运行环境</summary><p>Python {{ info.pythonVersion }}</p><p>工作区路径在平台配置中设置，重启后生效。</p></details></section>
       </div>
+      <details class="panel" @toggle="maintenanceOpen = $event.target.open"><summary>资料与历史计算维护</summary><template v-if="maintenanceOpen"><InputSourceRecords /><p><RouterLink class="btn" to="/archive?legacy=1">历史计算维护</RouterLink> <RouterLink class="btn" to="/diagnostics">历史诊断记录</RouterLink></p><details><summary>方案输入追溯</summary><p v-if="assetError" class="error">{{ assetError }}</p><div v-for="asset in assets" :key="asset.asset_id"><b>{{ asset.details.name || asset.asset_id }}</b><p>{{ asset.details.reason || '已关联方案' }}</p><details><summary>查看完整记录</summary><pre>{{ JSON.stringify(asset.details,null,2) }}</pre></details></div></details></template></details>
     </template>
   </section>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
+import InputSourceRecords from '@/components/config/InputSourceRecords.vue'
 import { modelApi } from '@/services/modelBackendService'
 import { workspaceSync, flushBusinessDrafts, exportBusinessDrafts, initializeBusinessDrafts, reloadWorkspaceDrafts } from '@/services/workspaceService'
 const info = ref(null), backups = ref([]), busy = ref(false), error = ref(''), message = ref('')
+const maintenanceOpen = ref(false), assets = ref([]), assetError = ref('')
+watch(maintenanceOpen, async open => { if (!open || assets.value.length) return; try { assets.value=(await modelApi('scheme-input-assets')).assets } catch(failure) { assetError.value=failure.message } })
 const size = value => value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(2)} GB` : `${(value / 1024 ** 2).toFixed(1)} MB`
 const date = value => new Date(value).toLocaleString('zh-CN', { hour12: false })
 async function refresh() {

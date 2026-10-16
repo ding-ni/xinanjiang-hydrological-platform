@@ -20,8 +20,8 @@
       <p class="archive-hint">回放时刻：{{ monitor.currentTimeLabel }}</p>
     </div>
 
-    <div class="panel panel-pad mid" v-if="station.type === 'rain' || (station.hasRainObservation && !station.hasRiverObservation)">
-      <h3 class="panel-title">{{ isDatabase ? '近 24 小时实测雨量' : '雨量过程（至回放时刻）' }}</h3>
+    <div class="panel panel-pad mid" v-if="station.type === 'rain' || station.hasRainObservation">
+      <h3 class="panel-title">{{ isDatabase ? '所选时段实测雨量' : '雨量过程（至回放时刻）' }}</h3>
       <div v-if="!observationReady" class="external-empty">当前回放时段无该站实测记录，可到水文资料库查询其他时段。</div>
       <div v-else-if="rainHasValue" class="chart-box">
         <BaseChart :option="rainOption" />
@@ -34,7 +34,7 @@
       <div v-else class="external-empty">当前雨量资料存在缺测，不能将缺测解释为无雨。</div>
     </div>
 
-    <div class="panel panel-pad mid" v-else-if="station.type === 'hydro' || station.type === 'section'">
+    <div class="panel panel-pad mid" v-if="station.hasRiverObservation || station.type === 'hydro' || station.type === 'section'">
       <h3 class="panel-title">{{ observationReady ? '水文过程' : '水文资料' }}</h3>
       <div v-if="!observationReady" class="stat-box">
         <div class="stat-line"><span>当前流量</span><b>—</b></div>
@@ -67,7 +67,7 @@
       </div>
     </div>
 
-    <div class="panel panel-pad mid" v-else>
+    <div class="panel panel-pad mid" v-else-if="!station.hasRainObservation && station.type !== 'rain'">
       <h3 class="panel-title">站点资料</h3>
       <div class="external-empty">暂无逐时过程。</div>
     </div>
@@ -77,7 +77,7 @@
       <div v-if="!isExternal" class="btn-row">
         <button class="btn" type="button" @click="monitor.flyToStation(station.id)">定位</button>
         <button
-          v-if="station.type === 'rain'"
+          v-if="station.type === 'rain' && !isDatabase"
           class="btn"
           type="button"
           @click="monitor.toggleExcludeRainStation(station.id)"

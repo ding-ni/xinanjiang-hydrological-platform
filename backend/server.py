@@ -77,6 +77,8 @@ class TaskManager:
         self.operations = None
         self.states = StateRepository(self)
         self.results = ResultRepository(self)
+        from river_sections import RiverSections
+        self.river_sections = RiverSections(self)
         self.lock = threading.RLock()
         self.processes = {}
         self.cancelled = set()
@@ -526,6 +528,9 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                     payload = local_station_network(database, self.read_body() if self.command == 'POST' else None)
                 elif operation == 'preparation-defaults' and self.command in {'GET', 'POST'}:
                     payload = manager.schemes.history_defaults(self.read_body() if self.command == 'POST' else None)
+                elif operation == 'routing-defaults' and self.command in {'GET','POST'}:
+                    with manager.lock:
+                        payload=manager.routing_versions.defaults(self.read_body() if self.command == 'POST' else None)
                 elif self.command == "GET" and operation == "summary":
                     payload = database.summary()
                 elif self.command == "GET" and operation == "stations":
@@ -613,6 +618,12 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 from delivered_schemes import scheme_assets
                 self.send_json(200, {'assets': scheme_assets(manager.schemes, argument('schemeId'))})
                 return
+            if path.startswith(f'{prefix}/model-schemes/') and path.endswith('/history-note') and self.command == 'POST':
+                pieces = path[len(f'{prefix}/model-schemes/'):].split('/')
+                if len(pieces) != 2:
+                    raise KeyError('方案不存在')
+                self.send_json(200, manager.schemes.history_note(pieces[0], self.read_body()))
+                return
             if path.startswith(f'{prefix}/model-schemes/') and path.endswith('/draft') and self.command == 'POST':
                 pieces = path[len(f'{prefix}/model-schemes/'):].split('/')
                 if len(pieces) != 2:
@@ -685,6 +696,10 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 from diagnostic_jobs import spatial_payload
                 self.send_json(200, spatial_payload(bundle))
                 return
+            if path == f'{prefix}/numeric-status' and self.command == 'GET':
+                from numeric_runtime import status
+                self.send_json(200,status(manager.runtime_root))
+                return
             if path == f"{prefix}/routing-versions" and self.command in {"GET", "POST"}:
                 with manager.lock:
                     payload = manager.routing_versions.list() if self.command == "GET" else manager.routing_versions.create(self.read_body())
@@ -692,6 +707,15 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 return
             if self.command == 'GET' and path == f'{prefix}/science-versions':
                 self.send_json(200, manager.science_versions.list())
+                return
+            if path == f'{prefix}/science-conditions':
+                if self.command == 'GET':
+                    payload = manager.science_versions.conditions(argument('versionId'))
+                elif self.command == 'POST':
+                    payload = manager.science_versions.register_conditions(self.read_body())
+                else:
+                    raise KeyError('起算条件接口不存在')
+                self.send_json(200, payload)
                 return
             if self.command == 'GET' and path.startswith(f'{prefix}/science-versions/'):
                 version = path[len(f'{prefix}/science-versions/'):]
@@ -841,10 +865,50 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 self.send_json(200, import_checkpoint(manager, self.read_body()))
                 return
             if self.command == 'GET' and path == f'{prefix}/result-catalog':
-                self.send_json(200, {'metadata': manager.results.metadata()})
+                self.send_json(200, manager.results.catalog())
+                return
+            if self.command == 'GET' and path.startswith(f'{prefix}/result-catalog/') and path.endswith('/processes'):
+                pieces = path[len(f'{prefix}/result-catalog/'):].split('/')
+                if len(pieces) != 2:
+                    raise KeyError('成果不存在')
+                self.send_json(200, {'processes': manager.results.processes(pieces[0])})
+                return
+            if self.command == 'GET' and path.startswith(f'{prefix}/results/') and path.endswith('/scheme-conditions'):
+                self.send_json(200, manager.results.scheme_request(path[len(f'{prefix}/results/'):-len('/scheme-conditions')]))
+                return
+            if self.command == 'GET' and path.startswith(f'{prefix}/results/'):
+                identifier = path[len(f'{prefix}/results/'):]
+                self.send_json(200, {'result': manager.results.result(identifier), 'status': manager.results.status(identifier), 'processes': manager.results.processes(identifier)})
+                return
+            if path == f'{prefix}/river-sections':
+                if self.command == 'GET':
+                    payload = manager.river_sections.list(argument('resultId'), argument('processId'))
+                elif self.command == 'POST':
+                    payload = manager.river_sections.create(self.read_body())
+                else:
+                    raise KeyError('断面接口不存在')
+                self.send_json(200, payload)
+                return
+            if self.command == 'POST' and path == f'{prefix}/river-sections/locate':
+                self.send_json(200, manager.river_sections.locate(self.read_body()))
+                return
+            if self.command == 'POST' and path.startswith(f'{prefix}/river-sections/') and path.endswith('/rename'):
+                pieces = path[len(f'{prefix}/river-sections/'):].split('/')
+                if len(pieces) != 2:
+                    raise KeyError('断面不存在')
+                self.send_json(200, manager.river_sections.rename(pieces[0], self.read_body()))
+                return
+            if path == f'{prefix}/result-section-queries' and self.command == 'POST':
+                self.send_json(202, manager.river_sections.query(self.read_body()))
+                return
+            if path.startswith(f'{prefix}/result-section-queries/') and self.command == 'GET':
+                self.send_json(200, manager.river_sections.query_result(path[len(f'{prefix}/result-section-queries/'):]))
                 return
             if self.command == 'POST' and path.startswith(f'{prefix}/result-metadata/'):
                 self.send_json(200, manager.results.update(path[len(f'{prefix}/result-metadata/'):], self.read_body()))
+                return
+            if self.command == 'GET' and path.startswith(f'{prefix}/result-metadata/'):
+                self.send_json(200, manager.results.annotation(path[len(f'{prefix}/result-metadata/'):]))
                 return
             if path.startswith(f"{prefix}/states/"):
                 pieces = path[len(f"{prefix}/states/"):].split("/")
@@ -941,6 +1005,8 @@ def main():
         ownership.__enter__()
         workspace_identity(RUNTIME)
         manager = TaskManager()
+        from numeric_runtime import start as start_numeric_runtime
+        start_numeric_runtime(RUNTIME)
         print("Preparing hydrological database from existing observations...", flush=True)
         manager.database.import_existing()
         from delivered_schemes import migrate_delivered_schemes

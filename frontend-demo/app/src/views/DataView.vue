@@ -5,7 +5,6 @@
       <div class="heading-actions">
         <span v-if="summary" class="database-state"><i /> 本地资料库</span>
         <button class="btn icon-action" title="刷新资料库" aria-label="刷新资料库" :disabled="busy" @click="load"><Refresh /></button>
-        <button class="btn" :disabled="busy || !summary" @click="backup"><FolderChecked />备份资料库</button>
       </div>
     </header>
     <p v-if="!available" class="notice">请选择南安溪-徐畈，并使用统一平台入口。</p>
@@ -51,7 +50,7 @@
               </div>
             </div>
             <div class="hydrograph"><BaseChart :option="chartOption" /></div>
-            <details class="source-details"><summary>资料来源 · {{ result.sources.length }} 份原始年资料</summary><p>时间按源资料本地整点。空白表示缺测，0 为原始记录中的零值；查询和导出保留原始值。</p><code>{{ result.sources.join(' · ') }}</code></details>
+            <p class="query-range">时间按本地整点。空白表示缺测，0表示原始零值。</p>
             <div class="table-heading"><h3>逐时记录</h3><div><button class="btn icon-action" aria-label="上一页记录" :disabled="page === 0" @click="page--"><ArrowLeft /></button><span>{{ page + 1 }} / {{ pageCount }}</span><button class="btn icon-action" aria-label="下一页记录" :disabled="page + 1 >= pageCount" @click="page++"><ArrowRight /></button></div></div>
             <div class="records-scroll"><table class="table"><thead><tr><th>时间</th><th>{{ variables[result.variable].label }}（{{ result.unit }}）</th><th>记录状态</th><th>来源</th></tr></thead><tbody><tr v-for="row in pagedSeries" :key="row.time"><td>{{ row.time.replace('T', ' ') }}</td><td class="numeric">{{ value(row.value) }}</td><td>{{ row.value !== null ? '原始记录' : row.recorded ? '原表空值' : '缺测' }}</td><td>{{ row.sourceId || '—' }}</td></tr></tbody></table></div>
           </div>
@@ -61,13 +60,10 @@
 
       <section v-else-if="tab === 'events'" class="event-section">
         <div class="section-toolbar"><h2>历史洪水目录 <small>{{ filteredEvents.length }} 场</small></h2><label class="search-box"><Search /><input v-model="eventSearch" placeholder="年份或场次编号" aria-label="检索洪水场次" /></label></div>
-        <p class="section-intro">公共目录登记226场洪水，直接查询历史库实测过程。方案独有时段与不同边界在各方案内保留，选用场次及用途在项目方案中设置。</p>
-        <div class="records-scroll"><table class="table"><thead><tr><th>场次编号</th><th>开始</th><th>结束</th><th>历时</th><th>洪峰流量（m³/s）</th><th>操作</th></tr></thead><tbody><tr v-for="event in filteredEvents" :key="event.eventId"><td><b>{{ event.floodCode || event.eventId }}</b></td><td>{{ event.start?.replace('T',' ') }}</td><td>{{ event.end?.replace('T',' ') }}</td><td>{{ event.durationHours }} h</td><td class="numeric">{{ value(event.observedInputs?.observedPeakFlowM3s) }}</td><td><button class="text-action" @click="viewEvent(event)">查看实测过程</button></td></tr></tbody></table></div>
+        <p class="section-intro">选择洪水查看实测雨量与流量，或带入模拟、建立率定方案。</p>
+        <div class="records-scroll"><table class="table"><thead><tr><th>场次编号</th><th>开始</th><th>结束</th><th>历时</th><th>洪峰流量（m³/s）</th><th>操作</th></tr></thead><tbody><tr v-for="event in filteredEvents" :key="event.eventId"><td><b>{{ event.floodCode || event.eventId }}</b></td><td>{{ event.start?.replace('T',' ') }}</td><td>{{ event.end?.replace('T',' ') }}</td><td>{{ event.durationHours }} h</td><td class="numeric">{{ value(event.observedInputs?.observedPeakFlowM3s) }}</td><td class="event-actions"><button class="text-action" @click="viewEvent(event)">查看实测过程</button><RouterLink class="text-action" :to="{path:'/simulation',query:{event:event.eventId}}">带入模拟</RouterLink><RouterLink class="text-action" :to="{path:'/calibration',query:{event:event.eventId}}">新建方案</RouterLink></td></tr></tbody></table></div>
       </section>
 
-      <section v-else-if="tab === 'processing'" class="processing-section">
-        <InputSourceRecords />
-      </section>
 
     </template>
   </section>
@@ -76,21 +72,21 @@
 <script setup>
 import { computed, ref, onBeforeUnmount, watch } from 'vue'
 import { Refresh, FolderChecked, Search, Download, ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useMonitorStore } from '@/stores/monitor'
 import { modelApi, modelBackendEnabled } from '@/services/modelBackendService'
 import BaseChart from '@/components/charts/BaseChart.vue'
-import InputSourceRecords from '@/components/config/InputSourceRecords.vue'
 import { initialObservationWindow, observationHour, observationTime } from '@/services/observationWindowPresentation.js'
 
 const app = useAppStore()
 const monitor = useMonitorStore()
 const route = useRoute()
+const router = useRouter()
 const available = computed(() => app.basinId === 'nananxi-xufan' && modelBackendEnabled())
-const tabs = [{ id: 'observations', label: '实测资料' }, { id: 'events', label: '洪水目录' }, { id: 'processing', label: '入库记录' }]
+const tabs = [{ id: 'observations', label: '实测资料' }, { id: 'events', label: '洪水目录' }]
 const variables = { rain: { label: '降雨量', color: '#287ab4' }, level: { label: '水位', color: '#177c72' }, flow: { label: '流量', color: '#bb633e' } }
-const tab = ref(route.query.tab === 'inputs' ? 'processing' : tabs.some(item => item.id === route.query.tab) ? route.query.tab : 'observations'), busy = ref(false), error = ref(''), message = ref('')
+const tab = ref(tabs.some(item => item.id === route.query.tab) ? route.query.tab : 'observations'), busy = ref(false), error = ref(''), message = ref('')
 const summary = ref(null), stations = ref([]), events = ref([]), sources = ref([]), sourceId = ref('')
 const variable = ref('rain'), stationId = ref(''), stationSearch = ref(''), eventSearch = ref('')
 const start = ref(''), end = ref(''), result = ref(null), page = ref(0), resultQuery = ref('')
@@ -169,7 +165,6 @@ function exportSeries() {
   if (queryChanged.value || !result.value) return
   const anchor = document.createElement('a'); anchor.href = `${String(import.meta.env.VITE_MODEL_API_BASE).replace(/\/$/, '')}/database/export?${params()}`; anchor.download = 'observations.csv'; anchor.click()
 }
-async function backup() { await act(async valid => { const r = await modelApi('database/backup', { method: 'POST', body: {}, timeoutMs: 180000 }); if (valid()) message.value = `备份已校验：${r.path}` }) }
 watch([available, () => app.contextKey], ([enabled], previous) => {
   revision++; busy.value = false; result.value = null
   if (previous) {
@@ -178,7 +173,7 @@ watch([available, () => app.contextKey], ([enabled], previous) => {
   if (enabled) load()
 }, { immediate: true })
 watch(() => route.query.tab, value => {
-  if (value === 'inputs') tab.value = 'processing'
+  if (value === 'inputs') router.replace('/system')
   else if (tabs.some(item => item.id === value)) tab.value = value
 })
 </script>

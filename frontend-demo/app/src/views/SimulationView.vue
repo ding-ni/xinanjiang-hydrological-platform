@@ -18,6 +18,7 @@
           <button class="btn primary run-button" :disabled="!canRun">{{ running ? '正在计算…' : continuing ? '开始续算' : '开始模拟' }}</button>
         </form>
         <DailyOperationProgress :operation="operation" @cancel="cancel" />
+        <NumericReadiness v-if="app.backendCase" />
       </section>
       <div class="main-column">
         <section v-if="!continuing && mode === 'event'" class="panel panel-pad flood-picker">
@@ -40,6 +41,7 @@ import { activeOperation, belongsToOperationContext, dailyClient, dailyOperation
 import { useDailyOperation } from '@/composables/useDailyOperation'
 import DailyOperationProgress from '@/components/model/DailyOperationProgress.vue'
 import DailyResultPanel from '@/components/model/DailyResultPanel.vue'
+import NumericReadiness from '@/components/model/NumericReadiness.vue'
 const app = useAppStore(), route = useRoute()
 const loading = ref(false), parameters = ref([]), floods = ref([]), parameterSchemeId = ref(''), selectedIds = ref([])
 const mode = ref('event'), startTime = ref(''), endTime = ref(''), year = ref(''), search = ref(''), pageError = ref('')
@@ -58,7 +60,7 @@ async function renameParameter(){
 }
 function selectVisible() { selectedIds.value=[...new Set([...selectedIds.value,...filteredFloods.value.map(row=>row.id)])] }
 let revision=0
-watch(()=>[app.contextKey,route.query.source,route.query.operation,route.query.continue,route.query.task,route.query.legacyConditionId,route.query.sourceTask,route.query.parameter], async()=>{
+watch(()=>[app.contextKey,route.query.source,route.query.operation,route.query.continue,route.query.task,route.query.legacyConditionId,route.query.sourceTask,route.query.parameter,route.query.event], async()=>{
   const token=++revision, key=app.contextKey; clear(); loading.value=true; pageError.value=''; floods.value=[]; parameters.value=[]; selectedIds.value=[]; sourceEnd.value=''
   const saved=readDailySelection(key,'simulation'); mode.value=saved.mode||'event'; startTime.value=saved.startTime||''; endTime.value=saved.endTime||''
   try {
@@ -67,6 +69,7 @@ watch(()=>[app.contextKey,route.query.source,route.query.operation,route.query.c
     parameters.value=named.filter(row=>belongsToOperationContext(row,key)); floods.value=events.map(row=>({...row,id:row.id||row.eventId,start:row.start||row.startTime,end:row.end||row.endTime}))
     parameterSchemeId.value=rememberedParameter(parameters.value, route.query.parameter || readDailySelection(key,'parameter').id || saved.parameterSchemeId)
     selectedIds.value=(saved.selectedIds||[]).filter(id=>floods.value.some(row=>row.id===id))
+    if(route.query.event){selectedIds.value=[String(route.query.event)].filter(id=>floods.value.some(row=>row.id===id));mode.value='event'}
     if(continuing.value){
       const [task,payload]=await Promise.all([modelApi(`tasks/${encodeURIComponent(route.query.source)}`),modelApi(`tasks/${encodeURIComponent(route.query.source)}/result`)])
       if(token!==revision)return
@@ -79,7 +82,7 @@ watch(()=>[app.contextKey,route.query.source,route.query.operation,route.query.c
       selectedIds.value=(request.period?.events||[]).map(row=>row.id)
       parameterSchemeId.value=historicalParameterId(parameters.value,task,route.query.parameter)
     }
-    const id=route.query.operation || (!continuing.value && !route.query.task && !route.query.legacyConditionId ? saved.operationId : '')
+    const id=route.query.operation || (!continuing.value && !route.query.event && !route.query.task && !route.query.legacyConditionId ? saved.operationId : '')
     if(id){
       await inspect(id)
       if(token!==revision)return

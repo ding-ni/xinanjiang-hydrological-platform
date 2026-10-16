@@ -224,6 +224,47 @@ class ScienceVersions:
                                  'modelImplementationSHA256': implementation})
         return {'modelImplementationSHA256': implementation, 'versions': versions}
 
+    def conditions(self, version=None):
+        descriptor = self.resolve(version) if version else None
+        config = descriptor['configs']['pet_config'] if descriptor else read_json(self.model / 'config/pet_forcing_assumed_monthly.json')
+        mode = str(config['mode']).upper()
+        evaporation = ({'mode': 'constant-assumption', 'valueMmPerHour': config['value_mm_h']} if mode == 'CONSTANT_ASSUMPTION' else
+            {'mode': 'monthly-climatology-assumption', 'monthlyValuesMmPerDay': config['monthly_values_mm_day']} if mode == 'MONTHLY_CLIMATOLOGY' else
+            {'mode': 'inherited-hourly', 'label': '原逐时输入（沿用）'})
+        return {'evaporation': evaporation, 'statePolicy': descriptor['statePolicy'] if descriptor else {'strategy': 'independent-warmup', 'warmupHours': 168}, 'baseVersionId': version}
+
+    def register_conditions(self, body):
+        if not isinstance(body, dict) or set(body) - {'name', 'baseVersionId', 'evaporation', 'statePolicy'}:
+            raise ValueError('起算条件字段无效')
+        base = self.resolve(body['baseVersionId']) if body.get('baseVersionId') else None
+        evaporation = body.get('evaporation')
+        if not isinstance(evaporation, dict):
+            raise ValueError('请填写蒸散发估计输入')
+        mode = evaporation.get('mode')
+        if mode == 'constant-assumption' and set(evaporation) == {'mode', 'valueMmPerHour'}:
+            pet = {'mode': 'CONSTANT_ASSUMPTION', 'value_mm_h': evaporation['valueMmPerHour'], 'production_eligible': False, 'provenance': 'Explicit user estimate in mm/hour'}
+        elif mode == 'monthly-climatology-assumption' and set(evaporation) == {'mode', 'monthlyValuesMmPerDay'}:
+            pet = {'mode': 'MONTHLY_CLIMATOLOGY', 'monthly_values_mm_day': evaporation['monthlyValuesMmPerDay'], 'production_eligible': False, 'provenance': 'Explicit monthly estimate in mm/day; divided by 24 once'}
+        elif mode == 'inherited-hourly' and base and str(base['configs']['pet_config']['mode']).upper() == 'HOURLY_CSV':
+            pet = base['paths']['pet_config']
+        else:
+            raise ValueError('请选择经验月值或固定小时蒸散发')
+        if isinstance(pet, dict):
+            _validate_pet(pet)
+        policy = copy.deepcopy(body.get('statePolicy'))
+        if not isinstance(policy, dict) or set(policy) != {'strategy', 'warmupHours'}:
+            raise ValueError('请明确起算方式与预热小时数')
+        if policy['strategy'] == 'continuous-origin':
+            policy['continuousOrigin'] = 'FIRST_DATABASE_EVENT_YEAR_JAN1_MINUS_FIXED_WARMUP'
+        _validate_policy(policy)
+        state = copy.deepcopy(base['configs']['state_config']) if base else read_json(self.model / 'config/state_initialization_config.json')
+        state['fixed_warmup_hours'] = policy['warmupHours']
+        initial = base['configs']['initial_land_state'] if base else self.model / 'config/initial_state_land.json'
+        descriptor = self.register(name=body.get('name') or '自定蒸散发与起算条件', state_config=state,
+            initial_land_state=initial, pet_config=pet, state_policy=policy,
+            provenance={'baseScienceVersionId': body.get('baseVersionId'), 'action': 'explicit-condition-edit'})
+        return {**{key: value for key, value in descriptor.items() if key not in {'paths', 'configs'}}, **self.conditions(descriptor['scienceVersionId'])}
+
     def export(self, version):
         descriptor = self.resolve(version)
         folder = self.root / version

@@ -18,6 +18,29 @@ class RoutingVersions:
     def __init__(self, runtime_root=None):
         self.root = Path(runtime_root or RUNTIME) / "routing-versions"
 
+    def defaults(self, request=None):
+        """Defaults are opt-in for new schemes; existing requests remain immutable."""
+        path = self.root.parent / 'routing-defaults.json'
+        old = read_json(path) if path.is_file() else {'revision': 0}
+        if request is not None:
+            if not isinstance(request, dict) or set(request) != {'parameters', 'revision'} or request['revision'] != old['revision']:
+                raise RuntimeError('默认汇流参数已修改，请刷新后再保存')
+            row = self.create({'name': '新方案默认汇流参数', 'parameters': request['parameters']})
+            old = {'revision': old['revision'] + 1, 'routingVersionId': row['routingVersionId']}
+            write_json(path, old)
+        if not old.get('routingVersionId'):
+            parameters = copy.deepcopy(self.resolve()['parameters'])
+            # Validate the shipped physical defaults; colleague search-only
+            # baselines remain attached exclusively to their original schemes.
+            self.validate(parameters)
+            digest = payload_digest(parameters)
+            version = 'ROUTING-' + digest[:32]
+            if not (self.root / (version + '.json')).is_file():
+                write_json(self.root / (version + '.json'), {'routingVersionId': version, 'name':'新方案默认汇流参数',
+                    'parameters': parameters, 'parametersSHA256': digest, 'createdAt': now(), 'parentVersionId': ROUTING_VERSION, 'productionEligible':False})
+            old = {**old, 'routingVersionId': version}
+        return {**self.resolve(old['routingVersionId']), 'revision': old['revision']}
+
     def resolve(self, version=None):
         version = version or ROUTING_VERSION
         if version == ROUTING_VERSION:

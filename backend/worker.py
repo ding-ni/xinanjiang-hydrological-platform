@@ -50,6 +50,8 @@ from xaj_routing.io import read_topology_json
 
 class ModelJob:
     def __init__(self, folder, publish_parameters=False):
+        self.job_started = time.perf_counter()
+        self.stage_timings = {}
         self.folder = Path(folder)
         self.publish_parameters = publish_parameters
         self.request = read_json(self.folder / "request.json")
@@ -104,6 +106,7 @@ class ModelJob:
         self.params = kernels.candidate_params(self.params, {f"runoff.{key}": value for key, value in overrides.items()})
         self.warnings = [*self.bundle.get("qualityNotes", [])]
         self.freeze_input_provenance()
+        self.stage_timings['preparationSeconds'] = round(time.perf_counter()-self.job_started, 3)
 
     def freeze_input_provenance(self):
         warmup = pd.Timedelta(days=float(self.period.get("warmupDays", 7)))
@@ -249,35 +252,74 @@ class ModelJob:
         return build_uniform_land_state(self.template, len(self.grids), params)
 
     def route_with_history(self, event, land, routing):
-        """Call the unchanged one-hour kernel and persist its actual states.
-
-        No duplicated equations, replay-time recomputation, or synthetic curves.
-        Warm-up is computed but excluded from the requested output period.
-        """
+        """Batch the existing kernel; retain every evaluated hour and final state."""
         count = len(event.times)
         first = int(event.times.searchsorted(event.start))
         diagnostic_fields = ['et_actual', 'water_balance_error', 'EU', 'EL', 'ED', 'infiltration', 'net_rainfall', 'pervious_runoff']
         fields = list(land) + ["RS", "RI", "RG", "precipitation", "pet", *diagnostic_fields]
         history = {field: np.empty((count - first, len(self.grids)), dtype=float) for field in fields}
         components = {field: np.empty_like(event.precip, dtype=float) for field in ("RS", "RI", "RG")}
-        for index, time_value in enumerate(event.times):
-            rs, ri, rg, land, diagnostics = simulate_xaj_liquid_grids(
-                event.precip[index:index + 1], self.params, event.pet_mm_h[index:index + 1], land, return_diagnostics=True)
+        first_call = True
+        limits = {'WU': self.params.WUM, 'WL': self.params.WLM, 'WD': self.params.WDM,
+                  'S': self.params.SM, 'FR': 1.0}
+        warmup_seconds = runoff_seconds = 0.0
+        begin = 0
+        last_progress = -max(1, count // 20)
+        while begin < count:
+            stop = min(begin + 168, first if begin < first else count)
+            evaluated = begin >= first
+            if first_call or begin - last_progress >= max(1, count // 20):
+                self.progress(40 + 35 * begin / count, '首次数值准备与编译缓存加载' if first_call else ('预热产流计算' if not evaluated else f'网格产流计算 {begin}/{count}'))
+                last_progress = begin
+            call_started = time.perf_counter()
+            initial = land
+            output = simulate_xaj_liquid_grids(event.precip[begin:stop], self.params, event.pet_mm_h[begin:stop], land, return_diagnostics=True)
+            rs, ri, rg, land = output[:4]
+            diagnostics = output[4]
+            # The former hourly wrapper clips roundoff to physical state bounds
+            # before the next hour. End a batch at its first such boundary so
+            # the unchanged wrapper performs exactly the same normalization.
+            # Never widen numerical tolerances or alter the scientific kernel.
+            boundary = np.zeros(stop - begin - 1, dtype=bool)
+            for field, upper in limits.items():
+                values = diagnostics[field][:-1]
+                boundary |= np.any((values < 0) | (values > upper), axis=1)
+            if boundary.any():
+                length = int(np.flatnonzero(boundary)[0]) + 1
+                stop = begin + length
+                rs, ri, rg = rs[:length], ri[:length], rg[:length]
+                diagnostics = {field: values[:length] for field, values in diagnostics.items()}
+                land = {field: diagnostics[field][-1].copy() if field in diagnostics else initial[field].copy() for field in land}
+            elapsed = time.perf_counter()-call_started
+            if first_call:
+                self.stage_timings['runoffFirstCallSeconds'] = round(elapsed,3)
+                first_call = False
+            if evaluated:
+                runoff_seconds += elapsed
+            else:
+                warmup_seconds += elapsed
             for field, values in (("RS", rs), ("RI", ri), ("RG", rg)):
-                components[field][index] = values[0]
-            if index >= first:
-                step = index - first
+                components[field][begin:stop] = values
+            if evaluated:
+                segment = slice(begin-first,stop-first)
                 for field in land:
-                    history[field][step] = land[field]
+                    if field in diagnostics:
+                        history[field][segment] = diagnostics[field]
+                    elif np.array_equal(initial[field],land[field]):
+                        history[field][segment] = land[field]
+                    else:
+                        raise ValueError('现有内核未提供完整逐时状态：'+field)
                 for field in ("RS", "RI", "RG"):
-                    history[field][step] = components[field][index]
-                history["precipitation"][step] = event.precip[index]
-                history["pet"][step] = event.pet_mm_h[index]
+                    history[field][segment] = components[field][begin:stop]
+                history["precipitation"][segment] = event.precip[begin:stop]
+                pet = event.pet_mm_h[begin:stop]
+                history["pet"][segment] = pet[:,None] if pet.ndim == 1 else pet
                 for field in diagnostic_fields:
-                    history[field][step] = diagnostics[field][0]
-            if index % max(1, count // 20) == 0:
-                self.progress(40 + 35 * (index + 1) / count, f"真实逐时网格计算 {index + 1}/{count}")
+                    history[field][segment] = diagnostics[field]
+            begin = stop
+        self.stage_timings.update(warmupSeconds=round(warmup_seconds,3),runoffSeconds=round(runoff_seconds,3))
         self.progress(78, "按冻结拓扑计算坡面与河网汇流")
+        persistence_started = time.perf_counter()
         np.savez_compressed(self.folder / "routing-runoff.npz", times=np.asarray([time.isoformat() for time in event.times]),
                             **components)
         routing_evidence = {"schemaVersion": "1.0", "taskId": self.task_id, "gridIds": self.grid_ids,
@@ -288,9 +330,13 @@ class ModelJob:
         write_json(self.folder / "routing-evidence.json", routing_evidence)
         self.routing_evidence = {"available": True, "arraySHA256": routing_evidence["arraySHA256"],
                                  "catalogSHA256": hashlib.sha256((self.folder / "routing-evidence.json").read_bytes()).hexdigest()}
+        persistence_seconds = time.perf_counter()-persistence_started
+        routing_started = time.perf_counter()
         simulated, final_routing = self.router.run(event.times, components["RS"] @ self.mapping,
                                                   components["RI"] @ self.mapping, components["RG"] @ self.mapping,
                                                   self.routing, routing)
+        self.stage_timings['routingSeconds'] = round(time.perf_counter()-routing_started,3)
+        persistence_started = time.perf_counter()
         # Unicode timestamps keep npz loading safe with allow_pickle=False.
         np.savez_compressed(self.folder / "grid-history.npz", times=np.asarray([time.isoformat() for time in event.times[first:]]), **history)
         history_digest = hashlib.sha256((self.folder / "grid-history.npz").read_bytes()).hexdigest()
@@ -308,6 +354,7 @@ class ModelJob:
         self.grid_history = {"available": True, "taskId": self.task_id, "start": metadata["times"][0],
                              "end": metadata["times"][-1], "steps": len(metadata["times"]), "gridCount": len(self.grid_ids), "fields": fields,
                              "arraySHA256": history_digest, "catalogSHA256": hashlib.sha256((self.folder / "grid-history.json").read_bytes()).hexdigest()}
+        self.stage_timings['statePersistenceSeconds'] = round(persistence_seconds+time.perf_counter()-persistence_started,3)
         return simulated, land, final_routing
 
     def checkpoint(self, land, routing, timestamp, parameters):
@@ -362,9 +409,11 @@ class ModelJob:
             if self.continuous_origin > start:
                 raise ValueError('所选科学条件的连续原点晚于请求时段')
             warmup = int((start - self.continuous_origin).total_seconds() / 3600)
+        loading_started = time.perf_counter()
         event = self.load([{"event_id": self.task_id, "year": start.year, "start": start, "end": end, "group": "SIMULATION"}], warmup)[0]
         provider = self.pet_provider
         event.pet_mm_h = provider.values(event.times)
+        self.stage_timings['loadingSeconds'] = round(time.perf_counter()-loading_started,3)
         # A legacy parent lacks a reproducible prefix; preserve its strict
         # same-bundle continuation without claiming a verified full trajectory.
         self.driving_identity = build_state_driving_identity(
@@ -390,7 +439,9 @@ class ModelJob:
                 self.driving_identity['observedFlowAnchor'] = {
                     'time': anchor['time'], 'flowCms': anchor['flowCms']}
         parameters = kernels.resolved_runoff_parameters(self.params)
+        saving_started = time.perf_counter()
         version = self.checkpoint(final_land, final_routing, event.end, parameters)
+        self.stage_timings['checkpointSeconds'] = round(time.perf_counter()-saving_started,3)
         hydrograph = self.hydrograph(event, simulated)
         means = {"wu": float(final_land["WU"].mean()), "wl": float(final_land["WL"].mean()), "wd": float(final_land["WD"].mean()), "free": float(final_land["S"].mean()),
                  "soil": float((final_land["WU"] + final_land["WL"] + final_land["WD"]).mean() / self.params.WM)}
@@ -404,7 +455,7 @@ class ModelJob:
                 'continuousOrigin': self.continuous_origin.isoformat() if hasattr(self, 'continuous_origin') else None,
                 'actualWarmupHours': warmup,
                 'drivingIdentity': self.driving_identity,
-                "routingEvidence": self.routing_evidence}
+                "routingEvidence": self.routing_evidence, 'timings':self.stage_timings}
 
     def forecast(self):
         parent = self.period['initialStateVersionId']

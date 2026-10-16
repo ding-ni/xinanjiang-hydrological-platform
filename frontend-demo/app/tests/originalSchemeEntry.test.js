@@ -48,7 +48,7 @@ test('adopting current network only changes draft preparation fields and retains
 
 test('explicitly adopting original best parameters preserves floods, inputs, ranges and algorithm budget', async () => {
   const cal = { contextKey: context.contextKey, originalCalibrationPlan: { ...plan, parameterVersionId: record.parameterVersionId },
-    params: { SM: 18 }, schemeSourceBundleVersionId: 'HISTORICAL_SPATIAL_V1', events: structuredClone(events),
+    params: { SM: 18 }, scienceVersionId:'SCIENCE-current', schemeSourceBundleVersionId: 'HISTORICAL_SPATIAL_V1', events: structuredClone(events),
     sourcePlan: source.sourcePlan, searchParameters: { SM: { minimum: 10, maximum: 50 } },
     optimizerSettings: { seed: 20260820, initializationPolicy: 'SOURCE_INITIAL_CANDIDATES', initialCandidates: [] },
     maxEvaluations: 960, saveCurrentWorkspace() {}, markNeedsRun() {} }
@@ -58,7 +58,7 @@ test('explicitly adopting original best parameters preserves floods, inputs, ran
   })
   assert.deepEqual(cal.params, { SM: 22 })
   assert.equal(cal.schemeRoutingVersionId, 'ROUTING-best')
-  assert.equal(cal.scienceVersionId, 'SCIENCE-best')
+  assert.equal(cal.scienceVersionId, 'SCIENCE-current')
   assert.equal(cal.schemeSourceBundleVersionId, 'HISTORICAL_SPATIAL_V1')
   assert.deepEqual(cal.events, events)
   assert.deepEqual(cal.searchParameters, { SM: { minimum: 10, maximum: 50 } })

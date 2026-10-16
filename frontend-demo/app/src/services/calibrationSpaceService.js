@@ -9,9 +9,9 @@ export function selectedSearchParameters(definitions, keys = null) {
 }
 
 export const SEARCH_RANGE_TEMPLATES = {
-  project: {},
+  project: { WM:[120,240],WUM:[5,30],WLM:[40,100],B:[.05,.8],SM:[8,60],EX:[.5,2.5],K_total_day:[.3,.9],groundwater_fraction:[.02,.8],IM:[.0001,.08] },
   standard: { WM: [120, 200], B: [.1, .4], SM: [10, 50], EX: [1, 1.5], IM: [.01, .04] },
-  extended: { B: [.1, 3], SM: [1, 80], EX: [.7, 2], IM: [.0005, .1] }
+  extended: { B: [.05, 3], SM: [1, 80], EX: [.5, 2.5], IM: [.0001, .1] }
 }
 
 export function applySearchRangeTemplate(selection, definitions, template) {
@@ -19,12 +19,13 @@ export function applySearchRangeTemplate(selection, definitions, template) {
   const active = selection == null ? selectedSearchParameters(definitions) : selection
   return Object.fromEntries(Object.keys(active).map(key => {
     const row = definitions.find(item => item.key === key)
-    const bounds = SEARCH_RANGE_TEMPLATES[template][key]
+    const bounds = SEARCH_RANGE_TEMPLATES[template][key] || (template==='extended'?SEARCH_RANGE_TEMPLATES.project[key]:null)
     return [key, bounds ? { minimum: bounds[0], maximum: bounds[1] } : { minimum: row.minimum, maximum: row.maximum }]
   }))
 }
 
 export function routingSearchCoordinates(payload = {}) {
+  payload ||= {}
   const xs = [...new Set(Object.values(payload.reach_muskingum || {}).map(row => Number(row.x)))]
   return { ...Object.fromEntries(['RS', 'RI', 'RG'].map(key => [`${key}_k_hours`, payload.default_slope_k_hours?.[key]])),
     muskingum_k_scale: 1, muskingum_x: xs.length === 1 && Number.isFinite(xs[0]) ? xs[0] : null }

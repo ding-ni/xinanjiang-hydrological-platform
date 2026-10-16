@@ -281,12 +281,6 @@ def run_point(folder, request):
         components = {name: archive[name].copy() for name in ("RS", "RI", "RG")}
     if any(values.shape != (len(times), len(metadata["gridIds"])) or not np.isfinite(values).all() for values in components.values()):
         raise ValueError("完整产流数组无效")
-    with (folder / "runoff-wide.csv").open("w", encoding="utf-8", newline="") as stream:
-        writer = csv.writer(stream)
-        writer.writerow(["time", "unit_id", "RS_mm", "RI_mm", "RG_mm"])
-        for step, time in enumerate(times):
-            for index, grid_id in enumerate(metadata["gridIds"]):
-                writer.writerow([time, grid_id, *[float(components[name][step, index]) for name in ("RS", "RI", "RG")]])
     engine = make_point_engine(bundle, folder, parameters["parameters"])
     point = request['point']
     longitude, latitude = point['lon'], point['lat']
@@ -307,6 +301,12 @@ def run_point(folder, request):
                       'quality': {'status': 'FORMAL_SPLIT_RESULT', 'warning': '读取来源模拟已保存的控制断面流量。'}}
             return {'pointQuery': answer, 'sourceTaskId': request['sourceTaskId'], 'warnings': [answer['quality']['warning']]}
     require_point_rerun(original, metadata, RUNTIME)
+    with (folder / "runoff-wide.csv").open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["time", "unit_id", "RS_mm", "RI_mm", "RG_mm"])
+        for step, time in enumerate(times):
+            for index, grid_id in enumerate(metadata["gridIds"]):
+                writer.writerow([time, grid_id, *[float(components[name][step, index]) for name in ("RS", "RI", "RG")]])
     # The native slope query also needs the actual complete reach/component run.
     from integration.runoff_adapter import aggregate_runoff_to_reach_segments
     from xaj_routing.engine import RoutingEngine

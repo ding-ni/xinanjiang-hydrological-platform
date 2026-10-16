@@ -1,6 +1,6 @@
 <template>
   <section class="state-view">
-    <header class="page-heading"><div><h2>模拟状态</h2><span>{{ sourceLabel }} / {{ payload?.frozenRequest?.scheme?.revision ? '版本 ' + payload.frozenRequest.scheme.revision + ' / ' : '' }}{{ payload?.primaryTaskId || sourceId }} / {{ entry?.label }}</span></div><RouterLink to="/archive" class="btn">计算成果</RouterLink></header>
+    <header class="page-heading"><div><h2>模拟状态</h2><span>{{ sourceLabel }} / {{ entry?.label }}</span></div><RouterLink to="/archive" class="btn">计算成果</RouterLink></header>
     <section v-if="!sourceId && !route.query.operation" class="panel empty"><p>从计算成果查看模拟状态</p><RouterLink to="/archive" class="btn primary">选择计算成果</RouterLink> <RouterLink to="/state/advanced" class="btn">打开状态库</RouterLink></section>
     <template v-else>
       <section class="panel panel-pad time-toolbar">
@@ -10,7 +10,7 @@
         <label v-if="catalog">状态时刻<select v-model="time" class="input" aria-label="状态回放时刻"><option v-for="value in catalog.times" :key="value" :value="value">{{ hourText(value) }}</option></select></label>
         <span v-else>{{ loading?'读取状态…':checkpoint?.time ? hourText(checkpoint.time) : '' }}</span>
         <button v-if="checkpoint?.stateVersionId && replayTaskId && atFinalTime" type="button" class="btn" @click="continueFromResult">继续模拟</button>
-        <button v-if="replayTaskId" type="button" class="btn" @click="router.push({path:'/diagnostics',query:{source:replayTaskId,label:sourceLabel}})">河道流量</button>
+        <button v-if="replayTaskId" type="button" class="btn" @click="router.push({path:'/results/'+canonicalResultId+'/sections',query:{process:entryId}})">断面流量</button>
       </section>
       <section v-if="process?.forecast?.length || process?.times?.length" class="panel panel-pad state-process"><CalibrationProcessChart :hydrograph="process" :forcing="process.forcing || {precipitation:[]}" :visible-components="{}" @select-time="selectStateTime" /><label v-if="catalog?.times?.length" class="state-slider">{{ hourText(time) }}<input type="range" min="0" :max="catalog.times.length-1" :value="catalog.times.indexOf(time)" aria-label="拖动查看逐时状态" @input="time = catalog.times[Number($event.target.value)]" /></label></section>
       <p v-if="error" class="failure" role="alert">{{ error }}</p>
@@ -50,6 +50,7 @@ import CalibrationProcessChart from '@/components/charts/CalibrationProcessChart
 import { ElMessageBox, ElMessage } from 'element-plus'
 const route=useRoute(),router=useRouter(),app=useAppStore()
 const sourceId=computed(()=>String(route.query.source||route.query.task||''))
+const canonicalResultId=computed(()=>String(route.query.operation||payload.value?.operationId||sourceId.value))
 const sourceLabel=ref(''),payload=ref(null),entryId=ref(''),catalog=ref(null),checkpoint=ref(null),frame=ref(null),series=ref(null),time=ref(''),loading=ref(false),error=ref(''),seriesError=ref(''),selectedId=ref(null),variable=ref('soil')
 const entries=computed(()=>resultEntries(payload.value||{},sourceId.value))
 const entry=computed(()=>entries.value.find(row=>row.id===entryId.value))
@@ -133,6 +134,7 @@ watch(()=>[sourceId.value,route.query.operation,app.contextKey],async()=>{
     payload.value=answer
     entryId.value=entries.value.find(row=>row.id===route.query.event)?.id||entries.value[0]?.id||''
     if(!sourceLabel.value)sourceLabel.value=answer.name||answer.lineage?.schemeName||'计算成果'
+    modelApi('result-metadata/'+canonicalResultId.value).then(row=>{if(token===sourceRevision&&row.name)sourceLabel.value=row.name}).catch(()=>{})
   }catch(failure){if(token===sourceRevision)error.value=failure.message}
   finally{if(token===sourceRevision)loading.value=false}
 },{immediate:true})

@@ -29,7 +29,7 @@ export async function saveModelScheme(cal, request, api = modelApi) {
     if (before?.period && JSON.stringify(inputSelection(before)) !== JSON.stringify(inputSelection(projected))) {
       const { ElMessageBox } = await import('element-plus')
       const initializationNotice = cal.sourcePlan ? ' 原交付专用初始种群仅适用于原条件；新版本改用当前初值，算法、预算、随机种子和搜索范围保留。若原河道配置仅供搜索，请在率定设置中主动采用原方案最佳参数或配置有效汇流参数。' : ''
-      await ElMessageBox.confirm('洪水、时段或资料规则已修改。保存的新版本将从完整历史水文资料库重新准备全部选用资料，原版本保持不变。' + initializationNotice, '重新准备方案输入', { confirmButtonText: '保存新版本', cancelButtonText: '继续编辑' })
+      await ElMessageBox.confirm('洪水、时段或资料规则已修改。保存后将从水文资料库重新准备全部选用资料，历史成果保持原条件。' + initializationNotice, '更新方案输入', { confirmButtonText: '保存修改', cancelButtonText: '继续编辑' })
       if (cal.schemeDataMode !== 'historical-database') cal.schemeStationNetwork = await api('database/network')
       cal.schemeDataMode = 'historical-database'; cal.rainfallMethod = 'stationIdw'
       cal.stationSourceId = 'LOCAL_OBSERVATIONS'; cal.schemeSourceBundleVersionId = 'HISTORICAL_SPATIAL_V1'
@@ -91,6 +91,7 @@ export async function restoreModelScheme(cal, app, row, { draft = false } = {}) 
   cal.idwPower = row.definition.inputs.idwPower ?? 2; cal.minimumStations = row.definition.inputs.minimumStations ?? 1
   cal.schemeSourceBundleVersionId = row.definition.inputs.bundleVersionId || request.inputs.sourceBundleVersionId || request.inputs.bundleVersionId
   cal.schemeRoutingVersionId = request.routing?.versionId || null
+  cal.editorTrialMode = request.calibration?.evaluationMode === 'manual' ? 'manual' : 'automatic'
   cal.requiredInputBundleVersionId = null
   if (row.editor && Object.keys(row.editor).length > 1) restoreCalibrationEditor(cal, row.editor)
   if (cal.originalCalibrationPlan && request.sourcePlan?.parameterVersionId) cal.originalCalibrationPlan = { ...cal.originalCalibrationPlan, parameterVersionId: request.sourcePlan.parameterVersionId }
@@ -119,7 +120,7 @@ export const CALIBRATION_EDITOR_FIELDS = [
   'independentStart', 'independentEnd', 'params', 'baseline', 'paramVersion', 'criteria', 'algorithm', 'maxEvaluations', 'populationSize',
   'searchStrategy', 'searchParameters', 'routingSearchParameters', 'calibrationTarget', 'jointProfile', 'searchSeed', 'optimizerSettings',
   'searchParameterOrder', 'eventSplitSeed', 'eventAssignment', 'warmupDays', 'statePolicy', 'continuousOrigin', 'scienceVersionId',
-  'scienceDescriptor', 'evaporationMode', 'candidateWarmupHours', 'sourcePlan', 'sourcePlanRequestTemplate', 'originalCalibrationPlan',
+  'scienceDescriptor', 'evaporationMode', 'scienceConditionsDraft', 'candidateWarmupHours', 'sourcePlan', 'sourcePlanRequestTemplate', 'originalCalibrationPlan',
   'activeOperationId', 'activeOperationRequest', 'editorTrialMode', 'manualRoutingPayload', 'searchRangeOverrides',
   'deliverySelection', 'configurationPending', 'deliveryProcessing'
 ]
@@ -241,8 +242,6 @@ export async function adoptOriginalBestParameters(cal, api = modelApi) {
   cal.params = JSON.parse(JSON.stringify(request.calibration.initialParameters))
   cal.baseline = JSON.parse(JSON.stringify(request.calibration.initialParameters))
   cal.schemeRoutingVersionId = request.routing.versionId
-  cal.scienceVersionId = request.science?.versionId || null
-  cal.scienceDescriptor = null
   cal.manualRoutingPayload = null
   cal.paramVersion = parameterId
   makeSchemeEditable(cal)

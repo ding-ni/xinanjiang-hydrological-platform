@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import copy
+import threading
+from collections import OrderedDict
 from datetime import timedelta
 from common import read_json, safe_task, clean
 from contracts import timestamp
@@ -10,8 +13,29 @@ from contracts import timestamp
 class TaskDiagnostics:
     def __init__(self, manager):
         self.manager = manager
+        self._cache = OrderedDict()
+        self._cache_lock = threading.RLock()
 
     def _saved(self, task_id):
+        if read_json(safe_task(self.manager.root, task_id)/'status.json')['status'] not in {'completed','archived'}:
+            self.manager.result(task_id)  # Preserve the success-only HTTP boundary.
+        folder = safe_task(self.manager.root, task_id)
+        names = ('status.json','result.json','checkpoint.json','request.json','grid-history.json','grid-history.npz')
+        signature = tuple((name, (folder/name).stat().st_size, (folder/name).stat().st_mtime_ns, (folder/name).stat().st_ctime_ns) for name in names)
+        with self._cache_lock:
+            cached = self._cache.get(task_id)
+            if cached and cached[0] == signature:
+                self._cache.move_to_end(task_id)
+                return folder, copy.deepcopy(cached[1]), cached[2]
+            value = self._load_saved(task_id)
+            for array in value[2].values():
+                array.flags.writeable = False
+            self._cache[task_id] = (signature, copy.deepcopy(value[1]), value[2])
+            while len(self._cache) > 3:
+                self._cache.popitem(last=False)
+            return value
+
+    def _load_saved(self, task_id):
         import numpy as np
         result = self.manager.result(task_id)  # success-only, including archived tasks
         folder = safe_task(self.manager.root, task_id)

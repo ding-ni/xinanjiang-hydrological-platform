@@ -4,6 +4,7 @@
     <p v-if="route.query.parameter" class="settings-note">已从参数库选择参数。打开并编辑方案后，<button class="text-button" :disabled="!editing || cal.running" @click="applyReference(String(route.query.parameter))">采用该参数作为初值</button>。</p>
     <template v-if="schemeOpened">
       <header class="workbench-toolbar">
+        <NumericReadiness v-if="app.backendCase" />
         <div class="period-switch" aria-label="率定时段">
           <button :class="{ active: cal.calibrationMode === 'event' }" :disabled="cal.running || !editing" @click="cal.setCalibrationMode('event')">洪水场次</button>
           <button :class="{ active: cal.calibrationMode === 'continuous' }" :disabled="cal.running || !editing" @click="cal.setCalibrationMode('continuous')">连续时段</button>
@@ -18,6 +19,7 @@
         <button v-else-if="trialMode === 'automatic'" class="btn primary" :disabled="!canRun" @click="startCalculation">开始率定</button>
       </header>
       <p v-if="!cal.running && calculationBlockReason && !calculationError" class="field-error" role="status">{{ calculationBlockReason }}</p>
+      <div v-if="routingValidityError && editing" class="routing-repair"><button v-if="cal.originalCalibrationPlan?.parameterVersionId" class="btn" :disabled="parameterLoading" @click="applyOriginalBest">采用原率定最佳参数</button><button class="btn" :disabled="parameterLoading" @click="useDefaultRouting">使用默认汇流参数</button><button class="btn" @click="settings.showModal(); showRiverInitial=true">手动设置K与X</button></div>
 
       <section v-if="cal.running || calculationError || preparationIssues.length || cal.activeOperationId" class="calculation-status" aria-live="polite">
         <div v-if="cal.running" class="progress-row"><b>{{ cal.operationProgress?.stageLabel || '正在准备资料' }}</b><span>{{ Math.round(cal.operationProgress?.progress || 0) }}%</span></div>
@@ -41,7 +43,7 @@
       <div class="workbench" :class="{ 'manual-mode': trialMode === 'manual' }">
         <aside class="panel flood-panel">
           <template v-if="cal.calibrationMode === 'event'">
-            <div class="panel-heading"><h2>洪水目录</h2><span>公共目录 {{ cal.events.length }} 场 · 已选 {{ eventCounts.calibration + eventCounts.validation + eventCounts.independent }} 场<span v-if="windowCounts.selectedExtra"> · 已选专有时段 {{ windowCounts.selectedExtra }} 场</span><span v-if="windowCounts.excludedExtra"> · 原排除时段 {{ windowCounts.excludedExtra }} 场</span><span v-if="windowCounts.boundaryOverrides"> · 同号原边界 {{ windowCounts.boundaryOverrides }} 场</span></span></div>
+            <div class="panel-heading"><h2>洪水目录 {{ cal.events.length }} 场</h2><span>已选 {{ eventCounts.calibration + eventCounts.validation + eventCounts.independent }} 场</span></div>
             <div class="event-browser-bar">
               <div class="event-scope" role="group" aria-label="洪水目录范围">
                 <button type="button" :class="{ active: eventScope === 'selected' }" @click="eventScope = 'selected'">已选洪水</button>
@@ -73,7 +75,7 @@
               <div class="flood-table-head" role="row"><span>选用</span><span>洪水与时段</span><span>洪峰 m³/s</span><span>用途</span></div>
               <div v-for="event in pagedEvents" :key="event.id" class="flood-row" :class="{ current: event.id === cal.eventId }" role="row">
                 <input type="checkbox" :checked="event.purpose !== '未使用'" :aria-label="eventName(event.id) + ' 选用'" :disabled="cal.running || !editing" @change="cal.setEventPurpose(event.id, $event.target.checked ? '率定' : '未使用')" />
-                <button class="flood-process" :aria-pressed="event.id === cal.eventId" @click="selectEvent(event)"><b>{{ eventName(event.id) }}</b><small>{{ eventPeriod(event) }}</small><em v-if="issueForEvent(event.id)">{{ issueForEvent(event.id) }}</em></button>
+                <button class="flood-process" :aria-pressed="event.id === cal.eventId" @click="selectEvent(event)"><b>{{ eventName(event.id) }}</b><small>{{ eventPeriod(event) }}<template v-if="event.catalogueBoundaryOverride || cal.schemeWindows.some(row=>row.id===event.id)"> · 自定义时段</template></small><em v-if="issueForEvent(event.id)">{{ issueForEvent(event.id) }}</em></button>
                 <span>{{ event.observedPeak == null || event.observedPeak === '' ? '缺洪峰' : finiteMetric(event.observedPeak, 1) }}</span>
                 <select class="input purpose-select" :value="event.purpose" :aria-label="eventName(event.id) + ' 用途'" :disabled="cal.running || !editing" @change="cal.setEventPurpose(event.id, $event.target.value)"><option v-for="purpose in purposes" :key="purpose" :value="purpose">{{ purpose === '未使用' ? '不选' : purpose }}</option></select>
               </div>
@@ -113,7 +115,7 @@
             <div v-else-if="activeEvent && cal.calibrationMode === 'event'" class="metric-row"><div><span>实测洪峰</span><b>{{ finiteMetric(activeEvent.observedPeak, 1) }} m³/s</b></div><div><span>洪水历时</span><b>{{ activeEvent.durationHours || '—' }} h</b></div><div><span>资料检查</span><b>{{ issueForEvent(activeEvent.id) || '随计算检查' }}</b></div></div>
             <table v-if="displayResult && trialMode !== 'manual'" class="evaluation-table"><thead><tr><th>用途</th><th>NSE</th><th>洪峰误差</th><th>峰现误差</th><th>水量误差</th></tr></thead><tbody><tr v-for="group in evaluationRows" :key="group.label"><th>{{ group.label }}</th><td>{{ finiteMetric(group.metrics.nse, 3) }}</td><td>{{ percentMetric(group.metrics.peak) }}</td><td>{{ hourMetric(group.metrics.time) }}</td><td>{{ percentMetric(group.metrics.volume) }}</td></tr></tbody></table>
             <p v-if="terminationLabel" class="result-stamp">{{ terminationLabel }}</p>
-            <p v-if="displayResult" class="result-stamp">成果所属版本 {{ displayResult.frozenRequest?.scheme?.revision || displayResult.lineage?.schemeRevision || '历史记录' }} · {{ displayResult.primaryTaskId || displayResult.taskId }}</p>
+            <ResultSaveBar v-if="displayResult" :result-id="displayResult.operationId || displayResult.primaryTaskId || displayResult.taskId" :suggestion="cal.modelSchemeName+' · '+new Date().toLocaleDateString('zh-CN')" />
             <div v-if="displayResult" class="scope-actions"><button class="btn" @click="conditionsDialog.showModal()">查看原条件</button><button class="btn" :disabled="cal.running" @click="rerunResult">按原条件复算</button><button v-if="displayResult.bestParameters" class="btn" :disabled="cal.running" @click="simulateBest">采用最佳参数模拟</button></div>
             <p v-if="displayResult?.timings" class="result-stamp">资料准备 {{ displayResult.timings.inputPreparationSeconds ?? displayResult.timings.preparationSeconds }} 秒 · 搜索 {{ displayResult.timings.searchSeconds }} 秒 · 最终评价 {{ displayResult.timings.finalEvaluationSeconds }} 秒 · 状态保存 {{ displayResult.timings.stateSavingSeconds }} 秒</p>
             <details v-if="displayResult?.optimizer?.history?.length && trialMode !== 'manual'" class="calculation-history"><summary>参数搜索过程</summary><SearchProgress :optimizer="displayResult.optimizer" /></details>
@@ -124,8 +126,9 @@
 
         <aside v-if="trialMode === 'manual'" class="panel parameter-panel">
           <div class="panel-heading"><h2>人工试调</h2><button class="text-button" :disabled="cal.running || !editing" @click="cal.resetParams()">恢复</button></div>
-          <fieldset :disabled="cal.running || !editing"><ParamTuner :params="cal.params" :defs="parameterDefinitions" :dirty="cal.dirty" :live-preview="false" :show-reset="false" title="" @update="(key, value) => cal.setParam(key, value)" /></fieldset>
-          <fieldset v-if="manualRouting" :disabled="cal.running || !editing" class="routing-tuner"><h3>坡面汇流</h3><ParamTuner :params="manualRouting.default_slope_k_hours" :defs="slopeTunerDefinitions" :live-preview="false" :show-reset="true" title="坡面汇流" @reset="manualRouting.default_slope_k_hours = JSON.parse(JSON.stringify(routingRecord.parameters.default_slope_k_hours))" @update="(key,value) => manualRouting.default_slope_k_hours[key] = Number(value)" /><details><summary>河道汇流</summary><ParamTuner v-for="(reach,id) in manualRouting.reach_muskingum" :key="id" :params="reach" :defs="channelTunerDefinitions" :title="id" :live-preview="false" @reset="manualRouting.reach_muskingum[id] = JSON.parse(JSON.stringify(routingRecord.parameters.reach_muskingum[id]))" @update="(key,value) => reach[key] = Number(value)" /></details></fieldset>
+          <div class="parameter-kind"><button v-for="item in parameterKinds" :key="item.id" class="btn" :class="{primary:manualKind===item.id}" @click="manualKind=item.id">{{ item.label }}</button></div>
+          <fieldset v-if="manualKind==='runoff'" :disabled="cal.running || !editing"><ParamTuner :params="cal.params" :defs="parameterDefinitions" :dirty="cal.dirty" :live-preview="false" :show-reset="false" title="产流参数" @update="(key, value) => cal.setParam(key, value)" /></fieldset>
+          <RoutingParameterFields v-else :parameters="manualRouting" :baseline="routingRecord?.parameters" :kind="manualKind" :disabled="cal.running || !editing" :error="routingError" @changed="routingEdited" />
           <p v-if="parameterConstraint" class="field-error">{{ parameterConstraint }}</p>
           <button class="btn primary block" :disabled="!canRun" @click="startCalculation">{{ cal.running ? '正在计算' : '试算' }}</button>
         </aside>
@@ -136,15 +139,17 @@
         <header class="dialog-heading"><h2 id="cal-settings-title">率定设置</h2><button class="btn" :disabled="parameterLoading" @click="settings.close()">完成</button></header>
         <div class="settings-summary"><span>{{ cal.section }}</span><span>新安江产流 · 坡面线性水库 · 马斯京根汇流</span></div>
         <div class="settings-grid">
-          <div class="field"><label for="reference-parameters">初始参数 <button v-if="referenceParameterId && referenceParameterId !== 'model-default'" class="text-button" title="修改参数名称" :disabled="cal.running" @click="renameParameter">✎</button></label><select id="reference-parameters" class="input" :value="referenceParameterId" :disabled="cal.running || !editing || parameterLoading" @change="applyReference($event.target.value)"><option value="" disabled>选用初始参数</option><option value="model-default">模型默认值</option><option v-for="row in namedParameters" :key="row.id" :value="row.id">{{ row.name }}</option></select></div>
+          <div class="field"><label for="reference-parameters">载入参数初值 <button v-if="referenceParameterId && referenceParameterId !== 'model-default'" class="text-button" title="修改参数名称" :disabled="cal.running" @click="renameParameter">✎</button></label><select id="reference-parameters" class="input" :value="referenceParameterId" :disabled="cal.running || !editing || parameterLoading" @change="applyReference($event.target.value)"><option value="" disabled>从参数库选择</option><option v-for="row in namedParameters" :key="row.id" :value="row.id">{{ row.name }}</option></select></div><div class="field"><label>默认初值</label><button class="btn" :disabled="cal.running || !editing || parameterLoading" @click="applyReference('model-default')">使用模型默认值</button></div>
         </div>
         <p v-if="cal.originalCalibrationPlan?.parameterVersionId" class="settings-note">原交付最佳参数可用作新计算初值。<button class="text-button" :disabled="cal.running || !editing || parameterLoading" @click="applyOriginalBest">采用原方案最佳参数作为初值</button>（替换产流与汇流初值，保留选用场次、搜索范围和算法预算）</p>
         <template v-if="trialMode === 'automatic'">
           <h3 class="settings-section-title">参与搜索的参数</h3>
-          <div class="scope-actions"><button v-for="group in [{id:'runoff',name:'仅产流'},{id:'routing',name:'仅汇流'},{id:'joint',name:'联合率定'}]" :key="group.id" class="btn" :disabled="cal.running || !editing" @click="cal.setCalibrationTarget(group.id)">{{ group.name }}</button></div>
-          <label v-if="cal.calibrationTarget !== 'routing'" class="field">范围模板<select class="input" :disabled="cal.running || !editing" @change="applyRangeTemplate($event.target.value); $event.target.value=''"><option value="">选择范围模板</option><option value="project">项目当前范围（默认）</option><option value="standard">文献常规范围适配</option><option value="extended">文献扩展范围适配</option></select></label>
+          <div class="scope-actions"><button v-for="group in [{id:'runoff',name:'仅产流'},{id:'routing',name:'仅汇流'},{id:'joint',name:'联合率定'}]" :key="group.id" class="btn" :disabled="cal.running || !editing" @click="chooseTarget(group.id)">{{ group.name }}</button></div>
+          <label v-if="cal.calibrationTarget !== 'routing'" class="field">范围模板<select v-model="rangeTemplate" class="input" :disabled="cal.running || !editing" @change="applyRangeTemplate($event.target.value)"><option value="custom">自定义</option><option value="project">新安江常用范围</option><option value="extended">扩大搜索范围</option></select></label>
           <p class="settings-note">{{ rangeTemplateNote }}</p>
-          <SearchSpaceEditor v-if="combinedDefinitions.length" :model-value="combinedSelection" :definitions="combinedDefinitions" :params="combinedCoordinates" :ranges="cal.searchRangeOverrides" routing :disabled="cal.running || !editing" :error="[searchError,routingSearchError].filter(Boolean).join('；')" @update:model-value="updateCombinedSelection" @update:ranges="value => cal.searchRangeOverrides = value" @initial-value="updateInitialValue" />
+          <SearchSpaceEditor v-if="combinedDefinitions.length" :model-value="combinedSelection" :definitions="combinedDefinitions" :params="combinedCoordinates" :ranges="cal.searchRangeOverrides" routing :disabled="cal.running || !editing" :error="[searchError,routingSearchError].filter(Boolean).join('；')" @update:model-value="updateCombinedSelection" @update:ranges="updateRanges" @initial-value="updateInitialValue" />
+          <p v-if="cal.calibrationTarget==='joint'" class="settings-note">河道传播时间整体调整：1表示采用当前各河段K。实际K初值 {{ channelKSummary }}；{{ channelKRangeSummary }}。各河段保持自身差异，X可统一搜索。</p>
+          <button class="btn block" @click="showRiverInitial=!showRiverInitial">{{ showRiverInitial?'收起':'查看或修改' }}各河段K、X初值</button><RoutingParameterFields v-if="showRiverInitial" :parameters="manualRouting" :baseline="routingRecord?.parameters" kind="channel" :disabled="cal.running || !editing" :error="routingError" @changed="routingEdited" />
           <h3 class="settings-section-title">算法与预算</h3><div class="btn-row"><button v-for="budget in [{n:120,p:12},{n:480,p:24},{n:960,p:48}]" :key="budget.n" class="btn" :disabled="cal.running || !editing" @click="applyBudget(budget)">{{ budget.n }} 次 / 种群 {{ budget.p }}</button></div>
           <div class="settings-grid">
             <div class="field"><label for="algorithm">调参算法</label><select id="algorithm" class="input" :value="cal.algorithm" :disabled="cal.running || !editing" @change="cal.setOptimizerConfig('algorithm', $event.target.value)"><option v-for="row in algorithms" :key="row.id" :value="row.id">{{ row.label }}</option></select></div>
@@ -154,13 +159,11 @@
           <div class="objective-list"><label v-for="objective in objectives" :key="objective.key"><span><input type="checkbox" :checked="cal.criteria.metrics[objective.key]" :disabled="cal.running || !editing" @change="cal.setObjectiveMetric(objective.key, $event.target.checked)" /> {{ objective.label }}</span><input type="number" min="0" max="1" step="0.05" :value="cal.criteria.weights[objective.key]" :aria-label="objective.label + ' 权重'" :disabled="cal.running || !editing" @change="cal.setObjectiveWeight(objective.key, $event.target.value)" /></label></div>
           <p v-if="!objectiveWeightValid" class="field-error">指标权重合计须为1，当前为{{ objectiveWeightTotal.toFixed(2) }}</p>
         </template>
-        <details class="advanced-settings"><summary>起算条件与算法细项</summary>
+        <ScientificConditionsEditor :model-value="cal.scienceConditionsDraft" :science-version-id="cal.scienceVersionId" :state-policy="cal.statePolicy" :warmup-days="cal.warmupDays" :continuous="cal.calibrationMode==='continuous'" :disabled="cal.running || !editing" @update:model-value="changeConditions" />
+        <label v-if="cal.statePolicy==='continuous-origin'" class="field continuous-origin-field">连续演算开始时间<input id="continuous-origin" class="input" type="datetime-local" step="3600" :value="cal.continuousOrigin" :disabled="cal.running || !editing" @change="cal.setScienceField('continuousOrigin',$event.target.value)" /><small>{{ originDuration }}</small></label>
+        <details class="advanced-settings"><summary>算法细项与资料准备</summary>
           <p class="settings-note">本站网与处理规则随方案保存。<button class="text-button" :disabled="cal.running || !editing || parameterLoading" @click="applyCurrentPreparation">采用当前站网与处理规则</button>（从“流域与站网”读取，保存新版本时确认重建全部选用输入）</p>
           <div class="settings-grid">
-            <div class="field"><label for="cal-state-policy">状态衔接</label><select id="cal-state-policy" class="input" :value="cal.statePolicy" :disabled="cal.running || !editing || Boolean(cal.scienceVersionId)" @change="cal.setScienceField('statePolicy', $event.target.value)"><option value="independent-warmup">{{ cal.calibrationMode === 'continuous' ? '各期独立预热' : '分场预热' }}</option><option value="continuous-origin">连续演算</option></select></div>
-            <div class="field"><label for="cal-warmup">预热天数</label><input id="cal-warmup" class="input" type="number" min="0" step="1" :value="cal.warmupDays" :disabled="cal.running || !editing || Boolean(cal.scienceVersionId)" @change="cal.setSimulationField('warmupDays', $event.target.value)" /></div>
-            <div v-if="cal.statePolicy === 'continuous-origin'" class="field"><label for="continuous-origin">连续演算开始时间</label><input id="continuous-origin" class="input" type="datetime-local" step="3600" :value="cal.continuousOrigin" :disabled="cal.running || !editing" @change="cal.setScienceField('continuousOrigin', $event.target.value)" /></div>
-            <div class="field"><label for="cal-pet-mode">蒸散发</label><select id="cal-pet-mode" class="input" :value="cal.evaporationMode" :disabled="cal.running || !editing || Boolean(cal.scienceVersionId)" @change="cal.setScienceField('evaporationMode', $event.target.value)"><option value="monthly-climatology-assumption">逐月给定值</option><option value="constant-zero">给定值 0 mm/h</option><option v-if="cal.scienceVersionId" value="science-version">初始参数保存值</option></select></div>
             <template v-if="trialMode === 'automatic'"><div class="field"><label for="population-size">种群规模</label><input id="population-size" class="input" type="number" min="4" step="4" :value="cal.populationSize" :disabled="cal.running || !editing" @change="cal.setOptimizerConfig('populationSize', $event.target.value)" /></div><div class="field"><label for="search-seed">随机种子</label><input id="search-seed" class="input" type="number" min="0" :value="cal.searchSeed" :disabled="cal.running || !editing" @change="cal.setOptimizerConfig('searchSeed', $event.target.value)" /></div><div v-if="cal.calibrationTarget === 'runoff'" class="field"><label for="search-strategy">搜索顺序</label><select id="search-strategy" class="input" :value="cal.searchStrategy" :disabled="cal.running || !editing" @change="cal.setOptimizerConfig('searchStrategy', $event.target.value)"><option value="joint">联合搜索</option><option value="staged">蓄水产流 → 水源划分</option></select></div></template>
           </div>
         </details>
@@ -183,6 +186,11 @@ import CalibrationProcessChart from '@/components/charts/CalibrationProcessChart
 import ParamTuner from '@/components/params/ParamTuner.vue'
 import SearchSpaceEditor from '@/components/params/SearchSpaceEditor.vue'
 import SearchProgress from '@/components/params/SearchProgress.vue'
+import RoutingParameterFields from '@/components/params/RoutingParameterFields.vue'
+import ScientificConditionsEditor from '@/components/params/ScientificConditionsEditor.vue'
+import ResultSaveBar from '@/components/model/ResultSaveBar.vue'
+import NumericReadiness from '@/components/model/NumericReadiness.vue'
+import { routingIsStable } from '@/services/routingPresentation'
 import { useAppStore } from '@/stores/app'
 import { useCalibrationStore } from '@/stores/calibration'
 import { useTasksStore } from '@/stores/tasks'
@@ -213,10 +221,33 @@ const parameterDialog = ref(null), parameterName = ref(''), parameterSaving = re
 const savedParameterId = ref(null), savedParameterName = ref('')
 const routingRecord = ref(null), routingError = ref(''), selectedContinuousPeriod = ref('CALIBRATION')
 const manualRouting = ref(null)
+const manualKind = ref('runoff'), showRiverInitial = ref(false), rangeTemplate = ref('custom')
+const parameterKinds = [{id:'runoff',label:'产流参数'},{id:'slope',label:'坡面汇流'},{id:'channel',label:'河道汇流'}]
+const routingValidityError = computed(() => {
+  if (cal.sourcePlan && trialMode.value==='automatic') return ''
+  if (!manualRouting.value) return routingError.value || '正在读取方案汇流参数'
+  if (cal.schemeRoutingVersionId && routingRecord.value?.routingVersionId !== cal.schemeRoutingVersionId) return '正在读取方案汇流参数'
+  const invalid = Object.entries(manualRouting.value.reach_muskingum || {}).filter(([,row])=>!routingIsStable(row))
+  return invalid.length ? `${invalid.length}条河段的K、X不满足1小时汇流条件。请采用已有最佳参数、使用默认参数或逐段修改。` : ''
+})
+const channelKSummary = computed(() => {
+  const values=Object.values(manualRouting.value?.reach_muskingum || {}).map(row=>row.k_hours).filter(Number.isFinite)
+  return values.length ? `${Number(Math.min(...values).toPrecision(4))}–${Number(Math.max(...values).toPrecision(4))} 小时` : '正在读取'
+})
+const channelKRangeSummary = computed(() => {
+  const range=cal.routingSearchParameters?.muskingum_k_scale
+  const values=Object.values(manualRouting.value?.reach_muskingum||{}).map(row=>row.k_hours).filter(Number.isFinite)
+  return range && values.length ? `整体搜索后K覆盖 ${Number((Math.min(...values)*range.minimum).toPrecision(4))}–${Number((Math.max(...values)*range.maximum).toPrecision(4))} 小时（每条河段K乘同一系数）` : 'K保持各河段初值'
+})
+const originDuration = computed(() => {
+  const start=cal.calibrationMode==='continuous'?cal.calibrationStart:selectedEventRows.value.map(row=>row.start).sort()[0]
+  const hours=dayjs(start).diff(dayjs(cal.continuousOrigin),'hour')
+  return Number.isFinite(hours) ? `最早评价时间 ${shortTime(start)}；此前连续预热 ${hours} 小时` : '请填写连续演算开始时间'
+})
 const slopeTunerDefinitions = ['RS','RI','RG'].map((key,i)=>({key,symbol:key+' K',label:['地表径流','壤中流','地下径流'][i],unit:'h',min:.05,max:720,step:.05}))
 const channelTunerDefinitions = [{key:'k_hours',symbol:'K',label:'河道传播时间',unit:'h',min:.5,max:720,step:.1},{key:'x',symbol:'X',label:'马斯京根权重',unit:'',min:0,max:.5,step:.01}]
 watch(trialMode, value => { if(editing.value) cal.editorTrialMode = value })
-watch(manualRouting, value => { if(editing.value) cal.manualRoutingPayload = value ? JSON.parse(JSON.stringify(value)) : null }, {deep:true})
+watch(manualRouting, value => { if(editing.value && value) cal.manualRoutingPayload = JSON.parse(JSON.stringify(value)) }, {deep:true})
 let previewSequence = 0
 const allEvents = computed(() => cal.schemeEvents)
 const eventYears = computed(() => [...new Set(allEvents.value.map(row => String(row.start).slice(0, 4)))].sort().reverse())
@@ -266,10 +297,11 @@ const originError = computed(() => continuousOriginError(cal.statePolicy, cal.co
 const algorithms = computed(() => app.backendCase?.algorithms || [])
 const jointProfiles = computed(() => app.backendCase?.jointSearchProfiles || [])
 const jointDefinitions = computed(() => jointProfiles.value.find(row => row.id === cal.jointProfile)?.definitions || {})
-const jointRoutingDefinitions = computed(() => (jointDefinitions.value.routing || []).map(row => ({ ...row, ...(routingRecord.value?.searchReferenceOnly && !cal.sourcePlan && row.key === 'muskingum_k_scale' ? { unavailable: '请设置河道基准K后使用河道K倍率' } : {}) })))
+const presentRoutingDefinition = row => ({...row, ...(row.key==='muskingum_k_scale'?{label:'河道传播时间整体调整',symbol:'K整体调整',initialReadOnly:true}:row.key==='muskingum_x'?{label:'马斯京根权重',symbol:'X'}:{})})
+const jointRoutingDefinitions = computed(() => (jointDefinitions.value.routing || []).map(presentRoutingDefinition))
 const routingCoordinates = computed(() => ({...routingSearchCoordinates(manualRouting.value || routingRecord.value?.parameters), muskingum_k_scale: 1}))
 const activeSearchSelection = computed(() => cal.calibrationTarget === 'routing' ? cal.routingSearchParameters : cal.searchParameters)
-const activeSearchDefinitions = computed(() => cal.calibrationTarget === 'routing' ? app.backendCase?.routingSearchParameterDefinitions || [] : cal.calibrationTarget === 'joint' ? jointDefinitions.value.runoff || [] : app.backendCase?.searchParameterDefinitions || [])
+const activeSearchDefinitions = computed(() => cal.calibrationTarget === 'routing' ? (app.backendCase?.routingSearchParameterDefinitions || []).map(presentRoutingDefinition) : cal.calibrationTarget === 'joint' ? jointDefinitions.value.runoff || [] : app.backendCase?.searchParameterDefinitions || [])
 const activeSearchParameters = computed(() => cal.calibrationTarget === 'routing' ? routingCoordinates.value : cal.params)
 const searchError = computed(() => searchSelectionError(activeSearchSelection.value, activeSearchDefinitions.value, activeSearchParameters.value, cal.calibrationTarget === 'runoff' ? cal.searchStrategy : 'joint', cal.calibrationTarget === 'joint' && cal.routingSearchParameters !== null && Object.keys(cal.routingSearchParameters).length > 0))
 const routingSearchError = computed(() => cal.calibrationTarget === 'joint' ? searchSelectionError(cal.routingSearchParameters, jointRoutingDefinitions.value, routingCoordinates.value, 'joint', cal.searchParameters === null || Object.keys(cal.searchParameters).length > 0) : '')
@@ -277,6 +309,7 @@ const combinedDefinitions = computed(() => cal.calibrationTarget === 'joint' ? [
 const combinedCoordinates = computed(() => ({...searchCoordinates(cal.params), ...routingCoordinates.value}))
 const combinedSelection = computed(() => cal.calibrationTarget === 'joint' ? {...(cal.searchParameters ?? selectedSearchParameters(activeSearchDefinitions.value)), ...(cal.routingSearchParameters ?? selectedSearchParameters(jointRoutingDefinitions.value))} : activeSearchSelection.value)
 function updateCombinedSelection(value) {
+  rangeTemplate.value='custom'
   if(value) cal.searchRangeOverrides = {...cal.searchRangeOverrides, ...value}
   if (cal.calibrationTarget !== 'joint') { updateSearchSelection(value); return }
   if(value === null) {cal.setSearchParameters(null);cal.setRoutingSearchParameters(null);return}
@@ -294,7 +327,7 @@ const objectives = [{ key: 'nse', label: 'NSE' }, { key: 'kge', label: 'KGE' }, 
 const objectiveWeightTotal = computed(() => Object.entries(cal.criteria.metrics).reduce((sum, [key, enabled]) => sum + (enabled ? Number(cal.criteria.weights[key] || 0) : 0), 0))
 const objectiveWeightValid = computed(() => Math.abs(objectiveWeightTotal.value - 1) < 0.001)
 const canRun = computed(() => {
-  if (!cal.modelSchemeId || cal.running || cal.activeOperationId || !app.backendCase || parameterLoading.value || parameterConstraint.value || originError.value) return false
+  if (!cal.modelSchemeId || cal.running || cal.activeOperationId || !app.backendCase || parameterLoading.value || parameterConstraint.value || originError.value || routingValidityError.value) return false
   if (cal.calibrationMode === 'event' && (physicalConflict.value || physicalGrouping.value.errors.length)) return false
   if (trialMode.value === 'automatic' && (searchError.value || routingSearchError.value || !objectiveWeightValid.value || routingError.value)) return false
   const errors = cal.validateCalibration({ manual: trialMode.value === 'manual' }).errors
@@ -307,6 +340,7 @@ const calculationBlockReason = computed(() => {
   if (cal.activeOperationId) return '请先查看当前计算'
   if (parameterConstraint.value) return parameterConstraint.value
   if (originError.value) return originError.value
+  if (routingValidityError.value) return routingValidityError.value
   if (physicalConflict.value && cal.calibrationMode === 'event') return physicalConflict.value
   if (trialMode.value === 'automatic') {
     if (routingError.value) return routingError.value
@@ -481,13 +515,16 @@ async function applyReference(id) {
   try {
     if (id === 'model-default') {
       cal.params = { ...app.backendCase.parameters }; cal.baseline = { ...cal.params }; cal.paramVersion = app.backendCase.parameterVersionId
-      cal.scienceVersionId = null; cal.scienceDescriptor = null; cal.candidateWarmupHours = null; cal.evaporationMode = 'monthly-climatology-assumption'
+      await useDefaultRouting(false)
     } else {
       const row = await modelApi('parameter-schemes/' + encodeURIComponent(id))
       cal.params = { ...row.parameters }; cal.baseline = { ...row.parameters }; cal.paramVersion = row.id
+      cal.manualRoutingPayload=null
       cal.schemeRoutingVersionId = row.routing?.versionId || cal.schemeRoutingVersionId
-      cal.scienceVersionId = row.science?.versionId || null; cal.scienceDescriptor = row.scienceSnapshot?.manifest || null
-      cal.statePolicy = row.statePolicy || cal.statePolicy; cal.warmupDays = row.warmupDays ?? cal.warmupDays; cal.evaporationMode = row.science?.versionId ? 'science-version' : row.evaporation?.mode || 'monthly-climatology-assumption'
+      if (row.science?.versionId) {
+        const adopt = await ElMessageBox.confirm('产流与汇流初值已载入。是否同时采用该参数记录的蒸散发和预热条件？已选洪水、算法和预算保持当前设置。', '配套起算条件', {confirmButtonText:'采用配套条件',cancelButtonText:'保留当前条件',distinguishCancelAndClose:true}).then(()=>true).catch(()=>false)
+        if (adopt) {cal.scienceVersionId=row.science.versionId;cal.scienceDescriptor=row.scienceSnapshot?.manifest||null;cal.scienceConditionsDraft=null;cal.statePolicy=row.statePolicy||cal.statePolicy;cal.warmupDays=row.warmupDays??cal.warmupDays;cal.evaporationMode='science-version'}
+      }
     }
     referenceParameterId.value = id; cal.requiredInputBundleVersionId = null
     cal.detachOriginalPlan(); cal.markNeedsRun(''); cal.saveCurrentWorkspace()
@@ -496,15 +533,31 @@ async function applyReference(id) {
 }
 function applyBudget(budget) { cal.setOptimizerConfig('maxEvaluations', budget.n); cal.setOptimizerConfig('populationSize', budget.p) }
 function applyRangeTemplate(id) {
-  if (!id) return
+  if (!id || id==='custom') return
   if (cal.calibrationTarget === 'routing') return
   const definitions = activeSearchDefinitions.value
   const ranges = applySearchRangeTemplate(null, definitions, id)
   cal.searchRangeOverrides = {...cal.searchRangeOverrides, ...ranges}
   cal.setSearchParameters(applySearchRangeTemplate(cal.searchParameters, definitions, id))
-  rangeTemplateNote.value = id === 'project' ? '已恢复项目范围；初值和勾选项保持不变。' : id === 'standard'
-    ? 'Wu等（2017），HESS 21:393–407，表3初始范围；广西潮田河476.24 km²、日尺度研究。用于搜索起点，不代表徐畈最优范围。其余沿用项目范围，KI/KG保持日—小时转换。'
-    : 'Gui等（2024），Water 16:1126，表2；美国与澳大利亚三个流域（990–4828 km²）、日尺度研究。IMP对应本项目IM；其余沿用项目范围，KI/KG保持日—小时转换。不是徐畈最优范围。'
+  rangeTemplate.value=id
+  rangeTemplateNote.value='已填入搜索范围；初值和参与率定的勾选项保持不变。初值超界时请明确调整。'
+}
+function updateRanges(value) {cal.searchRangeOverrides=value;rangeTemplate.value='custom'}
+function chooseTarget(id) {
+  cal.setCalibrationTarget('joint')
+  const bounds=rows=>Object.fromEntries(rows.filter(row=>!['KC','C'].includes(row.key)).map(row=>[row.key,cal.searchRangeOverrides[row.key]||{minimum:row.minimum,maximum:row.maximum}]))
+  cal.setSearchParameters(id==='routing'?{}:bounds(jointDefinitions.value.runoff||[]))
+  cal.setRoutingSearchParameters(id==='runoff'?{}:bounds(jointRoutingDefinitions.value))
+}
+function routingEdited() {cal.detachOriginalPlan();cal.markNeedsRun('汇流初值已修改');cal.saveCurrentWorkspace()}
+async function useDefaultRouting(manageLoading=true) {
+  if(manageLoading)parameterLoading.value=true
+  try {const row=await modelApi('database/routing-defaults');cal.schemeRoutingVersionId=row.routingVersionId;manualRouting.value=JSON.parse(JSON.stringify(row.parameters));routingRecord.value=row;cal.manualRoutingPayload=JSON.parse(JSON.stringify(row.parameters));routingEdited()}
+  catch(failure){calculationError.value=failure.message;throw failure}
+  finally{if(manageLoading)parameterLoading.value=false}
+}
+function changeConditions(value) {
+  cal.detachOriginalPlan();cal.scienceConditionsDraft=value;cal.statePolicy=value.statePolicy.strategy;cal.warmupDays=value.statePolicy.warmupHours/24;cal.candidateWarmupHours=null;cal.markNeedsRun('蒸散发与起算条件已修改');cal.saveCurrentWorkspace()
 }
 function updateInitialValue(key, text) {
   if(!String(text).trim() || !Number.isFinite(Number(text))) return
@@ -521,7 +574,7 @@ function updateInitialValue(key, text) {
   if(!manualRouting.value) return
   if(key.endsWith('_k_hours')) manualRouting.value.default_slope_k_hours[key.split('_')[0]]=value
   else if(key === 'muskingum_x') Object.values(manualRouting.value.reach_muskingum).forEach(row=>row.x=value)
-  else if(key === 'muskingum_k_scale' && value>0) Object.values(manualRouting.value.reach_muskingum).forEach(row=>row.k_hours*=value)
+  routingEdited()
 }
 async function renameParameter() {
   try {
@@ -533,6 +586,10 @@ async function renameParameter() {
 }
 async function commitScheme() {
   if (parameterLoading.value) throw new Error('正在读取初始参数，请稍候再保存')
+  if (cal.scienceConditionsDraft) {
+    const descriptor=await modelApi('science-conditions',{method:'POST',body:{...cal.scienceConditionsDraft,baseVersionId:cal.scienceVersionId||null}})
+    cal.scienceVersionId=descriptor.scienceVersionId;cal.scienceDescriptor=descriptor;cal.evaporationMode='science-version';cal.scienceConditionsDraft=null
+  }
   if (manualRouting.value && JSON.stringify(manualRouting.value) !== JSON.stringify(routingRecord.value?.parameters)) {
     const routing = await modelApi('routing-versions', {method:'POST',body:{name:cal.modelSchemeName+' · 人工试调',parentVersionId:cal.schemeRoutingVersionId || 'control-split-v2',parameters:manualRouting.value}})
     cal.schemeRoutingVersionId = routing.routingVersionId
@@ -579,8 +636,7 @@ function openState() {
 }
 function openRiverFlow() {
   const result = displayResult.value
-  const state = result.eventStates?.find(row => row.eventId === currentPeriodId.value)
-  router.push({ path: '/diagnostics', query: { source: state?.taskId || result.stateCalculationTaskId || result.primaryTaskId || result.taskId, label: cal.modelSchemeName } })
+  router.push({ path: '/results/'+(result.operationId || result.primaryTaskId || result.taskId)+'/sections', query:{process:currentPeriodId.value} })
 }
 async function viewCalculation(record) {
   try {
@@ -620,13 +676,14 @@ watch(() => [app.backendCase, cal.schemeRoutingVersionId], async (_, __, onClean
   let current = true
   onCleanup(() => { current = false })
   routingError.value = ''
+  routingRecord.value=null;manualRouting.value=null
   if (!app.backendCase) return
   try {
-    const id = cal.schemeRoutingVersionId || app.selectedRoutingVersionId || 'control-split-v2'
+    const id = cal.schemeRoutingVersionId || (await modelApi('database/routing-defaults')).routingVersionId
     const payload = await modelApi('routing-versions')
     if (!current) return
     routingRecord.value = (payload.versions || []).find(row => row.routingVersionId === id || row.id === id)
-    if (!routingRecord.value) throw new Error('当前汇流参数不可用，请在模型与资料中检查')
+    if (!routingRecord.value) throw new Error('本方案缺少汇流参数，请使用默认参数或采用原率定最佳参数')
     manualRouting.value = JSON.parse(JSON.stringify(cal.manualRoutingPayload || routingRecord.value.parameters))
   }
   catch (failure) { if (current) routingError.value = failure.message }
@@ -666,4 +723,5 @@ onMounted(refreshNamedParameters)
 </style>
 <style scoped>
 .flood-table{max-height:570px;overflow-y:auto;overscroll-behavior:contain}.flood-table-head{position:sticky;top:0;z-index:2;background:#edf4ef}.parameter-panel fieldset{border:0;padding:0;margin:0;min-width:0}.parameter-panel :deep(.param-row){background:#f8fbf8;border-color:#d7e4db;border-radius:4px}.parameter-panel :deep(.num){color:#285f49;border-color:#bdcfc3;font-size:14px;min-height:34px}.parameter-panel :deep(.range){accent-color:#357e68}.parameter-panel :deep(.param-meta label){color:#365b49;font-size:13px}.routing-tuner h4{font-size:13px;color:#52715f}.settings-dialog small{font-size:12px;color:#728379}.settings-grid .btn-row{display:flex;flex-wrap:wrap;gap:6px}
+.settings-dialog{width:min(1100px,94vw);padding:28px;overflow:auto}.settings-dialog :is(label,p,small,summary,td,th){font-size:14px}.parameter-kind{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px}.routing-repair{display:flex;gap:10px;flex-wrap:wrap}.flood-table{max-height:55vh;overscroll-behavior:contain}.flood-table-head,.flood-row{font-size:14px}.flood-process small{font-size:14px}.flood-process b{white-space:normal}.workbench.manual-mode{grid-template-columns:360px minmax(0,1fr) minmax(310px,360px)}@media(max-width:1450px){.workbench.manual-mode{grid-template-columns:390px minmax(0,1fr)}.manual-mode .parameter-panel{grid-column:1/-1}.parameter-panel :deep(.param-list){max-height:450px}}@media(max-width:900px){.workbench.manual-mode{grid-template-columns:1fr}}
 </style>

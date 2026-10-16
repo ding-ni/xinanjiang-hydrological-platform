@@ -35,6 +35,16 @@ test('flood sorting is numeric, stable, empty last in both directions, before pa
   assert.deepEqual(filterFloodRows(rows,{year:'2007',minimum:10}).map(row=>row.id),['b'])
   assert.equal(rows[0].id,'a')
 })
+test('saved forcing digest permits replay preparation aliases but rejects different actual driving',()=>{
+  const request={context:{contextKey:'X'},period:{mode:'event',events:[{id:'a',start:'2021-08-11T10:00',end:'2021-08-20T10:00'}]},inputs:{bundleVersionId:'INPUT-frozen',stationNetwork:{stations:['rain-a']}}}
+  const manual=structuredClone(request);manual.inputs.sourceBundleVersionId='HISTORICAL_SPATIAL_V1';manual.inputs.bundleVersionId='INPUT-current-window'
+  const same={processDrivingSHA256:{a:'same-antecedent-arrays'}}
+  assert.equal(processComparisonIdentity(request,same,'a'),processComparisonIdentity(manual,same,'a'))
+  assert.notEqual(processComparisonIdentity(request,same,'a'),processComparisonIdentity(manual,{processDrivingSHA256:{a:'changed-rain'}},'a'))
+  assert.notEqual(processComparisonIdentity(request,{},'a'),processComparisonIdentity(manual,{},'a'))
+  manual.inputs.stationNetwork.stations=['rain-b']
+  assert.notEqual(processComparisonIdentity(request,same,'a'),processComparisonIdentity(manual,same,'a'))
+})
 test('time ticks respond to width and zoom without changing non-time axes',()=>{
   const option={xAxis:{type:'category',data:Array.from({length:240},(_,i)=>'2007-01-01T'+String(i%24).padStart(2,'0')+':00')},dataZoom:[{type:'slider'}]}
   const narrow=responsiveChartOption(option,360),wide=responsiveChartOption(option,1000),zoomed=responsiveChartOption(option,360,{start:50,end:60})

@@ -54,6 +54,35 @@ class ParameterSchemes:
             state_id = checkpoint.get('parentStateVersionId')
         return {'strategy': 'CONTINUOUS' if descriptor['statePolicy']['strategy'] == 'continuous-origin' else 'FIXED_WARMUP'}
 
+    def from_result(self, result_id):
+        """Read a completed result's parameters without creating a library item."""
+        output = self.manager.results.result(result_id)
+        task_id = output.get('primaryTaskId') or output.get('taskId') or result_id
+        source = self.manager.result(task_id)
+        request = read_json(safe_task(self.manager.root, task_id) / 'request.json')
+        parameters = source.get('bestParameters') or source.get('parameters') or request.get('parameters')
+        if not parameters:
+            raise ValueError('该计算记录没有完整产流参数')
+        routing = source.get('routingCandidate') or request.get('routing') or {}
+        routing_id = routing.get('routingVersionId') or routing.get('versionId')
+        resolved = self.manager.routing_versions.resolve(routing_id)
+        science = source.get('science') or request.get('science')
+        if not science or not science.get('versionId'):
+            raise ValueError('该计算记录没有完整起算条件')
+        descriptor = self.manager.science_versions.resolve(science['versionId'])
+        warmup = request.get('period', {}).get('warmupDays', descriptor['statePolicy'].get('warmupHours',168)/24)
+        if warmup == 0 or request.get('period', {}).get('initialStateVersionId'):
+            previous = request.get('lineage', {}).get('parameterVersionId')
+            warmup = self.get(previous)['warmupDays'] if str(previous).startswith('PARAMSET-') else descriptor['statePolicy'].get('warmupHours',168)/24
+        return {'id':'RESULT-'+str(result_id),'name':self.manager.results.annotation(result_id).get('name') or self.manager.results.suggested_name(self.manager.results.status(result_id)),
+                'sourceResultId':result_id,'sourceTaskId':task_id,'context':copy.deepcopy(request['context']),
+                'parameters':copy.deepcopy(parameters),'routing':{'versionId':routing_id},
+                'routingParameters':copy.deepcopy(source.get('bestRoutingParameters') or resolved['parameters']),
+                'science':copy.deepcopy(science),'scienceSnapshot':self.manager.science_versions.export(science['versionId']),
+                'warmupDays':warmup,'statePolicy':descriptor['statePolicy']['strategy'],
+                'initialization':self.initialization_rule(request,source,descriptor),
+                'evaporation':{'mode':'science-version'},'sourceInputs':copy.deepcopy(request['inputs'])}
+
     def save(self, body):
         # A named set and any routing version it creates are one backup unit.
         with self.lock:

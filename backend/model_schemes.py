@@ -36,6 +36,14 @@ def change_summary(before, after):
     return '、'.join(dict.fromkeys(changes)) or '方案设置'
 
 
+def history_name(before, after):
+    if not before:
+        return '首次保存'
+    if before.get('period') != after.get('period'):
+        return '洪水与用途调整'
+    return '率定设置调整'
+
+
 def preparation_binding_key(record, request):
     # Parameter-only versions share inputs; PET/science changes require their
     # own coverage check even when the selected floods have not changed.
@@ -95,11 +103,17 @@ class ModelSchemes:
                     role TEXT NOT NULL, payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS model_scheme_history_notes (
                     scheme_id TEXT NOT NULL, revision INTEGER NOT NULL, note TEXT NOT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY(scheme_id,revision));
                 CREATE TABLE IF NOT EXISTS model_scheme_parameters (
                     scheme_id TEXT PRIMARY KEY REFERENCES model_schemes(id),
                     parameter_id TEXT NOT NULL, revision INTEGER NOT NULL, updated_at TEXT NOT NULL);
             ''')
+            # Older workspaces predate named history entries.  Keep their
+            # notes and add the presentation-only name in place.
+            columns = {row['name'] for row in db.execute('PRAGMA table_info(model_scheme_history_notes)')}
+            if 'display_name' not in columns:
+                db.execute("ALTER TABLE model_scheme_history_notes ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")
 
     def defaults(self, body=None):
         standard = {'idwPower': 2, 'minimumStations': 1, 'rainfallMethod': 'stationIdw',
@@ -169,11 +183,14 @@ class ModelSchemes:
             editing = json.loads(editor['payload']) if editor else {}
             snapshot = db.execute('SELECT * FROM model_scheme_snapshots WHERE scheme_id=? AND revision=?', (scheme_id, selected)).fetchone()
             draft_version = db.execute('SELECT revision FROM model_scheme_draft_versions WHERE scheme_id=?', (scheme_id,)).fetchone()
-            history = list(db.execute('SELECT r.revision,r.created_at,r.calculation_draft,n.note FROM model_scheme_revisions r LEFT JOIN model_scheme_history_notes n ON n.scheme_id=r.scheme_id AND n.revision=r.revision WHERE r.scheme_id=? ORDER BY r.revision', (scheme_id,)))
+            history = list(db.execute('SELECT r.revision,r.created_at,r.calculation_draft,n.note,n.display_name FROM model_scheme_revisions r LEFT JOIN model_scheme_history_notes n ON n.scheme_id=r.scheme_id AND n.revision=r.revision WHERE r.scheme_id=? ORDER BY r.revision', (scheme_id,)))
             revisions, previous = [], {}
             for item in history:
                 request = json.loads(item['calculation_draft'])
-                revisions.append({'revision': item['revision'], 'created_at': item['created_at'], 'note': item['note'] or '', 'summary': change_summary(previous, request)})
+                summary = change_summary(previous, request)
+                revisions.append({'revision': item['revision'], 'created_at': item['created_at'],
+                                  'name': item['display_name'] or history_name(previous, request),
+                                  'note': item['note'] or '', 'summary': summary})
                 previous = request
             revisions.reverse()
             adopted = db.execute('SELECT * FROM model_scheme_parameters WHERE scheme_id=?', (scheme_id,)).fetchone()
@@ -227,11 +244,19 @@ class ModelSchemes:
         return self.get(scheme_id)
 
     def history_note(self, scheme_id, body):
-        if not isinstance(body, dict) or set(body) != {'revision', 'note'} or type(body['revision']) is not int or not isinstance(body['note'], str) or len(body['note'].strip()) > 160:
-            raise ValueError('修改历史备注最多160个字符')
+        if not isinstance(body, dict) or set(body) - {'revision', 'note', 'name'} or 'revision' not in body or type(body['revision']) is not int:
+            raise ValueError('设置历史内容无效')
+        note = body.get('note', '')
+        name = body.get('name', '')
+        if not isinstance(note, str) or len(note.strip()) > 160 or not isinstance(name, str) or len(name.strip()) > 80:
+            raise ValueError('设置历史名称最多80个字符，说明最多160个字符')
         self.get(scheme_id, body['revision'])
         with self.database.connect() as db:
-            db.execute('INSERT INTO model_scheme_history_notes VALUES (?,?,?) ON CONFLICT(scheme_id,revision) DO UPDATE SET note=excluded.note', (scheme_id, body['revision'], body['note'].strip()))
+            old=db.execute('SELECT note,display_name FROM model_scheme_history_notes WHERE scheme_id=? AND revision=?',(scheme_id,body['revision'])).fetchone()
+            if old:
+                note=body.get('note',old['note'])
+                name=body.get('name',old['display_name'])
+            db.execute('INSERT INTO model_scheme_history_notes(scheme_id,revision,note,display_name) VALUES (?,?,?,?) ON CONFLICT(scheme_id,revision) DO UPDATE SET note=excluded.note,display_name=excluded.display_name', (scheme_id, body['revision'], note.strip(), name.strip()))
         return self.get(scheme_id)
 
     def discard_editor(self, scheme_id, body):

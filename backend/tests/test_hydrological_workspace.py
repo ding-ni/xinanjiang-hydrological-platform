@@ -46,6 +46,8 @@ class HydrologicalWorkspaceTests(unittest.TestCase):
         self.assertEqual([row['id'] for row in rows],['OP-business'])
         self.assertFalse(rows[0]['saved'])
         self.manager.results.update('OP-business',{'name':'六月洪水成果','notes':'两场','collection':'','favorite':False,'revision':0})
+        self.assertFalse(self.manager.results.catalog()['results'][0]['saved'])
+        self.manager.results.update('OP-business',{'name':'六月洪水成果','notes':'两场','collection':'','favorite':True,'revision':1})
         self.assertTrue(self.manager.results.catalog()['results'][0]['saved'])
         self.assertEqual((folder/'result.json').read_bytes(),before)
         self.assertEqual(self.manager.results.process('OP-business','original-a')['purpose'],'验证')
@@ -98,5 +100,30 @@ class HydrologicalWorkspaceTests(unittest.TestCase):
         self.assertEqual(defaults.defaults()['routingVersionId'],new['routingVersionId'])
         with self.assertRaises(RuntimeError):
             defaults.defaults({'parameters':edited,'revision':0})
+
+    def test_simultaneous_section_queries_share_task_and_numeric_changes_invalidate(self):
+        from concurrent.futures import ThreadPoolExecutor
+        self.result_fixture()
+        source=self.manager.root/'JOB-one'
+        write_json(source/'request.json',{'period':{},'inputs':{},'routing':{},'context':{},'lineage':{}})
+        (source/'routing-runoff.npz').write_bytes(b'array-content')
+        section={'id':'SECTION-'+'a'*32,'name':'上游断面','definition':{'spatialSHA256':'a'*64,'queried':[119.5,30.1]}}
+        tasks=[]
+        def enqueue(payload,**kwargs):
+            task={'taskId':'JOB-query-'+str(len(tasks)),'status':'queued','runConfig':payload}
+            tasks.append(task);return task
+        body={'resultId':'OP-business','processId':'original-a','sectionId':section['id']}
+        with patch.object(self.manager.river_sections,'bundle',return_value={}),patch.object(self.manager.river_sections,'get',return_value=section),patch('river_sections.spatial_identity',return_value='a'*64),patch('diagnostic_jobs.point_assets',return_value={}),patch('section_cache.query_implementation',return_value='program-A') as program,patch.object(self.manager,'list',side_effect=lambda:list(tasks)),patch.object(self.manager,'_enqueue',side_effect=enqueue) as submit:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                pair=list(pool.map(self.manager.river_sections.query,[body,body]))
+            self.assertEqual(pair[0]['taskId'],pair[1]['taskId']);self.assertEqual(submit.call_count,1)
+            section['name']='只改名称'
+            self.assertEqual(self.manager.river_sections.query(body)['taskId'],pair[0]['taskId'])
+            original=read_json(source/'request.json');original['parameters']={'WM':151}
+            write_json(source/'request.json',original)
+            self.assertNotEqual(self.manager.river_sections.query(body)['taskId'],pair[0]['taskId'])
+            program.return_value='program-B'
+            self.manager.river_sections.query(body)
+            self.assertEqual(submit.call_count,3)
 
 if __name__=='__main__':unittest.main()

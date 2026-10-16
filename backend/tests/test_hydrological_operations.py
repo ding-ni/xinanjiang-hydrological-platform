@@ -17,6 +17,26 @@ from test_unified_backend import simulation, calibration
 
 
 class SchemeEditorTests(unittest.TestCase):
+    def test_replayed_search_uses_optimal_routing_for_final_states(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as temporary, patch('hydrological_operations.ThreadPoolExecutor'):
+            root=Path(temporary)
+            candidate={'routingVersionId':'ROUTING-optimum'}
+            manager=SimpleNamespace(runtime_root=root,root=root/'tasks',
+                routing_versions=SimpleNamespace(create=Mock(return_value=candidate)),
+                science_versions=SimpleNamespace(resolve=Mock(return_value={'statePolicy':{'strategy':'independent-warmup'}})))
+            operations=HydrologicalOperations(manager,None)
+            operations.check_cancelled=Mock()
+            graph={'forecast':[{'time':'2024-06-01T00:00:00','value':12}]}
+            output={'taskId':'JOB-search','bestParameters':{'WM':150},'bestRoutingParameters':{'actual':'optimum'},'hydrographs':{'A':graph}}
+            frozen={'inputs':{},'routing':{'versionId':'ROUTING-search-baseline'},'science':{'versionId':'SCIENCE-saved'},'period':{'events':[{'id':'A','start':'2024-06-01T00:00:00','end':'2024-06-01T00:00:00','purpose':'率定'}]}}
+            operations.child=Mock(return_value={'taskId':'JOB-final','endStateVersionId':'STATE-final','hydrograph':graph})
+            final=operations.final_states('OP-replay',output,frozen)
+            self.assertEqual(operations.child.call_args.args[1]['routing'],{'versionId':'ROUTING-optimum'})
+            self.assertEqual(final['routingCandidate'],candidate)
+            self.assertEqual(frozen['routing']['versionId'],'ROUTING-search-baseline')
+
     def test_event_result_rerun_keeps_every_flood_instead_of_only_the_primary(self):
         from types import SimpleNamespace
         from unittest.mock import Mock
@@ -246,8 +266,11 @@ class RealOperationTests(unittest.TestCase):
                 manager.close()
 
     def test_saved_parameter_fixed_simulation_hindcast_rolling_and_continuation(self):
+        from operation_fixtures import seed_daily_observations
+        import copy
         with tempfile.TemporaryDirectory() as temporary:
             manager = TaskManager(Path(temporary) / 'tasks')
+            seed_daily_observations(manager)
             manager.input_tasks = InputTaskManager(Path(temporary) / 'input-tasks', manager.products)
             manager.operations = HydrologicalOperations(manager, manager.input_tasks)
             manager.schemes.defaults({'rainfallMethod': 'reuse', 'stationSourceId': None})
@@ -281,7 +304,11 @@ class RealOperationTests(unittest.TestCase):
                 body = {'parameterSchemeId': parameter['id'], 'context': simulation()['context']}
                 modeled = finish(manager.operations.submit({**body, 'operation': 'continuousSimulation',
                     'period': {'startTime': '2017-06-19T11:00', 'endTime': '2017-06-20T11:00'}}), manager.operations)
-                self.assertEqual(modeled['hydrograph']['forecast'], original['hydrograph']['forecast'])
+                direct_request = copy.deepcopy(manager.get(modeled['primaryTaskId'])['runConfig'])
+                direct_request['requestId'] = 'DIRECT-SAVED-PARAMETER-CHECK'
+                direct = finish(manager.submit(direct_request), manager)
+                self.assertEqual(modeled['hydrograph']['forecast'], direct['hydrograph']['forecast'])
+                self.assertEqual(direct_request['parameters'], parameter['parameters'])
                 continued = finish(manager.operations.submit({'operation': 'continuation', 'context': body['context'],
                     'sourceTaskId': modeled['primaryTaskId'], 'period': {'endTime': '2017-06-20T13:00'}}), manager.operations)
                 self.assertEqual(continued['parentStateVersionId'], modeled['endStateVersionId'])

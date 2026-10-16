@@ -25,11 +25,11 @@
     <button v-if="editing" class="btn" :disabled="busy || cal.running" @click="discard">放弃修改</button>
     <button class="btn" :disabled="busy || cal.running" @click="saveAs">另存方案</button>
     <button v-if="savedRow?.hasDraft && !editing" class="btn" :disabled="busy || cal.running" @click="resumeDraft">恢复上次草稿</button>
-    <button v-if="savedRow?.revisions?.length" class="btn" :disabled="busy || editing || cal.running" @click="historyDialog.showModal()">修改历史</button>
+    <button v-if="savedRow?.revisions?.length" class="btn" :disabled="busy || editing || cal.running" @click="historyDialog.showModal()">设置历史</button>
     <span v-if="saving" class="save-status" role="status">保存中</span>
     <span v-else-if="error" class="scheme-error" role="alert">{{ error }} <button class="text-button" @click="flush">重试</button></span>
   </header>
-  <HydrologyDialog ref="historyDialog" class="scheme-history"><header><h2>修改历史</h2><button class="btn" @click="historyDialog.close()">关闭</button></header><p>恢复历史会保存为当前方案，已有成果保持原计算条件。</p><div v-for="item in savedRow?.revisions || []" :key="item.revision" class="history-item"><div><b>{{ dateLabel(item.created_at) }}</b><p>{{ item.summary || '保存方案' }}<template v-if="item.note"> · {{ item.note }}</template></p></div><button class="btn" @click="annotateHistory(item)">备注</button><button class="btn" :disabled="busy" @click="viewHistory(item)">查看条件</button><button class="btn" :disabled="busy || item.revision === cal.modelSchemeLatestRevision" @click="restoreHistory(item)">恢复此保存</button></div></HydrologyDialog>
+  <HydrologyDialog ref="historyDialog" class="scheme-history"><header><h2>设置历史</h2><button class="btn" @click="historyDialog.close()">关闭</button></header><p>这里记录方案设置的保存点。名称可以自定义；展开说明可查看具体改动。恢复历史会形成新的当前保存，已有计算成果不受影响。</p><div v-for="item in savedRow?.revisions || []" :key="item.revision" class="history-item"><div><b>{{ item.name || item.summary || '保存方案' }}</b><small>{{ dateLabel(item.created_at) }}</small><details><summary>查看改动说明</summary><p>{{ item.summary || '保存方案' }}<template v-if="item.note"> · {{ item.note }}</template></p></details></div><button class="btn" @click="annotateHistory(item)">命名</button><button class="btn" :disabled="busy" @click="viewHistory(item)">查看条件</button><button class="btn" :disabled="busy || item.revision === cal.modelSchemeLatestRevision" @click="restoreHistory(item)">恢复此保存</button></div></HydrologyDialog>
 </template>
 
 <script setup>
@@ -216,8 +216,8 @@ async function rename() {
 }
 async function annotateHistory(item) {
   try {
-    const { value } = await ElMessageBox.prompt('为这次保存填写备注', '修改历史备注', { inputValue: item.note, inputValidator: value => String(value || '').length <= 160 })
-    savedRow.value = await modelApi('model-schemes/' + cal.modelSchemeId + '/history-note', { method: 'POST', body: { revision: item.revision, note: value || '' } })
+    const { value } = await ElMessageBox.prompt('给这次方案设置一个容易识别的名称', '命名设置历史', { inputValue: item.name || item.summary || '', inputValidator: value => Boolean(value?.trim()) && value.trim().length <= 80, confirmButtonText: '保存名称', cancelButtonText: '取消' })
+    savedRow.value = await modelApi('model-schemes/' + cal.modelSchemeId + '/history-note', { method: 'POST', body: { revision: item.revision, name: value.trim(), note: item.note || '' } })
   } catch (failure) { if (failure instanceof Error) error.value = failure.message }
 }
 async function viewHistory(item) { historyDialog.value.close(); await load(cal.modelSchemeId, item.revision) }

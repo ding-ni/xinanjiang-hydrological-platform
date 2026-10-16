@@ -276,6 +276,8 @@ class TaskManager:
             status = {**read_json(path), **updates}
             write_json(path, status)
             self.database.index_task(status, self.root.name)
+            if status.get('status') == 'completed' and hasattr(self, 'results'):
+                self.results.ensure_name(status)
             return status
 
     def execute(self, task_id):
@@ -875,6 +877,9 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 return
             if self.command == 'GET' and path.startswith(f'{prefix}/results/') and path.endswith('/scheme-conditions'):
                 self.send_json(200, manager.results.scheme_request(path[len(f'{prefix}/results/'):-len('/scheme-conditions')]))
+                return
+            if self.command == 'GET' and path.startswith(f'{prefix}/results/') and path.endswith('/parameter-snapshot'):
+                self.send_json(200, manager.parameter_schemes.from_result(path[len(f'{prefix}/results/'):-len('/parameter-snapshot')]))
                 return
             if self.command == 'GET' and path.startswith(f'{prefix}/results/'):
                 identifier = path[len(f'{prefix}/results/'):]

@@ -3,9 +3,9 @@
     <div class="figure-legend" aria-label="率定过程图图例">
       <span v-if="forcing.precipitation?.length"><i class="bar rain" />{{ rainfallLabel }}</span>
       <span v-if="hasTemperature"><i class="line temperature" />面平均气温</span>
-      <span v-if="showObserved"><i class="line observed" />实测流量</span>
-      <span v-if="!observedOnly && showCurrent"><i class="line simulated" :style="{ borderColor: currentCurve.color }" />{{ currentCurve.label }}</span>
-      <span v-for="trial in visibleComparisons" :key="trial.taskId"><i class="line" :style="{ borderColor: trial.color, borderTopStyle: trial.lineType || 'solid' }" />{{ trial.label }}</span>
+      <span v-if="showObserved && !compactLegend"><i class="line observed" />实测流量</span>
+      <span v-if="!observedOnly && showCurrent && !compactLegend"><i class="line simulated" :style="{ borderColor: currentCurve.color }" />{{ currentCurve.label }}</span>
+      <span v-for="trial in compactLegend?[]:visibleComparisons" :key="trial.taskId"><i class="line" :style="{ borderColor: trial.color, borderTopStyle: trial.lineType || 'solid' }" />{{ trial.label }}</span>
       <span v-for="item in activeComponentLegends" :key="item.key"><i class="line component" :style="{ borderColor: item.color, borderTopStyle: item.style }" />{{ item.name }}</span>
     </div>
     <BaseChart class="hydrology-chart" :option="option" @select-time="index => emit('select-time', hydrograph.times?.[index] || hydrograph.forecast?.[index]?.time || hydrograph.obs?.[index]?.time)" />
@@ -24,7 +24,7 @@ const props = defineProps({
   visibleComponents: { type: Object, required: true },
   displayMode: { type: String, default: 'process' },
   observedOnly: { type: Boolean, default: false },
-  showObserved:{type:Boolean,default:true},showCurrent:{type:Boolean,default:true}
+  showObserved:{type:Boolean,default:true},showCurrent:{type:Boolean,default:true},compactLegend:Boolean
   ,comparisons: { type: Array, default: () => [] }
   ,currentCurve: { type: Object, default: () => ({ label: '模拟流量', color: '#D55E00' }) }
 })
@@ -54,10 +54,23 @@ const option = computed(() => {
   const observed = times.map((time) => observedMap.get(time) ?? null)
   const simulatedMap = new Map((h?.forecast || []).map((item) => [item.time, item.value]))
   const simulated = times.map((time) => simulatedMap.get(time) ?? null)
+  const escape=value=>String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))
+  const tooltip={trigger:'axis',appendToBody:false,confine:true,enterable:false,hideDelay:0,transitionDuration:0,
+    backgroundColor:'rgba(255,255,255,.98)',borderColor:'#bed0c7',textStyle:{color:'#25483b',fontSize:12},
+    extraCssText:'max-width:360px;pointer-events:none;',formatter(params){
+      const index=params[0]?.dataIndex
+      if(index==null)return ''
+      const rows=[[rainfallLabel.value,props.forcing.precipitation?.[index],'mm']]
+      if(hasTemperature.value)rows.push(['面平均气温',props.forcing.temperature[index],'°C'])
+      if(props.showObserved)rows.push(['实测流量',observed[index],'m³/s'])
+      if(!props.observedOnly&&props.showCurrent)rows.push([props.currentCurve.label,simulated[index],'m³/s'])
+      for(const trial of visibleComparisons.value)rows.push([trial.label,alignedTrialSeries(trial.hydrograph,times)[index],'m³/s'])
+      return `<b>${escape(String(times[index]||'').replace('T',' '))}</b><br>`+rows.map(([label,value,unit])=>`${escape(label)}：${value==null?'缺测':Number(value).toFixed(2)+' '+unit}`).join('<br>')
+    }}
   const trialSeries = axis => visibleComparisons.value.map(trial => ({
     id: trial.taskId, name: trial.label, type: 'line', xAxisIndex: axis, yAxisIndex: axis,
     data: alignedTrialSeries(trial.hydrograph, times), connectNulls: false, showSymbol: false,
-    lineStyle: { width: 1.8, color: trial.color, type: trial.lineType || 'solid' }, itemStyle: { color: trial.color },
+    lineStyle: { width: trial.selected?3:1.8, color: trial.color, type: trial.lineType || 'solid' }, itemStyle: { color: trial.color },
     emphasis: { focus: 'series' }, z: 6
   }))
   const components = props.forcing.components || {}
@@ -78,16 +91,11 @@ const option = computed(() => {
     return {
       animation: false,
       textStyle: { fontFamily: 'Noto Sans CJK SC, Microsoft YaHei UI, sans-serif' },
-      tooltip: {
-        trigger: 'axis', appendToBody: true, confine: false, enterable: false,
-        backgroundColor: 'rgba(255,255,255,0.98)', borderColor: '#bfcdd8', borderWidth: 1,
-        textStyle: { color: '#1e3448', fontSize: 11 },
-        extraCssText: 'z-index:3000;max-width:320px;box-shadow:0 8px 24px rgba(20,45,55,.16);'
-      },
+      tooltip,
       axisPointer: { link: [{ xAxisIndex: 'all' }] },
       grid: [
-        { left: 64, right: 26, top: 10, height: '25%' },
-        { left: 64, right: 26, top: '42%', bottom: 72 }
+        { left: 64, right: 26, top: 12, height: '17%' },
+        { left: 64, right: 26, top: '30%', bottom: 72 }
       ],
       xAxis: [
         { type: 'category', gridIndex: 0, boundaryGap: true, data: times, axisLabel: { show: false }, axisTick: { show: false } },
@@ -113,24 +121,7 @@ const option = computed(() => {
   return {
     animation: false,
     textStyle: { fontFamily: 'Microsoft YaHei UI, Microsoft YaHei, sans-serif' },
-    tooltip: {
-      trigger: 'axis',
-      appendToBody: true,
-      confine: false,
-      enterable: false,
-      backgroundColor: 'rgba(255,255,255,0.98)',
-      borderColor: '#bfcdd8',
-      borderWidth: 1,
-      textStyle: { color: '#1e3448', fontSize: 11 },
-      extraCssText: 'z-index:3000;max-width:320px;box-shadow:0 8px 24px rgba(20,45,55,.16);',
-      formatter(params) {
-        const rows = params.filter((item) => item.value != null && item.value !== '-').map((item) => {
-          const unit = item.seriesName.includes('降雨') ? 'mm' : item.seriesName.includes('气温') ? '°C' : 'm³/s'
-          return `${item.marker}${item.seriesName}<b style="float:right;margin-left:18px">${Number(item.value).toFixed(1)} ${unit}</b>`
-        })
-        return `<b>${params[0]?.axisValue || ''}</b><br>${rows.join('<br>')}`
-      }
-    },
+    tooltip,
     axisPointer: { link: [{ xAxisIndex: 'all' }], lineStyle: { color: '#557184', width: 1 } },
     grid: [
       { left: 64, right: 30, top: 12, height: '18%' },

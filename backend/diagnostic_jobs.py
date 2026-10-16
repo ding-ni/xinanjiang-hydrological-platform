@@ -25,7 +25,8 @@ def point_assets():
 
 
 def sha(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    from section_cache import sha as file_sha
+    return file_sha(path)
 
 
 def workflow_evidence():
@@ -217,7 +218,13 @@ def make_point_engine(bundle, output, parameters):
              "topology": bundle["paths"]["topology"], "output": output,
              "runoff_wide": output / "runoff-wide.csv", "runoff_grid_geojson": bundle["paths"]["geometry"],
              "grid_static": bundle["paths"]["grids"]}
-    engine = RegisteredPointFlowQuery(MODEL, paths, {**parameters, "stream_threshold_km2": 1.0})
+    from section_cache import terrain_key, load_engine, save_engine
+    key=terrain_key(paths,MODEL)
+    config={**parameters, 'stream_threshold_km2':1.0}
+    engine=load_engine(RegisteredPointFlowQuery,MODEL,paths,config,key)
+    if engine is None:
+        engine = RegisteredPointFlowQuery(MODEL, paths, config)
+        save_engine(engine,key)
     expected = read_json(bundle["paths"]["topology"])["reaches"]
     if set(engine.reach_by_id) != {row["reach_id"] for row in expected}:
         raise ValueError("D8 重建河段与冻结拓扑不一致，拒绝使用默认替代河段")
@@ -254,79 +261,129 @@ def spatial_payload(bundle):
 
 def run_point(folder, request):
     import numpy as np
-    from input_products import InputProducts
-    # A read-only view avoids starting another executor/recovering statuses.
+    import time
+    from input_products import InputProducts, manifest_digest
+    from section_cache import sha as file_sha, query_implementation
+    started=time.perf_counter()
+    timings={}
+    current=[None,started]
+    profile_path=RUNTIME/'section-cache/timing-samples.json'
+    profiles=read_json(profile_path) if profile_path.is_file() else []
+    expected={}
+    for sample in profiles[-20:]:
+        if sample.get('sourceTaskId')==request['sourceTaskId']:
+            for phase,seconds in sample.get('timings',{}).items():
+                expected.setdefault(phase,[]).append(seconds)
+    def phase(name,label,completed=None,total=None,**extra):
+        instant=time.perf_counter()
+        if current[0]!=name:
+            if current[0]:timings[current[0]]=round(instant-current[1],3)
+            current[:]=[name,instant]
+        sequence=['verify','read','terrain','prepare','route','section','save']
+        remaining=None
+        if expected and name in sequence:
+            pending=sequence[sequence.index(name):]
+            if all(key in expected for key in pending):
+                remaining=max(0,sum(float(np.median(expected[key])) for key in pending)-(instant-current[1]))
+        write_json(folder/'progress.json',{'progress':None,'phase':name,'stageLabel':label,
+            'phaseStartedAt':time.time()-(instant-current[1]),'elapsedSeconds':round(instant-started,1),
+            'remainingSeconds':round(remaining) if remaining is not None else None,
+            'completedSteps':completed,'totalSteps':total,**extra})
+    phase('verify','检查来源过程与计算条件')
+    if request.get('queryImplementationSHA256') and request['queryImplementationSHA256']!=query_implementation():
+        raise ValueError('断面查询程序在排队期间更新，请重新发起查询')
     class Source:
-        root = RUNTIME / "tasks"
+        root = RUNTIME / 'tasks'
         def result(self, task_id):
-            source = safe_task(self.root, task_id)
-            if read_json(source / "status.json")["status"] not in {"completed", "archived"}:
-                raise ValueError("来源模拟任务未成功完成")
-            return read_json(source / "result.json")
-    source, original, result, metadata = point_source(Source(), request["sourceTaskId"])
-    if sha(source / "result.json") != request["sourceResultSHA256"] or result["routingEvidence"] != request["sourceRoutingEvidence"]:
-        raise ValueError("排队后的来源任务发生改变")
-    if point_assets() != request["spatialEvidence"]:
-        raise ValueError("排队后的 DEM / 控制点发生改变")
-    bundle = InputProducts().resolve(request["inputs"]["bundleVersionId"])
-    if bundle["manifestSHA256"] != request["inputs"]["bundleManifestSHA256"]:
-        raise ValueError("来源输入摘要改变")
-    parameters = RoutingVersions().resolve(request["routing"]["versionId"])
-    if parameters["parametersSHA256"] != request["routing"]["parametersSHA256"] or parameters["parameters"] != metadata["routingParameters"]:
-        raise ValueError("来源汇流参数不一致")
-    freeze_routing_selection(copy.deepcopy(request), bundle)
-    write_json(folder / "progress.json", {"progress": 10, "stageLabel": "读取冻结产流；构建真实 30 m D8 拓扑"})
-    with np.load(source / "routing-runoff.npz", allow_pickle=False) as archive:
-        times = archive["times"].tolist()
-        components = {name: archive[name].copy() for name in ("RS", "RI", "RG")}
-    if any(values.shape != (len(times), len(metadata["gridIds"])) or not np.isfinite(values).all() for values in components.values()):
-        raise ValueError("完整产流数组无效")
-    engine = make_point_engine(bundle, folder, parameters["parameters"])
-    point = request['point']
-    longitude, latitude = point['lon'], point['lat']
-    location = None
+            source=safe_task(self.root,task_id)
+            if read_json(source/'status.json')['status'] not in {'completed','archived'}:
+                raise ValueError('来源模拟任务未成功完成')
+            return read_json(source/'result.json')
+    source,original,result,metadata=point_source(Source(),request['sourceTaskId'])
+    if request.get('sourceRequestSHA256') and sha(source/'request.json')!=request['sourceRequestSHA256']:
+        raise ValueError('排队后的来源计算条件发生改变')
+    if sha(source/'result.json')!=request['sourceResultSHA256'] or result['routingEvidence']!=request['sourceRoutingEvidence']:
+        raise ValueError('排队后的来源任务发生改变')
+    if point_assets()!=request['spatialEvidence']:
+        raise ValueError('排队后的河网地形发生改变')
+    bundle=InputProducts().resolve(request['inputs']['bundleVersionId'])
+    if bundle['manifestSHA256']!=request['inputs']['bundleManifestSHA256']:
+        raise ValueError('来源输入摘要改变')
+    parameters=RoutingVersions().resolve(request['routing']['versionId'])
+    if parameters['parametersSHA256']!=request['routing']['parametersSHA256'] or parameters['parameters']!=metadata['routingParameters']:
+        raise ValueError('来源汇流参数不一致')
+    freeze_routing_selection(copy.deepcopy(request),bundle)
+    phase('read','读取已保存的产流过程')
+    with np.load(source/'routing-runoff.npz',allow_pickle=False) as archive:
+        times=archive['times'].tolist()
+        components={name:archive[name].copy() for name in ('RS','RI','RG')}
+    if any(values.shape!=(len(times),len(metadata['gridIds'])) or not np.isfinite(values).all() for values in components.values()):
+        raise ValueError('完整产流数组无效')
+    key=manifest_digest({'sourceTaskId':request['sourceTaskId'],'runoff':result['routingEvidence']['arraySHA256'],
+        'inputs':request['inputs'],'routing':parameters['parametersSHA256'],'initialState':original.get('period',{}).get('initialStateVersionId'),
+        'spatial':request['spatialEvidence'],'program':request.get('queryImplementationSHA256') or sha(Path(__file__))})
+    prepared=RUNTIME/'section-cache/processes'/key
+    prepared.mkdir(parents=True,exist_ok=True)
+    manifest_path=prepared/'manifest.json'
+    names=('runoff-wide.csv','runoff-by-unit.csv','reach_flow.csv','component_flow.csv')
+    saved=read_json(manifest_path) if manifest_path.is_file() else {}
+    cache_hit=saved.get('key')==key and all((prepared/name).is_file() and file_sha(prepared/name)==saved.get('files',{}).get(name) for name in names)
+    phase('terrain','读取河网准备' if cache_hit else '准备河网与断面位置',preparationCacheHit=cache_hit,
+        calculationStart=times[0],calculationEnd=times[-1])
+    engine=make_point_engine(bundle,prepared,parameters['parameters'])
+    point=request['point']
+    longitude,latitude=point['lon'],point['lat']
+    location=None
     if request.get('riverOnly'):
-        longitude, latitude, location, control = locate_river_point(engine, point)
+        longitude,latitude,location,control=locate_river_point(engine,point)
         if control:
-            # The simulated outlet process is already the frozen control-node
-            # outflow. Reading it avoids re-routing or rebuilding its state.
-            rows = result['hydrograph']['forecast']
-            answer = {'schema_version': 'point_flow_query.v1', 'run_id': request['sourceTaskId'],
-                      'point': {'lon': longitude, 'lat': latitude, 'cell': control['cell']},
-                      'classification': {'point_type': 'RIVER'}, 'location': location,
-                      'series': {'time': [row['time'] for row in rows], 'flow_cms': [row['value'] for row in rows], 'unit': 'm3/s'},
-                      'method': 'PERSISTED_CONTROL_HYDROGRAPH',
-                      'topology': {'topology_action': 'EXISTING_CONTROL_NODE', 'control_node_id': control['node_id'],
-                                   'upstream_reach_id': control['upstream_reach_id'], 'requires_rerun': False},
-                      'quality': {'status': 'FORMAL_SPLIT_RESULT', 'warning': '读取来源模拟已保存的控制断面流量。'}}
-            return {'pointQuery': answer, 'sourceTaskId': request['sourceTaskId'], 'warnings': [answer['quality']['warning']]}
-    require_point_rerun(original, metadata, RUNTIME)
-    with (folder / "runoff-wide.csv").open("w", encoding="utf-8", newline="") as stream:
-        writer = csv.writer(stream)
-        writer.writerow(["time", "unit_id", "RS_mm", "RI_mm", "RG_mm"])
-        for step, time in enumerate(times):
-            for index, grid_id in enumerate(metadata["gridIds"]):
-                writer.writerow([time, grid_id, *[float(components[name][step, index]) for name in ("RS", "RI", "RG")]])
-    # The native slope query also needs the actual complete reach/component run.
-    from integration.runoff_adapter import aggregate_runoff_to_reach_segments
-    from xaj_routing.engine import RoutingEngine
-    from xaj_routing.io import read_topology_json, read_runoff_csv, write_reach_flows_csv, write_component_flows_csv
-    from xaj_routing.models import RoutingParameters
-    aggregate_runoff_to_reach_segments(folder / "runoff-wide.csv", bundle["paths"]["mapping"], bundle["paths"]["topology"], folder / "runoff-by-unit.csv")
-    routed = RoutingEngine(read_topology_json(bundle["paths"]["topology"]), RoutingParameters.from_mapping(parameters["parameters"])).run(read_runoff_csv(folder / "runoff-by-unit.csv"))
-    write_reach_flows_csv(folder / "reach_flow.csv", routed.reach_flows, request["sourceTaskId"])
-    write_component_flows_csv(folder / "component_flow.csv", routed.component_flows, request["sourceTaskId"])
-    write_json(folder / "progress.json", {"progress": 65, "stageLabel": "定位点位并执行原后端切分汇流 / 坡面诊断"})
-    answer = engine.query(lon=longitude, lat=latitude, channel_width_m=point["channelWidthM"],
-                          run_id=request["sourceTaskId"], rerun_output_dir=folder / "split-rerun")
-    pairs = [(time, flow) for time, flow in zip(answer["series"]["time"], answer["series"]["flow_cms"])
-             if metadata["startTime"] <= time.replace(" ", "T") <= metadata["endTime"]]
-    if not pairs or any(not math.isfinite(flow) or flow < 0 for _, flow in pairs):
-        raise ValueError("点位过程线缺失或出现无效流量")
-    answer["series"].update(time=[time.replace(" ", "T") for time, _ in pairs], flow_cms=[flow for _, flow in pairs])
-    if location:
-        answer['location'] = location
-    return {"pointQuery": answer, "sourceTaskId": request["sourceTaskId"], "warnings": [answer["quality"]["warning"], "诊断计算，不能用于生产预报。"]}
+            rows=result['hydrograph']['forecast']
+            answer={'schema_version':'point_flow_query.v1','run_id':request['sourceTaskId'],
+                'point':{'lon':longitude,'lat':latitude,'cell':control['cell']},
+                'classification':{'point_type':'RIVER'},'location':location,
+                'series':{'time':[row['time'] for row in rows],'flow_cms':[row['value'] for row in rows],'unit':'m3/s'},
+                'method':'PERSISTED_CONTROL_HYDROGRAPH',
+                'topology':{'topology_action':'EXISTING_CONTROL_NODE','control_node_id':control['node_id'],
+                    'upstream_reach_id':control['upstream_reach_id'],'requires_rerun':False},
+                'quality':{'status':'FORMAL_SPLIT_RESULT','warning':'读取来源模拟已保存的控制断面流量。'}}
+            return {'pointQuery':answer,'sourceTaskId':request['sourceTaskId'],'warnings':[answer['quality']['warning']]}
+    require_point_rerun(original,metadata,RUNTIME)
+    if not cache_hit:
+        phase('prepare','整理冻结产流，准备汇流输入',0,len(times))
+        with (prepared/'runoff-wide.csv').open('w',encoding='utf-8',newline='') as stream:
+            writer=csv.writer(stream);writer.writerow(['time','unit_id','RS_mm','RI_mm','RG_mm'])
+            for step,instant in enumerate(times):
+                for index,grid_id in enumerate(metadata['gridIds']):
+                    writer.writerow([instant,grid_id,*[float(components[name][step,index]) for name in ('RS','RI','RG')]])
+                if step%48==0 or step+1==len(times):
+                    phase('prepare','整理冻结产流，准备汇流输入',step+1,len(times))
+        from integration.runoff_adapter import aggregate_runoff_to_reach_segments
+        from xaj_routing.engine import RoutingEngine
+        from xaj_routing.io import read_topology_json,read_runoff_csv,write_reach_flows_csv,write_component_flows_csv
+        from xaj_routing.models import RoutingParameters
+        aggregate_runoff_to_reach_segments(prepared/'runoff-wide.csv',bundle['paths']['mapping'],bundle['paths']['topology'],prepared/'runoff-by-unit.csv')
+        phase('route','计算来源轨迹的河道汇流')
+        routed=RoutingEngine(read_topology_json(bundle['paths']['topology']),RoutingParameters.from_mapping(parameters['parameters'])).run(read_runoff_csv(prepared/'runoff-by-unit.csv'))
+        write_reach_flows_csv(prepared/'reach_flow.csv',routed.reach_flows,request['sourceTaskId'])
+        write_component_flows_csv(prepared/'component_flow.csv',routed.component_flows,request['sourceTaskId'])
+        write_json(manifest_path,{'key':key,'files':{name:file_sha(prepared/name) for name in names}})
+    phase('section','计算所选断面汇流过程',preparationCacheHit=cache_hit,calculationStart=times[0],calculationEnd=times[-1])
+    answer=engine.query(lon=longitude,lat=latitude,channel_width_m=point['channelWidthM'],
+        run_id=request['sourceTaskId'],rerun_output_dir=folder/'split-rerun')
+    phase('save','整理并保存所选洪水流量')
+    pairs=[(instant,flow) for instant,flow in zip(answer['series']['time'],answer['series']['flow_cms'])
+        if metadata['startTime']<=instant.replace(' ','T')<=metadata['endTime']]
+    if not pairs or any(not math.isfinite(flow) or flow<0 for _,flow in pairs):
+        raise ValueError('断面过程线缺失或出现无效流量')
+    answer['series'].update(time=[instant.replace(' ','T') for instant,_ in pairs],flow_cms=[flow for _,flow in pairs])
+    if location:answer['location']=location
+    timings['save']=round(time.perf_counter()-current[1],3)
+    profiles.append({'sourceTaskId':request['sourceTaskId'],'preparationCacheHit':cache_hit,'timings':timings})
+    write_json(profile_path,profiles[-100:])
+    return {'pointQuery':answer,'sourceTaskId':request['sourceTaskId'],'warnings':[answer['quality']['warning'],'诊断计算，不能用于生产预报。'],
+        'timings':{'querySeconds':round(time.perf_counter()-started,3),'phases':timings},
+        'preparationCacheHit':cache_hit,'queryImplementationSHA256':request.get('queryImplementationSHA256'),
+        'calculationRange':{'start':times[0],'end':times[-1]}}
 
 
 def formal_report(result, request):

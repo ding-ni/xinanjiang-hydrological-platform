@@ -38,10 +38,14 @@ export function processComparisonIdentity(request,result,processId){
   const row=(period.events||period.windows||[]).find(row=>row.id===processId)
   if(!row&&period.mode==='event')return null
   const lineage={...request.lineage,...result?.lineage}
+  // This digest covers the actual antecedent rain, PET, observations and grid
+  // order for this flood. A full replay may omit the preparation parent ID
+  // while retaining exactly the same saved arrays.
+  const driving=result?.processDrivingSHA256?.[processId]||null
   const normalize=value=>{if(Array.isArray(value))return value.map(normalize);if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map(key=>[key,normalize(value[key])]));return value}
   return JSON.stringify(normalize({context:request.context?.contextKey,process:row?{id:row.id,start:row.start,end:row.end}:period,
-    driving:result?.processDrivingSHA256?.[processId]||null,
-    inputs:request.inputs?.sourceBundleVersionId||request.inputs?.bundleVersionId,network:request.inputs?.stationNetwork,warmup:period.warmupDays,
+    driving,
+    inputs:driving?null:request.inputs?.sourceBundleVersionId||request.inputs?.bundleVersionId,network:request.inputs?.stationNetwork,warmup:period.warmupDays,
     statePolicy:request.calibration?.statePolicy,origin:request.calibration?.continuousOrigin||period.continuousOrigin,
     science:lineage.petConfigurationSHA256||request.science?.versionId,evaporation:request.inputs?.evaporation,
     interpolation:{method:request.inputs?.rainfallMethod,power:request.inputs?.idwPower,minimum:request.inputs?.minimumStations},

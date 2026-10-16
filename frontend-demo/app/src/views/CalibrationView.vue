@@ -5,7 +5,7 @@
     <template v-if="schemeOpened">
       <section class="adopted-parameters"><b>方案采用参数</b><span>{{ namedParameters.find(row=>row.id===adoptedParameter?.parameter_id)?.name || (adoptedParameter?'正在读取名称':'尚未选定；从完成的计算中命名保存参数') }}</span><template v-if="adoptedParameter"><button class="btn" @click="router.push({path:'/simulation',query:{parameter:adoptedParameter.parameter_id}})">用于洪水模拟</button><button class="btn" :disabled="!editing || cal.running" @click="applyReference(adoptedParameter.parameter_id)">用于自动率定初值</button></template></section>
       <header class="workbench-toolbar">
-        <NumericReadiness v-if="app.backendCase" />
+        <details v-if="app.backendCase" class="readiness"><summary>计算准备</summary><NumericReadiness /></details>
         <div class="period-switch" aria-label="率定时段">
           <button :class="{ active: cal.calibrationMode === 'event' }" :disabled="cal.running || !editing" @click="cal.setCalibrationMode('event')">洪水场次</button>
           <button :class="{ active: cal.calibrationMode === 'continuous' }" :disabled="cal.running || !editing" @click="cal.setCalibrationMode('continuous')">连续时段</button>
@@ -25,7 +25,7 @@
       <section v-if="cal.running || calculationError || preparationIssues.length || cal.activeOperationId" class="calculation-status" aria-live="polite">
         <div v-if="cal.running" class="progress-row"><b>{{ cal.operationProgress?.stageLabel || '正在准备资料' }}</b><span>{{ Math.round(cal.operationProgress?.progress || 0) }}%</span></div>
         <progress v-if="cal.running" :value="cal.operationProgress?.progress || 0" max="100" />
-        <p v-if="cal.running && cal.operationProgress?.searchProgress" class="search-count">已评价 {{ cal.operationProgress.searchProgress.evaluations || 0 }} 次 · 最佳目标值 {{ finiteMetric(cal.operationProgress.searchProgress.bestLoss ?? cal.operationProgress.searchProgress.best_loss, 4) }}</p>
+        <p v-if="cal.running && cal.operationProgress?.searchProgress" class="search-count">已评价 {{ cal.operationProgress.searchProgress.evaluations || 0 }} 次 · 综合拟合得分（越高越好） {{ finiteMetric(searchScore(cal.operationProgress.searchProgress.bestLoss ?? cal.operationProgress.searchProgress.best_loss), 4) }}</p>
         <p v-if="cal.running && cal.operationProgress?.searchProgress?.remainingSeconds != null" class="search-count">已耗时 {{ cal.operationProgress.searchProgress.elapsedSeconds }} 秒 · 按已完成评价估计剩余 {{ cal.operationProgress.searchProgress.remainingSeconds }} 秒（最终评价与状态保存另计）</p>
         <details v-if="cal.running && cal.operationProgress?.searchProgress?.history?.length" class="search-trace"><summary>参数搜索过程</summary><SearchProgress :progress="cal.operationProgress.searchProgress" /></details>
         <p v-if="calculationError" role="alert">{{ calculationError }}</p>
@@ -41,8 +41,9 @@
         </div>
       </section>
 
-      <div class="workbench" :class="{ 'manual-mode': trialMode === 'manual' }">
-        <aside class="panel flood-panel">
+      <button class="text-button flood-toggle" @click="floodCollapsed=!floodCollapsed">{{ floodCollapsed?'展开洪水列表':'收起洪水列表' }}</button>
+      <div class="workbench" :class="{ 'manual-mode': trialMode === 'manual', 'flood-collapsed':floodCollapsed }">
+        <aside v-show="!floodCollapsed" class="panel flood-panel">
           <template v-if="cal.calibrationMode === 'event'">
             <div class="panel-heading"><h2>洪水目录 {{ cal.events.length }} 场</h2><span>已选 {{ eventCounts.calibration + eventCounts.validation + eventCounts.independent }} 场</span></div>
             <div class="event-browser-bar">
@@ -53,14 +54,14 @@
               </div>
               <span class="event-scope-count">显示 {{ filteredEvents.length }} 场</span>
             </div>
-            <div class="event-filters">
+            <details class="event-filter-panel"><summary>筛选洪水<template v-if="eventQuery || eventYear!=='all' || purposeFilter!=='all' || peakMin!=='' || peakMax!==''"> · 已设置</template></summary><div class="event-filters">
               <input v-model="eventQuery" class="input" type="search" placeholder="洪水编号或时间" aria-label="搜索洪水" />
               <select v-model="eventYear" class="input" aria-label="洪水年份"><option value="all">全部年份</option><option v-for="year in eventYears" :key="year" :value="year">{{ year }}年</option></select>
               <select v-model="purposeFilter" class="input" aria-label="洪水用途筛选"><option value="all">全部用途</option><option v-for="purpose in purposes" :key="purpose" :value="purpose">{{ purpose === '未使用' ? '未选洪水' : purpose }}</option></select>
               <input v-model.number="peakMin" class="input" type="number" min="0" step="any" placeholder="洪峰下限" aria-label="洪峰下限" />
               <input v-model.number="peakMax" class="input" type="number" min="0" step="any" placeholder="洪峰上限" aria-label="洪峰上限" />
               <button v-if="eventQuery || eventYear!=='all' || purposeFilter!=='all' || peakMin!=='' || peakMax!==''" class="btn" @click="eventQuery='';eventYear='all';purposeFilter='all';peakMin='';peakMax=''">清除筛选</button>
-            </div>
+            </div></details>
             <div class="selection-counts"><span>率定 <b>{{ eventCounts.calibration }}</b></span><span>验证 <b>{{ eventCounts.validation }}</b></span><span>独立检验 <b>{{ eventCounts.independent }}</b></span></div>
             <div class="batch-actions">
               <label><input type="checkbox" :checked="allFilteredSelected" :disabled="cal.running || !editing || !filteredEvents.length" @change="selectFiltered($event.target.checked)" /> 选用当前筛选结果</label>
@@ -73,7 +74,7 @@
               <button class="btn primary mini" :disabled="cal.running || !editing" @click="applyAutoSplit">采用划分</button>
             </div>
             <div class="flood-table" role="table" aria-label="洪水场次">
-              <div class="flood-table-head" role="row"><span>选用</span><span class="time-column-head"><FloodColumnHeader label="开始" column="start" :sort-key="eventSortKey" :direction="eventSortDirection" filter @sort="sortEvents"><select v-model="eventYear" class="input"><option value="all">全部年份</option><option v-for="year in eventYears" :key="year">{{ year }}</option></select></FloodColumnHeader><FloodColumnHeader label="结束" column="end" :sort-key="eventSortKey" :direction="eventSortDirection" @sort="sortEvents" /><FloodColumnHeader label="历时" column="duration" :sort-key="eventSortKey" :direction="eventSortDirection" @sort="sortEvents" /></span><FloodColumnHeader label="洪峰 m³/s" column="peak" :sort-key="eventSortKey" :direction="eventSortDirection" filter @sort="sortEvents"><input v-model="peakMin" class="input" type="number" placeholder="洪峰下限" /><input v-model="peakMax" class="input" type="number" placeholder="洪峰上限" /></FloodColumnHeader><FloodColumnHeader label="用途" column="purpose" :sort-key="eventSortKey" :direction="eventSortDirection" filter @sort="sortEvents"><select v-model="purposeFilter" class="input"><option value="all">全部用途</option><option v-for="purpose in purposes" :key="purpose">{{ purpose }}</option></select></FloodColumnHeader></div>
+              <div class="flood-table-head" role="row"><span>选</span><span class="time-column-head"><FloodColumnHeader label="时段" column="start" :sort-key="eventSortKey" :direction="eventSortDirection" filter @sort="sortEvents"><label>排序依据<select class="input" :value="eventSortKey" @change="sortEvents($event.target.value)"><option value="start">开始时间</option><option value="end">结束时间</option><option value="duration">历时</option></select></label><select v-model="eventYear" class="input"><option value="all">全部年份</option><option v-for="year in eventYears" :key="year">{{ year }}</option></select></FloodColumnHeader></span><FloodColumnHeader label="洪峰" column="peak" :sort-key="eventSortKey" :direction="eventSortDirection" filter @sort="sortEvents"><p>洪峰流量 · m³/s</p><input v-model="peakMin" class="input" type="number" placeholder="洪峰下限" /><input v-model="peakMax" class="input" type="number" placeholder="洪峰上限" /></FloodColumnHeader><FloodColumnHeader label="用途" column="purpose" :sort-key="eventSortKey" :direction="eventSortDirection" filter @sort="sortEvents"><select v-model="purposeFilter" class="input"><option value="all">全部用途</option><option v-for="purpose in purposes" :key="purpose">{{ purpose }}</option></select></FloodColumnHeader></div>
               <div v-for="event in pagedEvents" :key="event.id" class="flood-row" :class="{ current: event.id === cal.eventId }" role="row">
                 <input type="checkbox" :checked="event.purpose !== '未使用'" :aria-label="eventName(event.id) + ' 选用'" :disabled="cal.running || !editing" @change="cal.setEventPurpose(event.id, $event.target.checked ? '率定' : '未使用')" />
                 <button class="flood-process" :aria-pressed="event.id === cal.eventId" @click="selectEvent(event)"><b>{{ eventName(event.id) }}</b><small>{{ eventPeriod(event) }}<template v-if="event.catalogueBoundaryOverride || cal.schemeWindows.some(row=>row.id===event.id)"> · 自定义时段</template></small><em v-if="issueForEvent(event.id)">{{ issueForEvent(event.id) }}</em></button>
@@ -102,31 +103,21 @@
           <section class="panel process-panel">
             <div class="panel-heading process-heading"><div><h2>{{ activeProcessTitle }}</h2><span v-if="activeEvent && cal.calibrationMode === 'event'">{{ fullPeriod(activeEvent) }}</span></div><select v-if="cal.calibrationMode === 'continuous' && continuousPeriods.length" class="input period-select" v-model="selectedContinuousPeriod" aria-label="查看评价期"><option v-for="period in continuousPeriods" :key="period.id" :value="period.id">{{ period.label || period.id }}</option></select><button v-if="displayResult" class="btn mini" @click="openState">状态分布</button></div>
             <p v-if="previewLoading && !currentHydrograph" class="process-status">读取雨流过程</p>
-            <div v-if="displayResult" class="result-view-actions"><span>流量过程</span><button class="btn" @click="openRiverFlow">河道流量</button></div>
-            <p v-else-if="previewError && !currentHydrograph" class="process-status field-error">{{ previewError }}</p>
-            <div v-if="trialMode==='manual'" class="curve-controls"><label><input v-model="showObserved" type="checkbox" /> 实测流量</label><select v-model="automaticReference" class="input" aria-label="自动率定参考"><option value="">不显示自动参考</option><option v-for="row in automaticCurves" :key="row.taskId" :value="row.taskId">自动率定 · {{ shortTime(row.completedAt) }}</option></select><div v-for="row in curveOptions" :key="row.taskId" class="curve-entry"><label><input type="checkbox" :checked="curveSelection[row.taskId]!==false" @change="curveSelection[row.taskId]=$event.target.checked" /><i :style="{background:row.color}" />{{ row.label }}</label><small>{{ shortTime(row.completedAt) }} · NSE {{ finiteMetric(trialResults[row.taskId]?.hydrographs?.[currentPeriodId]?.metrics?.nse,3) }} · 洪峰误差 {{ percentMetric(trialResults[row.taskId]?.hydrographs?.[currentPeriodId]?.metrics?.peakErr ?? trialResults[row.taskId]?.hydrographs?.[currentPeriodId]?.metrics?.peak_error_percent) }}</small><span v-if="!trialResults[row.taskId]?.hydrographs?.[currentPeriodId]">本次尚未计算此场</span><span v-else-if="!sameProcessConditions(trialResults[row.taskId])">计算条件不同</span><details><summary>参数变化</summary><p>{{ curveParameterChanges(row) }}</p></details><button class="text-button" @click="viewCalculation(row)">查看并保存参数</button></div></div>
-            <CalibrationProcessChart v-if="displayHydrograph.times?.length || displayHydrograph.obs?.length || displayHydrograph.forecast?.length" :hydrograph="displayHydrograph" :forcing="displayForcing" :visible-components="{}" :show-observed="showObserved" :show-current="trialMode!=='manual'" :observed-only="!currentHydrograph?.forecast?.length && !comparisonLines.length" :comparisons="comparisonLines" :current-curve="{ label: '本次模拟', color: '#ca6e30' }" />
+            <p v-if="previewError && !currentHydrograph" class="process-status field-error">{{ previewError }}</p>
+            <div v-if="trialMode==='manual'" class="curve-controls" aria-label="选择对比曲线"><label><input v-model="showObserved" type="checkbox" /> 实测</label><select v-model="automaticReference" class="input" aria-label="自动率定参考"><option value="">不显示自动参考</option><option v-for="row in automaticCurves" :key="row.taskId" :value="row.taskId">{{ recordName(row) }}</option></select><div v-for="row in curveOptions" :key="row.taskId" class="curve-chip" :class="{selected:row.taskId===displayResult?.taskId}" :title="recordName(row)+'；'+curveParameterChanges(row)"><input type="checkbox" :aria-label="'显示'+row.label" :checked="curveSelection[row.taskId]!==false" @change="curveSelection[row.taskId]=$event.target.checked" /><button class="text-button" @click="viewCalculation(row)"><i :style="{background:row.color}" />{{ row.label }}</button><small v-if="!trialResults[row.taskId]?.hydrographs?.[currentPeriodId]">未算此场</small><small v-else-if="!sameProcessConditions(trialResults[row.taskId])">条件不同</small></div></div>
+            <div v-if="displayResult" class="selected-calculation"><b>{{ selectedRecordName }}</b><span v-for="metric in processMetrics" :key="metric.label">{{ metric.label }} <strong>{{ metric.value }}</strong></span></div>
+            <details v-if="selectedPeaks" class="peak-detail"><summary>峰值与峰现时刻</summary><span>实测 {{ finiteMetric(selectedPeaks.observedPeak,1) }} m³/s · {{ shortTime(selectedPeaks.observedTime) }}</span><span>模拟 {{ finiteMetric(selectedPeaks.simulatedPeak,1) }} m³/s · {{ shortTime(selectedPeaks.simulatedTime) }}</span><button class="text-button" @click="openRiverFlow">查询断面流量</button></details>
+            <CalibrationProcessChart v-if="displayHydrograph.times?.length || displayHydrograph.obs?.length || displayHydrograph.forecast?.length" :hydrograph="displayHydrograph" :forcing="displayForcing" :visible-components="{}" :show-observed="showObserved" :show-current="trialMode!=='manual'" :compact-legend="trialMode==='manual'" :observed-only="!currentHydrograph?.forecast?.length && !comparisonLines.length" :comparisons="comparisonLines" :current-curve="{ label: selectedRecordName || '本次模拟', color: '#ca6e30' }" />
             <div v-else class="process-empty">{{ cal.calibrationMode === 'event' ? '选择洪水查看雨流过程' : '暂无计算结果' }}</div>
           </section>
 
           <section class="panel result-panel">
-            <div class="panel-heading"><h2>{{ currentHydrograph ? '计算结果' : '洪水资料' }}</h2><button v-if="displayResult?.bestParameters" class="btn primary" :disabled="cal.running" @click="openSaveParameters">保存参数</button></div>
-            <div v-if="currentHydrograph" class="metric-row">
-              <div v-for="metric in processMetrics" :key="metric.label"><span>{{ metric.label }}</span><b>{{ metric.value }}</b></div>
-            </div>
-            <div v-else-if="activeEvent && cal.calibrationMode === 'event'" class="metric-row"><div><span>实测洪峰</span><b>{{ finiteMetric(activeEvent.observedPeak, 1) }} m³/s</b></div><div><span>洪水历时</span><b>{{ activeEvent.durationHours || '—' }} h</b></div><div><span>资料检查</span><b>{{ issueForEvent(activeEvent.id) || '随计算检查' }}</b></div></div>
-            <table v-if="displayResult && trialMode !== 'manual'" class="evaluation-table"><thead><tr><th>用途</th><th>NSE</th><th>洪峰误差</th><th>峰现误差</th><th>水量误差</th></tr></thead><tbody><tr v-for="group in evaluationRows" :key="group.label"><th>{{ group.label }}</th><td>{{ finiteMetric(group.metrics.nse, 3) }}</td><td>{{ percentMetric(group.metrics.peak) }}</td><td>{{ hourMetric(group.metrics.time) }}</td><td>{{ percentMetric(group.metrics.volume) }}</td></tr></tbody></table>
-            <p v-if="terminationLabel" class="result-stamp">{{ terminationLabel }}</p>
-            <ResultSaveBar v-if="displayResult" :result-id="displayResult.operationId || displayResult.primaryTaskId || displayResult.taskId" :suggestion="cal.modelSchemeName+' · '+new Date().toLocaleDateString('zh-CN')" />
-            <div v-if="displayResult" class="scope-actions"><button class="btn" @click="conditionsDialog.showModal()">查看原条件</button><button class="btn" :disabled="cal.running" @click="rerunResult">按原条件复算</button><button v-if="displayResult.bestParameters" class="btn" :disabled="cal.running" @click="simulateBest">采用最佳参数模拟</button></div>
-            <p v-if="displayResult?.timings" class="result-stamp">资料准备 {{ displayResult.timings.inputPreparationSeconds ?? displayResult.timings.preparationSeconds }} 秒 · 搜索 {{ displayResult.timings.searchSeconds }} 秒 · 最终评价 {{ displayResult.timings.finalEvaluationSeconds }} 秒 · 状态保存 {{ displayResult.timings.stateSavingSeconds }} 秒</p>
-            <details v-if="displayResult?.optimizer?.history?.length && trialMode !== 'manual'" class="calculation-history"><summary>参数搜索过程</summary><SearchProgress :optimizer="displayResult.optimizer" /></details>
-            <p v-if="savedParameterName" class="result-stamp">参数已保存：{{ savedParameterName }} <button class="text-button" @click="goSimulation">进入洪水模拟 →</button></p>
-            <details v-if="cal.trialRecords.length" class="calculation-history"><summary>历次计算（{{ cal.trialRecords.length }}）</summary><button v-for="record in [...cal.trialRecords].reverse()" :key="record.taskId" class="history-row" @click="viewCalculation(record)"><span>{{ record.manual ? '人工试调' : '自动率定' }} · {{ shortTime(record.completedAt) }}</span><b>{{ record.taskId === displayResult?.taskId ? '正在查看' : '查看' }}</b></button></details>
+            <nav class="dock-tabs" aria-label="率定工作区"><button v-if="trialMode==='manual'" :class="{active:dockTab==='tune'}" @click="selectDock('tune')">人工参数</button><button :class="{active:dockTab==='evaluation'}" @click="selectDock('evaluation')">全场评价</button><button :class="{active:dockTab==='parameters'}" @click="selectDock('parameters')">本组参数</button><button :class="{active:dockTab==='records'}" @click="selectDock('records')">计算记录（{{ cal.trialRecords.length }}）</button><button class="dock-collapse" @click="dockOpen=!dockOpen">{{ dockOpen?'收起':'展开' }}</button></nav>
+            <div v-if="displayResult" class="record-actions"><button v-if="displayResult.bestParameters" class="btn primary" @click="openSaveParameters">保存参数</button><button v-if="displayResult.bestParameters" class="btn" @click="useSelectedForTrial">载入人工试调</button><details class="more-actions"><summary>更多操作</summary><button class="btn" @click="conditionsDialog.showModal()">本次计算设置</button><button class="btn" :disabled="cal.running" @click="rerunResult">{{ displayResult.evaluationMode==='manual'?'再次模拟':'再次自动率定' }}</button><button class="btn" @click="simulateBest">用这组参数模拟其他洪水</button></details><ResultSaveBar :result-id="canonicalResultId" :suggestion="selectedRecordName" @saved="recordRenamed" /></div>
+            <template v-if="dockOpen"><CalculationEvaluation v-if="dockTab==='evaluation' && displayResult" :result="displayResult" /><CalculationParameters v-if="dockTab==='parameters' && displayResult" :result="displayResult" /><div v-if="dockTab==='records'" class="calculation-history"><div v-for="record in [...cal.trialRecords].reverse()" :key="record.taskId" class="history-row"><button class="text-button" @click="viewCalculation(record)">{{ recordName(record) }}<small> · {{ record.manual?'人工试调':'自动率定' }} · {{ shortTime(record.completedAt) }}</small></button><span>{{ record.taskId===displayResult?.taskId?'正在查看':'' }}</span><button class="text-button" @click="renameCalculation(record)">✎ 改名</button></div></div><details v-if="displayResult?.optimizer?.history?.length && dockTab==='evaluation'" class="calculation-history"><summary>参数搜索过程 · {{ terminationLabel }}</summary><SearchProgress :optimizer="displayResult.optimizer" /></details><p v-if="savedParameterName" class="result-stamp">参数已保存：{{ savedParameterName }} <button class="text-button" @click="goSimulation">进入洪水模拟 →</button></p><p v-if="!displayResult && dockTab!=='tune'" class="empty">选择计算记录后查看评价和参数。</p></template>
           </section>
-        </main>
 
-        <aside v-if="trialMode === 'manual'" class="panel parameter-panel">
+        <aside v-if="trialMode === 'manual'" v-show="dockOpen && dockTab==='tune'" class="panel parameter-panel">
           <div class="panel-heading"><h2>人工试调</h2><button class="text-button" :disabled="cal.running" @click="resetTrial">恢复来源参数</button></div>
           <p class="settings-note">临时试调，尚未保存为参数。来源：{{ trialSource }}</p>
           <select class="input" aria-label="试调参数来源" :disabled="cal.running" @change="loadTrialSource($event.target.value)"><option value="">选择参数来源</option><option value="initial">方案初值</option><option value="default">模型默认参数</option><optgroup label="本方案自动率定"><option v-for="row in automaticCurves" :key="row.taskId" :value="'result:'+row.taskId">{{ shortTime(row.completedAt) }} 自动率定参数</option></optgroup><optgroup label="参数库"><option v-for="row in namedParameters" :key="row.id" :value="'parameter:'+row.id">{{ row.name }}</option></optgroup></select>
@@ -139,9 +130,10 @@
           <button class="btn block" :disabled="cal.running || !trialBaseline" @click="resetTrial">恢复本次载入参数</button>
           <button class="btn primary block" :disabled="!canRun" @click="startCalculation">{{ cal.running ? '正在计算' : trialScope==='current'?'试算当前洪水':'试算全部已选洪水' }}</button>
         </aside>
+        </main>
       </div>
 
-      <HydrologyDialog ref="conditionsDialog" class="settings-dialog"><header class="dialog-heading"><h2>本次成果的原始计算条件</h2><button class="btn" @click="conditionsDialog.close()">关闭</button></header><p>方案 {{ displayResult?.lineage?.schemeName || cal.modelSchemeName }} · 预热 {{ displayResult?.frozenRequest?.period?.warmupDays }} 天</p><table class="evaluation-table"><thead><tr><th>洪水 / 评价期</th><th>开始</th><th>结束</th><th>用途</th></tr></thead><tbody><tr v-for="row in displayResult?.frozenRequest?.period?.events || displayResult?.frozenRequest?.period?.windows || []" :key="row.id"><td>{{ row.name || row.id }}</td><td>{{ shortTime(row.start) }}</td><td>{{ shortTime(row.end) }}</td><td>{{ row.purpose }}</td></tr></tbody></table><p>起算规则：{{ displayResult?.frozenRequest?.calibration?.statePolicy === 'continuous-origin' ? '连续演算，自 '+shortTime(displayResult?.frozenRequest?.calibration?.continuousOrigin) : '各场独立预热' }}</p><p>算法 {{ displayResult?.frozenRequest?.calibration?.optimizer?.algorithm }} · 预算 {{ displayResult?.frozenRequest?.calibration?.optimizer?.maxEvaluations }} 次</p><table class="evaluation-table"><thead><tr><th>参数</th><th>初值</th><th>下限</th><th>上限</th></tr></thead><tbody><tr v-for="row in displayResult?.searchPlan?.rows || []" :key="row.key"><td>{{ row.label || row.key }}</td><td>{{ finiteMetric(row.initial,4) }}</td><td>{{ row.minimum ?? '固定' }}</td><td>{{ row.maximum ?? '固定' }}</td></tr></tbody></table></HydrologyDialog>
+      <HydrologyDialog ref="conditionsDialog" class="settings-dialog"><header class="dialog-heading"><h2>本次计算设置</h2><button class="btn" @click="conditionsDialog.close()">关闭</button></header><CalculationConditions v-if="displayResult" :result="displayResult" :request="displayResult.frozenRequest || {}" /></HydrologyDialog>
       <HydrologyDialog ref="settings" class="settings-dialog" aria-labelledby="cal-settings-title" @click="closeBackdrop($event, settings)">
         <header class="dialog-heading"><h2 id="cal-settings-title">率定设置</h2><button class="btn" :disabled="parameterLoading" @click="settings.close()">完成</button></header>
         <div class="settings-summary"><span>{{ cal.section }}</span><span>新安江产流 · 坡面线性水库 · 马斯京根汇流</span></div>
@@ -196,6 +188,10 @@ import SearchProgress from '@/components/params/SearchProgress.vue'
 import RoutingParameterFields from '@/components/params/RoutingParameterFields.vue'
 import ScientificConditionsEditor from '@/components/params/ScientificConditionsEditor.vue'
 import ResultSaveBar from '@/components/model/ResultSaveBar.vue'
+import CalculationEvaluation from '@/components/model/CalculationEvaluation.vue'
+import CalculationParameters from '@/components/model/CalculationParameters.vue'
+import CalculationConditions from '@/components/model/CalculationConditions.vue'
+import { searchScore, peakDetails } from '@/services/calculationPresentation'
 import NumericReadiness from '@/components/model/NumericReadiness.vue'
 import HydrologyDialog from '@/components/model/HydrologyDialog.vue'
 import FloodColumnHeader from '@/components/model/FloodColumnHeader.vue'
@@ -210,7 +206,7 @@ import { saveModelScheme, prepareTrialInputs, makeSchemeEditable, schemeWindowCo
 import { modelApi, uniqueRequestId } from '@/services/modelBackendService'
 import { observedModelProcess, modelEventStatistics } from '@/services/modelInputPresentation'
 import { loadModelInputWindow, loadHistoricalDatabaseProcess } from '@/services/modelInputService'
-import { latestComparableTrial, trialConditions, resultProcessMatches, calibrationSummaryMetrics } from '@/services/manualCalibrationService'
+import { latestComparableTrial, trialConditions, resultProcessMatches } from '@/services/manualCalibrationService'
 import { visibleWorkspaceResult } from '@/services/savedModelResultService'
 import { preparationIssueText } from '@/services/dailyOperationService'
 import { routingSearchCoordinates, searchCoordinates, searchSelectionError, selectedSearchParameters, applySearchRangeTemplate } from '@/services/calibrationSpaceService'
@@ -218,7 +214,16 @@ import { routingSearchCoordinates, searchCoordinates, searchSelectionError, sele
 const app = useAppStore(), cal = useCalibrationStore(), tasks = useTasksStore(), router = useRouter(), route = useRoute()
 const editing = ref(false), rangeTemplateNote = ref('未覆盖的参数沿用项目范围；模板不改变初值及勾选项。')
 const schemeBar = ref(null), schemeOpened = ref(false), trialMode = ref('automatic'), settings = ref(null)
-const conditionsDialog = ref(null), simulateAfterSave = ref(false)
+const conditionsDialog = ref(null)
+const floodCollapsed=ref(false),dockTab=ref('evaluation'),dockOpen=ref(true),recordNames=reactive({})
+function selectDock(value){dockTab.value=value;dockOpen.value=true}
+watch(trialMode,value=>{dockTab.value=value==='manual'?'tune':'evaluation';dockOpen.value=true})
+const canonicalResultId=computed(()=>displayResult.value?.operationId||displayResult.value?.primaryTaskId||displayResult.value?.taskId)
+function recordName(record){const result=trialResults[record.taskId];return recordNames[result?.operationId||record.taskId] || record.name || `${cal.modelSchemeName} · ${record.manual?'人工试调':'自动率定'} · ${shortTime(record.completedAt)}`}
+const selectedRecordName=computed(()=>recordNames[canonicalResultId.value]||recordName(cal.trialRecords.find(row=>row.taskId===displayResult.value?.taskId)||{taskId:displayResult.value?.taskId,manual:displayResult.value?.evaluationMode==='manual'}))
+function recordRenamed(row){recordNames[canonicalResultId.value]=row.name}
+async function renameCalculation(record){try{const result=trialResults[record.taskId],id=result?.operationId||record.taskId;const old=await modelApi('result-metadata/'+id);const {value}=await ElMessageBox.prompt('修改计算记录名称，不改变参数或过程','修改名称',{inputValue:recordName(record),inputValidator:value=>Boolean(value?.trim())&&value.trim().length<=80});const saved=await modelApi('result-metadata/'+id,{method:'POST',body:{name:value.trim(),notes:old.notes||'',collection:old.collection||'',favorite:Boolean(old.favorite),revision:old.revision||0}});recordNames[id]=saved.name}catch(failure){if(failure instanceof Error)calculationError.value=failure.message}}
+async function useSelectedForTrial(){if(!displayResult.value)return;const id=displayResult.value.taskId;trialMode.value='manual';await loadTrialSource('result:'+id);dockTab.value='tune';dockOpen.value=true}
 const eventQuery = ref(''), eventYear = ref('all'), purposeFilter = ref('all'), eventPage = ref(1)
 const eventScope = ref('selected'), peakMin = ref(''), peakMax = ref(''), eventSort = ref('time')
 const autoSplitPreview = ref(null)
@@ -252,7 +257,7 @@ async function loadTrialSource(value){
   }catch(failure){calculationError.value=failure.message}finally{parameterLoading.value=false}
 }
 function resetTrial(){if(trialBaseline.value){trialParams.value=clone(trialBaseline.value.params);trialRouting.value=clone(trialBaseline.value.routing)}}
-function sortEvents(key,direction){eventSortKey.value=key;eventSortDirection.value=direction;eventPage.value=1}
+function sortEvents(key,direction='asc'){eventSortKey.value=key;eventSortDirection.value=direction;eventPage.value=1}
 const effectiveRouting=computed(()=>trialMode.value==='manual'?trialRouting.value:manualRouting.value)
 const effectiveParams=computed(()=>trialMode.value==='manual'?trialParams.value:cal.params)
 const routingProblems=computed(()=>Object.entries(effectiveRouting.value?.reach_muskingum||{}).filter(([,row])=>!routingIsStable(row)).map(([id,row])=>({id,...row,minimum:1/(2*(1-row.x)),maximum:row.x>0?1/(2*row.x):Infinity})))
@@ -396,7 +401,7 @@ const automaticCurves=computed(()=>cal.trialRecords.filter(row=>!row.manual&&tri
 const curveOptions=computed(()=>[...(automaticReference.value?[{...automaticCurves.value.find(row=>row.taskId===automaticReference.value),label:'自动率定参考',color:'#187f84',lineType:'dashed'}]:[]),...manualCurves.value.map((row,index)=>({...row,label:'人工试调 '+(cal.trialRecords.filter(row=>row.manual).findIndex(item=>item.taskId===row.taskId)+1),color:['#bf6832','#7952a1'][index],lineType:index?'dotted':'solid'}))].filter(row=>row.taskId))
 const comparisonLines = computed(() => {
   if(trialMode.value!=='manual')return []
-  return curveOptions.value.filter(row=>curveSelection[row.taskId]!==false).flatMap(row=>{const result=trialResults[row.taskId],hydrograph=result?.hydrographs?.[currentPeriodId.value];return hydrograph&&sameProcessConditions(result)?[{...row,hydrograph}]:[]})
+  return curveOptions.value.filter(row=>curveSelection[row.taskId]!==false).flatMap(row=>{const result=trialResults[row.taskId],hydrograph=result?.hydrographs?.[currentPeriodId.value];return hydrograph&&sameProcessConditions(result)?[{...row,selected:row.taskId===displayResult.value?.taskId,hydrograph}]:[]})
 })
 function sameProcessConditions(result){const base=displayResult.value;if(!base)return true;return processComparisonIdentity(result.frozenRequest,result,currentPeriodId.value)===processComparisonIdentity(base.frozenRequest,base,currentPeriodId.value)}
 function curveParameterChanges(row){const result=trialResults[row.taskId],reference=trialResults[automaticReference.value]||trialResults[manualCurves.value[0]?.taskId];const before=reference?.bestParameters||cal.params;const changes=Object.entries(result?.bestParameters||{}).filter(([key,value])=>value!==before[key]).map(([key,value])=>`${key}：${before[key]} → ${value}`);if(JSON.stringify(result?.bestRoutingParameters)!==JSON.stringify(reference?.bestRoutingParameters))changes.push('汇流参数有调整，可在原条件中查看');return changes.join('；')||'与参考产汇流参数相同'}
@@ -409,7 +414,7 @@ const processMetrics = computed(() => {
     { label: '水量误差', value: percentMetric(metrics.volErr ?? metrics.volumeErrorPercent ?? metrics.volume_error_percent) }
   ]
 })
-const evaluationRows = computed(() => [{ label: '率定', metrics: calibrationSummaryMetrics(displayResult.value?.calibrationMetrics || {}) }, { label: '验证', metrics: calibrationSummaryMetrics(displayResult.value?.validationMetrics || {}) }, { label: '独立检验', metrics: calibrationSummaryMetrics(displayResult.value?.independentTest || {}) }])
+const selectedPeaks=computed(()=>peakDetails(currentHydrograph.value || {}))
 const terminationLabel = computed(() => {
   const result = displayResult.value
   if (!result || result.evaluationMode === 'manual') return ''
@@ -426,7 +431,7 @@ function eventName(id) { const row = allEvents.value.find(event => event.id === 
 function eventPeriod(event) { return dayjs(event.start).format('MM-DD HH:mm') + ' 至 ' + dayjs(event.end).format('MM-DD HH:mm') }
 function fullPeriod(event) { return shortTime(event.start) + ' 至 ' + shortTime(event.end) }
 function finiteMetric(value, digits = 2) { return value == null || value === '' || !Number.isFinite(Number(value)) ? '—' : Number(value).toFixed(digits) }
-function percentMetric(value) { const text = finiteMetric(value, 1); return text === '—' ? text : text + '%' }
+function percentMetric(value) { const text = finiteMetric(value, 1); return text === '—' ? text : (Number(value)>0?'+':'')+text+'%' }
 function hourMetric(value) { const text = finiteMetric(value, 1); return text === '—' ? text : text + ' h' }
 function issueForEvent(id) { const issue = preparationIssues.value.find(row => row.eventId === id); return issue ? preparationIssueText({ ...issue, eventId: '', eventName: '' }) : '' }
 function closeBackdrop(event, dialog) { if (event.target === dialog) dialog.close() }
@@ -483,16 +488,17 @@ async function restoreSchemeView() {
 async function loadSchemeCalculations() {
   const schemeId = cal.modelSchemeId
   try {
-    const payload = await modelApi('operations')
-    const operations = (payload.operations || []).filter(row => row.status === 'completed' && (row.runConfig?.request?.scheme?.id === schemeId || row.runConfig?.request?.lineage?.schemeId===schemeId || row.lineage?.schemeId === schemeId))
+    const [payload,catalog] = await Promise.all([modelApi('operations'),modelApi('result-catalog')])
+    for(const row of catalog.results||[])recordNames[row.id]=row.name
+    const operations = (payload.operations || []).filter(row => row.operation!=='stateReplay' && row.status === 'completed' && (row.runConfig?.request?.scheme?.id === schemeId || row.runConfig?.request?.lineage?.schemeId===schemeId || row.runConfig?.frozenRequest?.lineage?.schemeId===schemeId || row.lineage?.schemeId === schemeId))
       .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)))
     const records = []
     for (const operation of operations) {
       const result = await modelApi('operations/' + (operation.operationId || operation.taskId) + '/result')
       if (cal.modelSchemeId !== schemeId) return
       const taskId = result.primaryTaskId || result.taskId
-      const request = result.frozenRequest || operation.runConfig.request
-      trialResults[taskId] = { ...result, taskId, frozenRequest: request }
+      const request = result.frozenRequest || operation.runConfig.request || operation.runConfig.frozenRequest
+      trialResults[taskId] = { ...result, taskId, operationId:operation.operationId || operation.taskId, frozenRequest: request }
       records.push({ taskId, conditions: trialConditions(request, result), parameters: result.bestParameters,
         completedAt: operation.completedAt, manual: result.evaluationMode === 'manual' })
     }
@@ -662,7 +668,7 @@ async function commitScheme() {
   return saveModelScheme(cal,request)
 }
 async function openSaveParameters() { parameterName.value=cal.modelSchemeName+' · '+(displayResult.value?.evaluationMode==='manual'?'试调参数':'率定参数');parameterSaveError.value=''; const scheme=await modelApi('model-schemes/'+cal.modelSchemeId);adoptedParameter.value=scheme.adoptedParameter;parameterSaveRequest.value={requestId:uniqueRequestId('PARAM'),sourceTaskId:displayResult.value.primaryTaskId||displayResult.value.taskId,schemeId:cal.modelSchemeId,adoptionRevision:adoptedParameter.value?.revision||0};parameterDialog.value.showModal() }
-function simulateBest(){simulateAfterSave.value=true;openSaveParameters()}
+function simulateBest(){router.push({path:'/simulation',query:{parameterResult:canonicalResultId.value}})}
 async function rerunResult(){
   try {
     const source=displayResult.value.primaryTaskId || displayResult.value.taskId
@@ -681,7 +687,6 @@ async function saveParameters() {
     savedParameterId.value = row.id; savedParameterName.value = row.name
     if(row.adoptionError){parameterSaveError.value=row.adoptionError;const scheme=await modelApi('model-schemes/'+cal.modelSchemeId);parameterSaveRequest.value.adoptionRevision=scheme.adoptedParameter?.revision||0;return}
     adoptedParameter.value=row.adoptedParameter; parameterDialog.value.close(); await refreshNamedParameters()
-    if(simulateAfterSave.value){simulateAfterSave.value=false;goSimulation()}
   } catch (failure) { parameterSaveError.value = failure.message }
   finally { parameterSaving.value = false }
 }
@@ -759,16 +764,18 @@ onMounted(refreshNamedParameters)
 </script>
 
 <style scoped>
-.calibration-page{display:grid;gap:14px;min-height:0;color:#344e47;font-size:14px}
+.calibration-page{display:grid;gap:10px;min-height:0;color:#344e47;font-size:14px}
 .calibration-page :is(.btn,.input,.text-button){min-height:36px;font-size:14px}
 .calibration-page :is(label,p,small,summary,td,th){font-size:14px}
-.workbench-toolbar{display:flex;align-items:center;gap:10px;padding:12px 16px;border:1px solid #d8e4df;background:#fff;border-radius:4px}
+.workbench-toolbar{display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid #d8e4df;background:#fff;border-radius:4px}
+.readiness summary{cursor:pointer;color:#6b8175}.readiness[open]{position:relative}.readiness[open] :deep(.numeric-readiness){position:absolute;top:30px;background:#fff;z-index:4;padding:16px;border:1px solid #d8e4df;width:280px}
 .period-switch,.work-switch{display:flex;gap:3px;padding:3px;background:#eff4f1;border-radius:4px}
 .period-switch button,.work-switch button{min-height:36px;padding:8px 14px;border:0;background:none;border-radius:3px;color:#698178;font-size:14px;cursor:pointer}
 .period-switch button.active,.work-switch button.active{background:#fff;color:#236452;box-shadow:0 1px 3px #1a453014;font-weight:600}
 .work-switch{margin-right:auto}
-.workbench{display:grid;grid-template-columns:450px minmax(0,1fr);gap:14px;align-items:start}
-.workbench.manual-mode{grid-template-columns:390px minmax(0,1fr) minmax(310px,360px)}
+.workbench,.workbench.manual-mode{display:grid;grid-template-columns:300px minmax(0,1fr);gap:14px;align-items:start}
+.workbench.flood-collapsed{grid-template-columns:minmax(0,1fr)}
+.flood-toggle{justify-self:start}
 .panel{border:1px solid #d8e4df;background:#fff;border-radius:4px;overflow:hidden}
 .panel-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:15px 16px;border-bottom:1px solid #e5ede9}
 .panel-heading h2{font-size:16px;font-weight:600;margin:0;color:#294f43}
@@ -780,6 +787,7 @@ onMounted(refreshNamedParameters)
 .event-scope-count{margin-left:auto;color:#83958b;font-size:14px}
 .event-filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 14px 10px}
 .event-filters input:first-child{grid-column:1/-1}
+.event-filter-panel{margin:10px 14px;color:#647d70}.event-filter-panel summary{cursor:pointer}.event-filter-panel .event-filters{padding:12px 0}
 .selection-counts{display:flex;gap:18px;padding:0 14px 12px;color:#83928b}
 .selection-counts b{color:#325d4d;padding-left:3px}
 .batch-actions{display:flex;align-items:center;gap:7px;padding:10px 14px;border-top:1px solid #e4ece8;background:#f8fbf9;font-size:14px;flex-wrap:wrap}
@@ -793,7 +801,7 @@ onMounted(refreshNamedParameters)
 .split-names{gap:8px;line-height:1.7}
 .split-names span{overflow-wrap:anywhere}
 .flood-table{max-height:min(570px,55vh);overflow:auto;overscroll-behavior:contain}
-.flood-table-head,.flood-row{display:grid;grid-template-columns:28px minmax(0,1fr) 82px 100px;align-items:center;gap:5px;padding:0 12px;font-size:14px}
+.flood-table-head,.flood-row{display:grid;grid-template-columns:24px minmax(0,1fr) 58px 76px;align-items:center;gap:4px;padding:0 8px;font-size:14px}
 .flood-table-head{position:sticky;top:0;z-index:2;min-height:46px;background:#edf4ef;border-top:1px solid #e0e9e4;color:#617d70}
 .time-column-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 0}
 .flood-row{min-height:78px;border-top:1px solid #e8eeea}
@@ -809,11 +817,14 @@ onMounted(refreshNamedParameters)
 .custom-window summary{cursor:pointer;color:#70877b}
 .custom-window .field{margin-top:10px}
 .process-workspace{display:grid;gap:14px;min-width:0}
-.process-panel{height:470px;display:flex;flex-direction:column;min-width:0}
+.process-panel{display:flex;flex-direction:column;min-width:0}
 .process-heading{padding-bottom:10px}
 .process-heading div>span{display:block;color:#7f9389;margin-top:6px}
 .process-heading .period-select{max-width:180px}
-.process-panel :deep(.hydrology-figure){flex:1;min-height:0;padding:4px 8px}
+.process-panel :deep(.hydrology-figure){height:clamp(456px,calc(100dvh - 310px),680px);flex:none;min-height:456px;padding:4px 8px;grid-template-rows:auto minmax(420px,1fr)}
+.selected-calculation{display:flex;align-items:center;flex-wrap:wrap;gap:7px 18px;padding:8px 16px;color:#6d8376}.selected-calculation>b{width:100%;font-size:14px;color:#2a5e49}.selected-calculation strong{color:#2f614e;font-weight:600}.selected-calculation>span{white-space:nowrap}
+.peak-detail{padding:0 16px 8px;color:#6d8376;font-size:14px}.peak-detail summary{cursor:pointer}.peak-detail>span{display:block;margin:7px 0}
+.dock-tabs{display:flex;align-items:center;gap:4px;padding:8px;border-bottom:1px solid #dfe9e2;flex-wrap:wrap}.dock-tabs button{border:0;background:none;color:#647d70;cursor:pointer;padding:10px;font-size:14px}.dock-tabs button.active{background:#eaf3ed;color:#266948;font-weight:600;border-radius:4px}.dock-tabs .dock-collapse{margin-left:auto}.record-actions{padding:12px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.record-actions :deep(.result-save-bar){width:100%;border-top:1px solid #e5ede8;padding:10px 0 0}.record-actions :deep(.result-save-bar b){font-size:14px}.record-actions :deep(.result-save-bar>div){display:none}.more-actions summary{cursor:pointer;padding:9px;color:#627c6d}.more-actions[open]{display:flex;flex-wrap:wrap;gap:8px}.curve-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid #cddfd2;border-radius:4px}.curve-chip.selected{background:#e1efe5;border-color:#6c9b7e}.curve-chip button{display:flex;gap:6px;align-items:center;white-space:nowrap}.curve-chip small{font-size:12px}.curve-chip input{margin:0}.curve-controls select{width:170px;min-width:0;flex:0 1 170px}
 .process-empty{display:grid;place-content:center;flex:1;color:#7f9389}
 .process-status{padding:0 16px;color:#718578}
 .result-panel{padding-bottom:6px}
@@ -833,9 +844,10 @@ onMounted(refreshNamedParameters)
 .history-row{display:flex;justify-content:space-between;gap:18px;width:100%;margin-top:7px;border:0;border-bottom:1px solid #edf1ef;background:none;padding:10px 0;cursor:pointer;text-align:left;color:#6e8578;font-size:14px}
 .history-row b{font-weight:500;color:#2e795b}
 .parameter-panel{padding:0 14px 14px}
+.manual-mode .parameter-panel{grid-column:1/-1}
 .parameter-panel .panel-heading{padding-left:0;padding-right:0;margin-bottom:12px}
 .parameter-panel fieldset{border:0;padding:0;margin:0;min-width:0}
-.parameter-panel :deep(.param-list){max-height:630px}
+.parameter-panel :deep(.param-list){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));max-height:320px;overflow:auto}
 .parameter-panel :deep(.param-row){background:#f8fbf8;border-color:#d7e4db;border-radius:4px}
 .parameter-panel :deep(.num){color:#285f49;border-color:#bdcfc3;font-size:14px;min-height:36px}
 .parameter-panel :deep(.range){accent-color:#357e68}
@@ -885,26 +897,20 @@ onMounted(refreshNamedParameters)
 .parameter-dialog .block{margin-top:16px}
 .parameter-kind{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px}
 .settings-note{color:#667d70;font-size:14px;line-height:1.7}
-.adopted-parameters{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:14px 16px;background:#f2f8f5;border:1px solid #d8e4df}
+.adopted-parameters{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:8px 12px;background:#f2f8f5;border:1px solid #d8e4df}
 .adopted-parameters span{margin-right:auto;color:#5e786a}
-.curve-controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:12px 0;font-size:14px}
+.curve-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0;font-size:14px;padding:6px 12px;background:#f7fbf8}
 .curve-controls label{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .curve-controls i{display:inline-block;width:20px;height:3px}
 .curve-controls small{color:#647c74}
 .curve-controls select{max-width:300px}
-.curve-entry{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 0;border-top:1px solid #e5ede9;width:100%}
+.curve-entry{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:6px 0;border-top:1px solid #e5ede9;width:100%}
 .curve-entry p{max-width:600px;overflow-wrap:anywhere}
-@media(max-width:1450px){
-  .workbench.manual-mode{grid-template-columns:390px minmax(0,1fr)}
-  .manual-mode .parameter-panel{grid-column:1/-1}
-  .manual-mode .parameter-panel :deep(.param-list){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));max-height:450px}
-}
-@media(max-width:1100px){.workbench{grid-template-columns:390px minmax(0,1fr)}}
-@media(max-width:900px){
+@media(min-width:1700px){.workbench,.workbench.manual-mode{grid-template-columns:320px minmax(0,1fr)}.workbench.flood-collapsed{grid-template-columns:minmax(0,1fr)}.process-panel :deep(.hydrology-figure){min-height:560px}.manual-mode .parameter-panel :deep(.param-list){grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:1100px){
   .workbench,.workbench.manual-mode{grid-template-columns:1fr}
   .workbench-toolbar{flex-wrap:wrap}
   .work-switch{margin-right:0}
-  .process-panel{height:420px}
   .manual-mode .parameter-panel :deep(.param-list){grid-template-columns:1fr 1fr}
   .settings-grid{grid-template-columns:1fr}
   .metric-row{grid-template-columns:1fr 1fr}

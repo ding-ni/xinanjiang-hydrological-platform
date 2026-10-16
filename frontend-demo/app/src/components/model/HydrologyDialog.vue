@@ -1,7 +1,8 @@
-<template><ElDialog v-model="open" append-to-body destroy-on-close :show-close="false" width="min(1000px, 94vw)" class="hydrology-dialog"><slot /></ElDialog></template>
+<template><ElDialog v-model="open" append-to-body destroy-on-close :show-close="false" :width="width" class="hydrology-dialog"><slot /></ElDialog></template>
 <script setup>
 import { ref } from 'vue'
 import { ElDialog } from 'element-plus'
+defineProps({width:{type:String,default:'min(1000px, 94vw)'}})
 const open=ref(false)
 defineExpose({showModal:()=>{open.value=true},close:()=>{open.value=false}})
 </script>

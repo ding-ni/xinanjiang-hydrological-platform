@@ -1,34 +1,30 @@
 <template>
   <section class="state-view">
-    <header class="page-heading"><div><h2>过程与状态</h2><span>{{ sourceLabel }} / {{ entry?.label }}</span></div><RouterLink to="/archive" class="btn">计算成果</RouterLink></header>
+    <header class="page-heading"><div><h2>过程与状态</h2><span>{{ sourceLabel }} / {{ entry?.name || entry?.label }}</span></div><RouterLink to="/archive" class="btn">计算成果</RouterLink></header>
     <nav class="state-tabs"><button class="btn" :class="{primary:pageTab==='process'}" @click="pageTab='process'">模拟过程</button><button class="btn" :class="{primary:pageTab==='library'}" @click="pageTab='library'">状态库</button></nav>
     <DailyStateLibrary v-if="pageTab==='library'" />
     <div v-else><section class="panel panel-pad result-selector"><label>计算成果<select class="input" :value="canonicalResultId" @change="selectResult($event.target.value)"><option value="">选择计算成果</option><option v-for="row in availableResults" :key="row.id" :value="row.id">{{ row.name || '未命名计算 · '+row.createdAt }}</option></select></label></section>
     <section v-if="!sourceId && !route.query.operation" class="panel empty"><p>从计算成果查看模拟状态</p><RouterLink to="/archive" class="btn primary">选择计算成果</RouterLink> <RouterLink to="/state?tab=library" class="btn">打开状态库</RouterLink></section>
     <template v-else>
       <section class="panel panel-pad time-toolbar">
-        <button class="btn" @click="pageTab='library'">状态库</button>
-        <button v-if="checkpoint?.stateVersionId && atFinalTime" class="btn" @click="saveFinalState">命名保存末状态</button>
-        <label v-if="entries.length>1">洪水 / 起报时刻<select v-model="entryId" class="input" aria-label="状态所属过程"><option v-for="row in entries" :key="row.id" :value="row.id">{{ row.label }}</option></select></label>
+        <label v-if="entries.length">洪水 / 连续过程<select v-model="entryId" class="input" aria-label="状态所属过程"><option v-for="row in entries" :key="row.id" :value="row.id">{{ row.label || row.name }}</option></select></label>
         <label v-if="catalog">状态时刻<select v-model="time" class="input" aria-label="状态回放时刻"><option v-for="value in catalog.times" :key="value" :value="value">{{ hourText(value) }}</option></select></label>
         <span v-else>{{ loading?'读取状态…':checkpoint?.time ? hourText(checkpoint.time) : '' }}</span>
-        <button v-if="checkpoint?.stateVersionId && replayTaskId && atFinalTime" type="button" class="btn" @click="continueFromResult">继续模拟</button>
-        <span v-if="checkpoint?.time && !atFinalTime">正在浏览过程时刻；完整续算末状态为 {{ hourText(checkpoint.time) }}</span>
-        <button v-if="checkpoint?.time && !atFinalTime" class="btn" @click="router.push({path:'/state',query:{source:replayTaskId}})">查看完整末状态</button>
+        <button v-if="checkpoint?.stateVersionId && replayTaskId" type="button" class="btn" @click="continuationDialog.showModal()">用于继续模拟</button>
         <button v-if="replayTaskId" type="button" class="btn" @click="router.push({path:'/results/'+canonicalResultId+'/sections',query:{process:entryId}})">断面流量</button>
       </section>
       <section v-if="process?.forecast?.length || process?.times?.length" class="panel panel-pad state-process"><CalibrationProcessChart :hydrograph="process" :forcing="process.forcing || {precipitation:[]}" :visible-components="{}" @select-time="selectStateTime" /><label v-if="catalog?.times?.length" class="state-slider">{{ hourText(time) }}<input type="range" min="0" :max="catalog.times.length-1" :value="catalog.times.indexOf(time)" aria-label="拖动查看逐时状态" @input="time = catalog.times[Number($event.target.value)]" /></label></section>
-      <p v-if="error" class="failure" role="alert">{{ error }}</p>
+      <p v-if="error || frameError" class="failure" role="alert">{{ error || frameError }}</p>
       <div v-if="cells.length" class="state-layout">
         <aside class="panel panel-pad variables">
-          <h3>{{ ['rs','ri','rg'].includes(variable)?'产流过程':'蓄水状态' }}</h3>
-          <button v-for="item in variables" :key="item.key" type="button" :class="{active:variable===item.key}" @click="variable=item.key"><span>{{ item.name }}</span><small>{{ item.symbol }}{{ item.unit ? ` · ${item.unit}` : '' }}</small></button>
+          <h3>当前时刻空间分布</h3>
+          <template v-for="group in variableGroups" :key="group.name"><h4>{{ group.name }}</h4><button v-for="item in variables.filter(item=>item.group===group.id)" :key="item.key" type="button" :class="{active:variable===item.key}" @click="variable=item.key"><span>{{ item.name }}</span><small>{{ item.symbol }}{{ item.unit ? ` · ${item.unit}` : '' }}</small></button></template>
           <div class="mean"><span>网格平均</span><b>{{ number(mean,3) }} <small>{{ current.unit }}</small></b></div>
           <details><summary>计算条件</summary><div class="conditions"><span>时刻 {{ hourText(frame?.time || checkpoint?.time) }}</span><span>{{ cells.length }} 个网格</span><span v-if="checkpoint?.parentStateVersionId">承接前次末状态</span><span v-if="checkpoint?.sourceTaskId">计算 {{ checkpoint.sourceTaskId }}</span></div></details>
         </aside>
         <article class="panel map-panel"><BasinMap :stations="stations" :layers="layers" :grid-cells="cells" :grid-paint-field="current.field" :selected-grid-id="selectedId" interactive-grid :legend-mode="current.legend" @select-grid="selectedId=$event" /></article>
         <aside class="panel panel-pad grid-detail">
-          <h3>网格状态</h3>
+          <h3>选中网格 · {{ hourText(frame?.time || checkpoint?.time) }}</h3>
           <template v-if="selected">
             <p class="grid-id">{{ selected.id }}</p>
             <div class="values"><div v-for="item in variables" :key="item.key"><span>{{ item.symbol }}</span><b>{{ number(selected[item.field],3) }} {{ item.unit }}</b></div></div>
@@ -37,9 +33,11 @@
           </template><p v-else class="grid-empty">点击网格查看状态</p>
         </aside>
       </div>
-      <details v-if="checkpoint?.routingTopology && (!frame || frame.time===checkpoint.time)" class="panel panel-pad routing-state"><summary>末时刻汇流状态 · {{ hourText(checkpoint.time) }}</summary><div class="routing-tables"><div><h3>坡面汇流 · m³/s</h3><div class="table-wrap"><table class="table"><thead><tr><th>汇流单元</th><th>地表径流</th><th>壤中流</th><th>地下径流</th></tr></thead><tbody><tr v-for="(id,index) in checkpoint.routingTopology.unitIds" :key="id"><td>{{ id }}</td><td>{{ number(checkpoint.routing.slope_state[index]?.[0],4) }}</td><td>{{ number(checkpoint.routing.slope_state[index]?.[1],4) }}</td><td>{{ number(checkpoint.routing.slope_state[index]?.[2],4) }}</td></tr></tbody></table></div></div><div><h3>河道汇流 · m³/s</h3><div class="table-wrap"><table class="table"><thead><tr><th>河段</th><th>入流</th><th>出流</th></tr></thead><tbody><tr v-for="(id,index) in checkpoint.routingTopology.reachIds" :key="id"><td>{{ id }}</td><td>{{ number(checkpoint.routing.prev_in[index],4) }}</td><td>{{ number(checkpoint.routing.prev_out[index],4) }}</td></tr></tbody></table></div></div></div></details>
-      <section v-if="!catalog && !loading" class="panel empty"><p>{{ replayProgress || '尚未保存逐时状态' }}</p><button class="btn primary" :disabled="replaying || !payload" @click="calculateStates">{{ replaying ? '正在计算状态' : '按原条件补算状态' }}</button></section>
+      <details v-if="checkpoint?.routingTopology && !frameLoading && !frameError && (!catalog || frame?.time===checkpoint.time)" class="panel panel-pad routing-state"><summary>末时刻汇流状态 · {{ hourText(checkpoint.time) }}</summary><div class="routing-tables"><div><h3>坡面汇流 · m³/s</h3><div class="table-wrap"><table class="table"><thead><tr><th>汇流单元</th><th>地表径流</th><th>壤中流</th><th>地下径流</th></tr></thead><tbody><tr v-for="(id,index) in checkpoint.routingTopology.unitIds" :key="id"><td>{{ id }}</td><td>{{ number(checkpoint.routing.slope_state[index]?.[0],4) }}</td><td>{{ number(checkpoint.routing.slope_state[index]?.[1],4) }}</td><td>{{ number(checkpoint.routing.slope_state[index]?.[2],4) }}</td></tr></tbody></table></div></div><div><h3>河道汇流 · m³/s</h3><div class="table-wrap"><table class="table"><thead><tr><th>河段</th><th>入流</th><th>出流</th></tr></thead><tbody><tr v-for="(id,index) in checkpoint.routingTopology.reachIds" :key="id"><td>{{ id }}</td><td>{{ number(checkpoint.routing.prev_in[index],4) }}</td><td>{{ number(checkpoint.routing.prev_out[index],4) }}</td></tr></tbody></table></div></div></div></details>
+      <p v-if="frameLoading" class="state-reading" role="status">正在读取 {{ hourText(time) }} 的空间分布…</p>
+      <section v-if="!catalog && !loading && !error" class="panel empty"><p>{{ replayProgress || '这次计算未保存逐时分布；已保存的雨流过程仍可查看。' }}</p><p>生成范围：{{ replayRange }}。使用这次计算的参数与起算规则，恢复水分和汇流状态，不重新率定参数。</p><button class="btn primary" :disabled="replaying || !payload" @click="calculateStates">{{ replaying ? '正在生成状态分布' : '生成状态分布' }}</button></section>
     </template></div>
+    <HydrologyDialog ref="continuationDialog"><header class="page-heading"><h2>用于继续模拟</h2><button class="btn" @click="continuationDialog.close()">关闭</button></header><p>来源：{{ sourceLabel }} · {{ entry?.name || entry?.label }}</p><p>可用续算状态时刻：<b>{{ hourText(checkpoint?.time) }}</b>。它包含该时刻的产流、坡面和河道汇流状态。</p><p v-if="entry?.end && hourText(entry.end)!==hourText(checkpoint?.time)">当前洪水结束于 {{ hourText(entry.end) }}；原连续轨迹保存的续算状态位于上面的时刻。</p><button class="btn" @click="saveFinalState">命名保存到状态库</button> <button class="btn primary" @click="continueFromResult">继续模拟</button></HydrologyDialog>
   </section>
 </template>
 <script setup>
@@ -50,6 +48,7 @@ import { modelApi } from '@/services/modelBackendService'
 import { dailyClient, hourText, resultEntries } from '@/services/dailyOperationService'
 import { loadGridHistoryCatalog, loadGridStateFrame, loadGridStateSeries } from '@/services/taskDiagnosticService'
 import DailyStateLibrary from '@/components/model/DailyStateLibrary.vue'
+import HydrologyDialog from '@/components/model/HydrologyDialog.vue'
 import BasinMap from '@/components/map/BasinMap.vue'
 import BaseChart from '@/components/charts/BaseChart.vue'
 import CalibrationProcessChart from '@/components/charts/CalibrationProcessChart.vue'
@@ -62,10 +61,10 @@ function selectResult(id){const row=availableResults.value.find(row=>row.id===id
 const sourceId=computed(()=>String(route.query.source||route.query.task||''))
 const canonicalResultId=computed(()=>String(route.query.operation||payload.value?.operationId||sourceId.value))
 const sourceLabel=ref(''),payload=ref(null),entryId=ref(''),catalog=ref(null),checkpoint=ref(null),frame=ref(null),series=ref(null),time=ref(''),loading=ref(false),error=ref(''),seriesError=ref(''),selectedId=ref(null),variable=ref('soil')
-const entries=computed(()=>resultEntries(payload.value||{},sourceId.value))
+const processRows=ref([]),frameLoading=ref(false),frameError=ref(''),continuationDialog=ref(null)
+const entries=computed(()=>processRows.value.length?processRows.value:resultEntries(payload.value||{},sourceId.value))
 const entry=computed(()=>entries.value.find(row=>row.id===entryId.value))
 const process=computed(()=>entry.value?.hydrograph || payload.value?.hydrographs?.[entry.value?.eventId || entryId.value] || payload.value?.hydrograph)
-const atFinalTime=computed(()=>!catalog.value || String(time.value).replace(' ','T').slice(0,16)===String(checkpoint.value?.time).replace(' ','T').slice(0,16))
 function selectStateTime(value){const selected=catalog.value?.times?.find(item=>item.slice(0,16)===String(value).slice(0,16));if(selected)time.value=selected}
 async function saveFinalState(){
   try{
@@ -77,9 +76,11 @@ async function saveFinalState(){
     ElMessage.success('完整末状态已保存到状态库')
   }catch(failure){if(failure instanceof Error)error.value=failure.message}
 }
-const replayTaskId=computed(()=>entry.value?.taskId||payload.value?.stateCalculationTaskId||sourceId.value)
+const replayTaskId=computed(()=>entry.value?.sourceTaskId||entry.value?.taskId||payload.value?.stateCalculationTaskId||sourceId.value)
+const replayRange=computed(()=>{const period=payload.value?.frozenRequest?.period||{},rows=period.events||period.windows||[];const start=payload.value?.continuousOrigin||payload.value?.frozenRequest?.calibration?.continuousOrigin||period.continuousOrigin||rows.map(row=>row.start).sort()[0]||period.startTime;const end=rows.map(row=>row.end).sort().at(-1)||period.endTime;return `${hourText(start)} 至 ${hourText(end)}${period.warmupDays?'（含原定'+period.warmupDays+'天预热）':''}`})
 const replaying=ref(false),replayProgress=ref('')
 const layers={rain:false,hydro:false,water:false,section:true,river:true,subbasin:true,rainField:false,dem:false,grid:true}
+const variableGroups=[{id:'soil',name:'土壤蓄水'},{id:'free',name:'自由水'},{id:'runoff',name:'产流 · 本时段径流深'}]
 const variables=[
   {key:'soil',name:'张力水相对蓄量',symbol:'W/WM',unit:'',field:'soil',legend:'soil'},
   {key:'wu',name:'上层张力水',symbol:'WU',unit:'mm',field:'wu',raw:'WU',legend:'soil'},
@@ -89,11 +90,13 @@ const variables=[
   {key:'rs',name:'地表径流',symbol:'RS',unit:'mm',field:'RS',raw:'RS',legend:'runoff'},
   {key:'ri',name:'壤中径流',symbol:'RI',unit:'mm',field:'RI',raw:'RI',legend:'runoff'},
   {key:'rg',name:'地下径流',symbol:'RG',unit:'mm',field:'RG',raw:'RG',legend:'runoff'}
-]
+].map(item=>({...item,group:['rs','ri','rg'].includes(item.key)?'runoff':item.key==='free'?'free':'soil'}))
 const current=computed(()=>variables.find(row=>row.key===variable.value)||variables[0])
 const cells=computed(()=>{
   if(frame.value)return frame.value.cells||[]
+  if(catalog.value || frameLoading.value || frameError.value || error.value)return []
   const saved=checkpoint.value;if(!saved?.gridGeometry?.length)return[]
+  if(entry.value?.end && hourText(saved.time)>hourText(entry.value.end))return []
   const wm=saved.parameters?.['runoff.WM']??saved.parameters?.WM
   return saved.gridGeometry.map((geometry,index)=>{
     const fields=Object.fromEntries(Object.entries(saved.land||{}).map(([key,values])=>[key,values[index]]))
@@ -137,27 +140,33 @@ async function calculateStates(){
     const saved=await dailyClient.result(operation.taskId)
     if(token!==sourceRevision)return
     payload.value={...payload.value,...Object.fromEntries(['eventStates','stateCalculationTaskId','endStateVersionId'].filter(key=>saved[key]).map(key=>[key,saved[key]]))}
+    const processes=await modelApi('result-catalog/'+encodeURIComponent(canonicalResultId.value)+'/processes')
+    if(token!==sourceRevision)return
+    processRows.value=processes.processes || []
     if(!entries.value.some(row=>row.id===entryId.value))entryId.value=entries.value.find(row=>row.id===route.query.event)?.id||entries.value[0]?.id||''
     replayProgress.value=''
   }catch(failure){if(token===sourceRevision)error.value=failure.message}
   finally{if(token===sourceRevision)replaying.value=false}
 }
-watch(()=>[sourceId.value,route.query.operation,app.contextKey],async()=>{
-  const token=++sourceRevision;payload.value=null;entryId.value='';error.value='';sourceLabel.value=route.query.label||'';replaying.value=false;replayProgress.value=''
+watch(()=>[sourceId.value,route.query.operation,app.contextKey,route.query.event,route.query.process],async()=>{
+  const token=++sourceRevision;payload.value=null;processRows.value=[];entryId.value='';error.value='';sourceLabel.value=route.query.label||'';replaying.value=false;replayProgress.value=''
   if(!sourceId.value&&!route.query.operation)return
   loading.value=true
   try{
     const answer=route.query.operation?await dailyClient.result(route.query.operation):await modelApi(`tasks/${encodeURIComponent(sourceId.value)}/result`)
     if(token!==sourceRevision)return
     payload.value=answer
-    entryId.value=entries.value.find(row=>row.id===route.query.event)?.id||entries.value[0]?.id||''
+    const processes=await modelApi('result-catalog/'+encodeURIComponent(canonicalResultId.value)+'/processes')
+    if(token!==sourceRevision)return
+    processRows.value=processes.processes || []
+    entryId.value=entries.value.find(row=>row.id===(route.query.event||route.query.process))?.id||entries.value[0]?.id||''
     if(!sourceLabel.value)sourceLabel.value=answer.name||answer.lineage?.schemeName||'计算成果'
     modelApi('result-metadata/'+canonicalResultId.value).then(row=>{if(token===sourceRevision&&row.name)sourceLabel.value=row.name}).catch(()=>{})
   }catch(failure){if(token===sourceRevision)error.value=failure.message}
   finally{if(token===sourceRevision)loading.value=false}
 },{immediate:true})
 watch([replayTaskId,entryId],async([id])=>{
-  const token=++replayRevision;++frameRevision;++seriesRevision;catalog.value=null;checkpoint.value=null;frame.value=null;series.value=null;time.value='';
+  const token=++replayRevision;++frameRevision;++seriesRevision;catalog.value=null;checkpoint.value=null;frame.value=null;frameError.value='';series.value=null;time.value='';
   if(!id||!/^JOB-/.test(id))return
   loading.value=true;error.value=''
   try{
@@ -179,10 +188,12 @@ watch([replayTaskId,entryId],async([id])=>{
   finally{if(token===replayRevision)loading.value=false}
 },{immediate:true})
 watch(time,async value=>{
-  const token=++frameRevision;frame.value=null
+  const token=++frameRevision;frame.value=null;frameLoading.value=false;frameError.value=''
   if(!value||!catalog.value)return
+  frameLoading.value=true
   try{const answer=await loadGridStateFrame(catalog.value.taskId,value);if(token===frameRevision){frame.value=answer;if(!selectedId.value)selectedId.value=answer.cells[0]?.id||null}}
-  catch(failure){if(token===frameRevision)error.value=failure.message}
+  catch(failure){if(token===frameRevision)frameError.value=failure.message}
+  finally{if(token===frameRevision)frameLoading.value=false}
 })
 watch([selectedId,catalog],async([id,source])=>{
   const token=++seriesRevision;series.value=null;seriesError.value=''
@@ -194,9 +205,10 @@ function continueFromResult(){router.push({path:'/simulation',query:{source:repl
 </script>
 <style scoped>
 .state-tabs{display:flex;gap:12px}.result-selector{margin-bottom:18px}.result-selector label{display:flex;align-items:center;gap:18px}.result-selector select{min-width:320px}
-.state-process{height:410px;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:12px}.state-slider{display:flex;align-items:center;gap:12px}.state-slider input{flex:1;accent-color:#287763}
+.state-process{height:340px;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:12px}.state-slider{display:flex;align-items:center;gap:12px}.state-slider input{flex:1;accent-color:#287763}
 .routing-state summary{font-size:13px;color:#547460;cursor:pointer}.routing-tables{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:20px}.routing-tables h3{font-size:13px;color:#375d49}.routing-tables .table-wrap{max-height:300px;overflow:auto}.routing-tables td{font-size:12px}@media(max-width:700px){.routing-tables{grid-template-columns:1fr}}
 .state-view{display:grid;gap:18px;min-width:0}.page-heading{display:flex;align-items:center;justify-content:space-between;gap:20px}.page-heading>div{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap}.page-heading h2{font-family:'Noto Serif CJK SC','SimSun',serif;color:#2e5142;font-size:23px;margin:0}.page-heading span{color:#7b8b80;font-size:12px}.time-toolbar{display:flex;align-items:end;gap:16px;flex-wrap:wrap}.time-toolbar label{display:grid;gap:7px;font-size:12px;color:#587362}.time-toolbar .input{min-width:210px}.time-toolbar>span{flex:1;color:#74867a;font-size:12px}.state-layout{display:grid;grid-template-columns:200px minmax(0,1fr) 290px;gap:16px;min-height:540px}.variables h3,.grid-detail h3{margin:0 0 18px;color:#345748;font-size:15px}.variables>button{display:grid;gap:5px;padding:10px 12px;width:100%;text-align:left;border:0;border-left:3px solid transparent;background:transparent;color:#4e6a58;cursor:pointer}.variables>button small{color:#7d9081;font-size:10px}.variables>button.active{background:#eaf2e9;border-color:#47815c}.mean{display:grid;gap:10px;padding:22px 0;border-top:1px solid #e1e8e0;margin-top:15px;color:#6a806f;font-size:11px}.mean b{font-size:24px;font-weight:500;color:#335e48}.mean small{font-size:12px}.variables details{font-size:11px;color:#748579}.conditions{display:grid;gap:8px;padding-top:12px;overflow-wrap:anywhere}.map-panel{overflow:hidden;min-height:540px}.values{display:grid;gap:10px}.values>div{display:flex;justify-content:space-between;font-size:12px;color:#738579}.values b{font-weight:500;color:#2c5542;font-variant-numeric:tabular-nums}.grid-id{color:#326047;font-size:13px}.trend{height:255px;margin-top:22px}.grid-empty{color:#809184;font-size:12px;padding-top:45px}.empty{padding:80px 25px;text-align:center;color:#718579}.empty p{margin-bottom:22px}.failure{color:#a24338;font-size:12px;line-height:1.8}@media(max-width:1150px){.state-layout{grid-template-columns:190px minmax(0,1fr)}.grid-detail{grid-column:1/-1}.values{grid-template-columns:repeat(4,1fr);gap:20px}.values>div{display:grid;gap:8px}.trend{height:250px}}@media(max-width:650px){.state-layout{grid-template-columns:1fr}.variables{display:flex;flex-wrap:wrap;gap:6px}.variables h3{width:100%}.variables>button{width:auto}.variables .mean{padding:10px}.map-panel{min-height:440px}.time-toolbar .input{min-width:0;width:100%}.values{grid-template-columns:repeat(2,1fr)}}
 .state-view :is(label,p,small,summary,td,th,.page-heading span,.time-toolbar>span,.values>div,.grid-id,.conditions,.mean){font-size:14px}
 .state-view :is(.btn,.input,.variables>button){min-height:36px;font-size:14px}
+.variables h4{margin:18px 0 7px;color:#70877a;font-size:13px}.state-reading{padding:24px;background:#f5f9f6;color:#597869;border:1px solid #dce7df}.result-selector select{max-width:100%;min-width:0;width:min(650px,100%)}.time-toolbar label{min-width:0}.time-toolbar select{max-width:100%}.grid-detail h3{line-height:1.6}
 </style>

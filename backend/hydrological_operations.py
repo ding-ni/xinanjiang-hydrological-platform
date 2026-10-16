@@ -88,6 +88,8 @@ class HydrologicalOperations:
             path = safe_task(self.root, identifier) / 'status.json'
             row = {**read_json(path), **changes}
             write_json(path, row)
+            if row.get('status') == 'completed' and hasattr(self.manager,'results'):
+                self.manager.results.ensure_name(row)
             return row
 
     def result(self, identifier):
@@ -97,7 +99,7 @@ class HydrologicalOperations:
 
     def submit(self, body):
         allowed = {'operation', 'requestId', 'request', 'rainfallMethod', 'context', 'parameterSchemeId',
-                   'events', 'period', 'sourceTaskId', 'issueTime', 'endTime', 'lastIssueTime', 'leadHours', 'name', 'trialContext', 'routingParameters'}
+                   'events', 'period', 'sourceTaskId', 'issueTime', 'endTime', 'lastIssueTime', 'leadHours', 'name', 'trialContext', 'routingParameters', 'parameterSourceResultId'}
         if not isinstance(body, dict) or set(body) - allowed or body.get('operation') not in LABELS:
             raise ValueError('请选择计算方式')
         request = copy.deepcopy(body)
@@ -186,7 +188,17 @@ class HydrologicalOperations:
         elif kind == 'continuation':
             self.source_result(request.get('sourceTaskId'))
         else:
-            parameter = self.manager.parameter_schemes.get(request.get('parameterSchemeId'))
+            if request.get('parameterSourceResultId'):
+                if kind not in {'eventSimulation','continuousSimulation'} or request.get('parameterSchemeId'):
+                    raise ValueError('请选择一个明确的参数来源')
+                parameter = self.manager.parameter_schemes.from_result(request['parameterSourceResultId'])
+                resolved = self.manager.routing_versions.resolve(parameter['routing']['versionId'])
+                if resolved['parameters'] != parameter['routingParameters']:
+                    actual = self.manager.routing_versions.create({'name':parameter['name'][:65]+' · 汇流',
+                        'parentVersionId':parameter['routing']['versionId'],'parameters':parameter['routingParameters']})
+                    parameter['routing'] = {'versionId':actual['routingVersionId']}
+            else:
+                parameter = self.manager.parameter_schemes.get(request.get('parameterSchemeId'))
             if any(parameter['context'].get(key) != context.get(key) for key in CONTEXT):
                 raise ValueError('参数与当前流域不一致')
             request['parameterSnapshot'] = parameter
@@ -576,17 +588,19 @@ class HydrologicalOperations:
         preparation_seconds = time.perf_counter() - preparation_started
         output = self.child(identifier, model, '正在率定参数' if request['operation'] == 'calibration' else '正在试算参数')
         frozen = self.manager.get(output['taskId'])['runConfig']
-        if output.get('bestRoutingParameters') and not output.get('routingCandidate'):
-            candidate = self.manager.routing_versions.create({'name': '率定计算汇流',
-                'parentVersionId': model.get('routing', {}).get('versionId', 'control-split-v2'), 'parameters': output['bestRoutingParameters']})
-            output['routingCandidate'] = candidate
-            write_json(safe_task(self.manager.root, output['taskId']) / 'result.json', output)
         result = self.final_states(identifier, output, frozen)
         result.setdefault('timings', {})['inputPreparationSeconds'] = round(preparation_seconds, 3)
         return result
 
     def final_states(self, identifier, output, frozen):
         from calibration_groups import group_windows
+        # All entry points, including replay of a completed search, must use
+        # its actual channel optimum when generating the final model state.
+        if output.get('bestRoutingParameters') and not output.get('routingCandidate'):
+            output['routingCandidate'] = self.manager.routing_versions.create({'name':'率定计算汇流',
+                'parentVersionId':frozen.get('routing',{}).get('versionId','control-split-v2'),
+                'parameters':output['bestRoutingParameters']})
+            write_json(safe_task(self.manager.root, output['taskId']) / 'result.json', output)
         state_started = time.perf_counter()
         science = self.manager.science_versions.resolve(frozen['science']['versionId'])
         settings = frozen.get('calibration') or {}

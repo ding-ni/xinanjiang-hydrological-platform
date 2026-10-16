@@ -85,9 +85,11 @@ export function resultEntries(result = {}, taskId = '') {
     const state = Array.isArray(result.eventStates) ? result.eventStates.find(item => (item.eventId || item.id) === id)
       : result.eventStates?.[id]
     const window = (result.frozenRequest?.period?.events || result.frozenRequest?.period?.windows || []).find(item => item.id === id)
-    const label = row.label || row.name || state?.label || window?.name || (/^WINDOW-/.test(id) && (row.start || state?.start) ? `${hourText(row.start || state.start)} 洪水` : id)
+    const first=row.start || state?.start || window?.start || row.hydrograph?.forecast?.[0]?.time
+    const rawLabel=row.label || row.name || state?.label || window?.name
+    const label = rawLabel && rawLabel!==id && !/^xf-/.test(rawLabel) ? rawLabel : first ? `${hourText(first)} 洪水` : id
     return { ...row, id, label, hydrograph: row.hydrograph || row,
-      start:row.start || state?.start, end:row.end || state?.end,
+      start:first, end:row.end || state?.end || window?.end || row.hydrograph?.forecast?.at(-1)?.time,
       taskId: row.stateCalculationTaskId || state?.taskId || state?.stateCalculationTaskId || row.taskId || result.stateCalculationTaskId || result.primaryTaskId || taskId,
       endStateVersionId: row.endStateVersionId || state?.endStateVersionId }
   })

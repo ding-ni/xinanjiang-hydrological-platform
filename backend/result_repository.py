@@ -1,11 +1,52 @@
 """User annotations are separate from immutable model calculations."""
 import copy
+from datetime import datetime
 from common import now, read_json, safe_task
 
 
 class ResultRepository:
     def __init__(self, manager):
         self.manager = manager
+        with manager.database.connect() as db:
+            if not db.execute('SELECT 1 FROM schema_migrations WHERE version=3').fetchone():
+                # Previously the saved list meant "has a user name". Preserve
+                # those selections once, before automatic naming is enabled.
+                db.execute("UPDATE result_metadata SET favorite=1 WHERE trim(name)<>''")
+                db.execute('INSERT INTO schema_migrations VALUES (3,?,?)', ('named-calculation-records-and-favorites', now()))
+
+    @staticmethod
+    def suggested_name(status):
+        request = status.get('runConfig') or {}
+        model = request.get('request') or request.get('frozenRequest') or request
+        base = (request.get('parameterSnapshot') or {}).get('name') or (model.get('scheme') or {}).get('name') or (model.get('lineage') or {}).get('schemeName') or (status.get('lineage') or {}).get('schemeName') or status.get('name') or '水文计算'
+        kind = status.get('operation') or status.get('runType')
+        if kind == 'rerun':
+            kind = ('manualTrial' if model.get('calibration', {}).get('evaluationMode') == 'manual' else 'calibration') if model.get('runType') == 'calibration' else model.get('runType', kind)
+        label = {'calibration':'自动率定','manualTrial':'人工试调','eventCalibration':'自动率定',
+                 'continuousCalibration':'连续率定','eventSimulation':'洪水模拟','continuousSimulation':'连续模拟',
+                 'simulation':'模拟','continuation':'继续模拟','rerun':'再次计算','hindcast':'历史回算',
+                 'rollingHindcast':'滚动回算','forecast':'洪水预报'}.get(kind, status.get('runTypeLabel') or '水文计算')
+        instant = status.get('createdAt') or status.get('completedAt') or ''
+        try:
+            date = datetime.fromisoformat(instant.replace('Z','+00:00'))
+            # No dependency on Windows' optional IANA timezone database.
+            from datetime import timedelta, timezone
+            if date.tzinfo:
+                date = date.astimezone(timezone(timedelta(hours=8)))
+            stamp = date.strftime('%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            stamp = str(instant).replace('T',' ')[:19] or '时间未登记'
+        suffix = f' · {label} · {stamp}'
+        return str(base)[:80-len(suffix)] + suffix
+
+    def ensure_name(self, status):
+        if status.get('internal') or status.get('operation') == 'stateReplay':
+            return
+        if (status.get('operation') or status.get('runType')) not in {'calibration','manualTrial','eventCalibration','continuousCalibration','eventSimulation','continuousSimulation','simulation','continuation','rerun','hindcast','rollingHindcast','forecast','stateInitialization','stateContinuation'}:
+            return
+        with self.manager.database.connect() as db:
+            db.execute('INSERT OR IGNORE INTO result_metadata VALUES (?,?,?,?,?,?,?)',
+                       (status['taskId'], self.suggested_name(status), '', '', 0, 0, now()))
 
     def metadata(self):
         with self.manager.database.connect() as db:
@@ -75,14 +116,22 @@ class ResultRepository:
             last = state.get('end') or window.get('end') or (times[-1].get('time') if times else None)
             task_id = state.get('stateCalculationTaskId') or state.get('taskId') or result.get('stateCalculationTaskId') or result.get('primaryTaskId') or result.get('taskId') or identifier
             folder = safe_task(self.manager.root, task_id)
-            can_query = (folder / 'routing-evidence.json').is_file()
+            can_query_interior = (folder / 'routing-evidence.json').is_file() and (folder/'routing-runoff.npz').is_file()
+            can_query = bool(graph.get('forecast'))
+            source_request = read_json(folder/'request.json') if (folder/'request.json').is_file() else {}
+            trajectory = source_request.get('period') or {}
+            checkpoint = read_json(folder/'checkpoint.json') if (folder/'checkpoint.json').is_file() else {}
             label = window.get('name') or state.get('label')
             if not label or label == key or str(label).startswith('xf-'):
                 continuous = frozen.get('period', {}).get('mode') == 'continuous'
                 label = str(first or '').replace('T', ' ')[:16] + (' ' + str(window.get('purpose') or '连续') + '过程' if continuous else ' 连续过程' if key == 'process' else ' 洪水')
             processes.append({'id': key, 'name': label, 'start': first, 'end': last, 'purpose': window.get('purpose'),
                 'sourceTaskId': task_id, 'endStateVersionId': state.get('endStateVersionId') or result.get('endStateVersionId'),
-                'canQuery': can_query, 'queryUnavailableReason': None if can_query else '该历史成果未保留完整汇流过程，请按原条件复算',
+                'canQuery': can_query, 'canQueryInterior':can_query_interior,
+                'queryUnavailableReason': None if can_query else '该历史成果未保留流量过程',
+                'trajectoryStart':trajectory.get('continuousOrigin') or trajectory.get('startTime') or state.get('trajectoryStart') or first,
+                'trajectoryEnd':trajectory.get('endTime') or state.get('trajectoryEnd') or last,
+                'stateTime':checkpoint.get('time'), 'hasGridHistory':(folder/'grid-history.json').is_file(),
                 'hydrograph': graph})
         return processes
 
@@ -134,6 +183,8 @@ class ResultRepository:
                  and (row.get('runConfig') or {}).get('runType') in {'calibration', 'simulation', 'stateInitialization', 'stateContinuation', 'forecast'}]
         rows = []
         for status in operations + tasks:
+            if status.get('operation') == 'stateReplay':
+                continue
             identifier = status['taskId']
             annotation = metadata.get(identifier)
             # Read pre-existing primary-task annotations without rewriting them.
@@ -143,18 +194,21 @@ class ResultRepository:
             if identifier not in metadata:
                 annotation['revision'] = 0
             request = status.get('runConfig') or {}
-            model = request.get('request') or request
+            model = request.get('request') or request.get('frozenRequest') or request
             scheme = model.get('scheme') or {}
             period = model.get('period') or {}
             selected = request.get('events') or [row for row in period.get('events', []) if row.get('purpose') != '未使用']
-            suggestion = request.get('parameterSnapshot', {}).get('name') or (status.get('lineage') or {}).get('schemeName') or status.get('name') or status.get('runTypeLabel') or '水文计算'
-            date = (selected[0].get('start') if selected and isinstance(selected[0], dict) else None) or period.get('startTime') or status.get('createdAt') or ''
-            suggestion = str(date)[:10] + ' · ' + suggestion
-            rows.append({'id': identifier, 'name': annotation.get('name') or suggestion, 'suggestedName': suggestion,
-                'saved': bool(annotation.get('name')), 'metadata': annotation, 'status': status['status'],
-                'type': status.get('operation') or status.get('runType'), 'createdAt': status.get('createdAt'),
+            suggested_name = self.suggested_name(status)
+            favorite = bool(annotation.get('favorite'))
+            record_type = status.get('operation') or status.get('runType')
+            if record_type == 'rerun':
+                record_type = ('manualTrial' if model.get('calibration', {}).get('evaluationMode') == 'manual' else 'calibration') if model.get('runType') == 'calibration' else model.get('runType', record_type)
+            rows.append({'id': identifier, 'name': annotation.get('name') or suggested_name, 'suggestedName': suggested_name,
+                'saved': favorite, 'favorite': favorite, 'metadata': annotation, 'status': status['status'],
+                'type': record_type, 'createdAt': status.get('createdAt'),
                 'completedAt': status.get('completedAt'), 'contextKey': status.get('contextKey') or model.get('context', {}).get('contextKey'),
-                'schemeId': scheme.get('id') or status.get('lineage', {}).get('schemeId'),
+                'schemeId': scheme.get('id') or model.get('lineage', {}).get('schemeId') or status.get('lineage', {}).get('schemeId'),
+                'schemeName':scheme.get('name') or (model.get('lineage') or {}).get('schemeName') or status.get('lineage',{}).get('schemeName'),
                 'parameterName': request.get('parameterSnapshot', {}).get('name') or status.get('lineage', {}).get('parameterName'),
                 'parameterSource': (request.get('trialContext') or {}).get('parameterSource') or request.get('parameterSnapshot', {}).get('name'),
                 'evaluationMode': 'manual' if status.get('operation') == 'manualTrial' else model.get('calibration', {}).get('evaluationMode'),

@@ -81,8 +81,10 @@ class SavedInitializationNumerics(unittest.TestCase):
     def test_continuous_and_hindcast_apply_saved_anchor_and_resaved_rule_survives(self):
         from server import TaskManager, InputTaskManager
         from test_unified_backend import simulation
+        from operation_fixtures import seed_daily_observations
         with tempfile.TemporaryDirectory() as temp:
             manager = TaskManager(Path(temp) / 'tasks')
+            seed_daily_observations(manager)
             manager.input_tasks = InputTaskManager(Path(temp) / 'input-tasks', manager.products)
             manager.operations = HydrologicalOperations(manager, manager.input_tasks)
             manager.schemes.defaults({'rainfallMethod': 'reuse', 'stationSourceId': None})

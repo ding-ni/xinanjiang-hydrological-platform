@@ -112,6 +112,12 @@ class RiverSections:
         return {**dict(old), 'definition': json.loads(old['definition']), 'name': name, 'revision': old['revision'] + 1}
 
     def query(self, body):
+        # Selection and enqueue are one operation even when two browser tabs
+        # request the same section simultaneously.
+        with self.manager.lock:
+            return self._query(body)
+
+    def _query(self, body):
         if not isinstance(body, dict) or set(body) - {'resultId', 'processId', 'sectionId', 'requestId'} or not all(body.get(key) for key in ('resultId', 'processId', 'sectionId')):
             raise ValueError('请明确选择成果、洪水和断面')
         selected = self.manager.results.process(body['resultId'], body['processId'])
@@ -122,9 +128,6 @@ class RiverSections:
         context = {'resultId': body['resultId'], 'processId': body['processId'], 'sectionId': section['id'],
                    'sectionName': section['name'], 'start': selected['start'], 'end': selected['end'],
                    'spatialSHA256': section['definition']['spatialSHA256']}
-        from diagnostic_jobs import point_source
-        # Verify the saved source before accepting a cached numerical query.
-        point_source(self.manager, selected['sourceTaskId'])
         if section['id'] == 'SECTION-XUFAN':
             graph = selected['hydrograph']
             rows = [row for row in graph.get('forecast', []) if selected['start'][:16] <= row['time'].replace(' ','T')[:16] <= selected['end'][:16]]
@@ -133,15 +136,39 @@ class RiverSections:
             return {'status':'completed', 'cacheHit':True, 'taskId':None, 'result':{
                 'pointQuery':{'method':'PERSISTED_CONTROL_HYDROGRAPH','series':{'time':[row['time'] for row in rows],
                     'flow_cms':[row['value'] for row in rows], 'unit':'m3/s'}}, 'selection':context}}
+        from common import safe_task
+        source=safe_task(self.manager.root,selected['sourceTaskId'])
+        files=('request.json','result.json','routing-runoff.npz','routing-evidence.json')
+        missing=[name for name in files if not (source/name).is_file()]
+        if missing:
+            raise ValueError('该成果未保存完整产流过程，无法查询中间断面：'+ '、'.join(missing))
+        request=read_json(source/'request.json')
+        evidence=read_json(source/'routing-evidence.json')
+        from diagnostic_jobs import point_assets, sha
+        # No terrain construction or large-array hashing in the HTTP thread.
+        if request.get('period',{}).get('initialStateVersionId') or evidence.get('initialRoutingState') is not None:
+            raise ValueError('该成果采用续算状态；河道中间断面需独立复算，控制断面可直接查询')
+        source_stat={name:[(source/name).stat().st_size,(source/name).stat().st_mtime_ns,(source/name).stat().st_ctime_ns] for name in files}
+        from section_cache import query_implementation
+        program=query_implementation()
+        query_identity=manifest_digest({'selection':{key:value for key,value in context.items() if key!='sectionName'},
+            'source':source_stat,'program':program})
         for status in self.manager.list():
             request = status.get('runConfig') or {}
-            previous = request.get('resultSelection') or {}
-            if {key:value for key,value in previous.items() if key != 'sectionName'} == {key:value for key,value in context.items() if key != 'sectionName'} and status.get('status') in {'completed', 'archived', 'queued', 'running'}:
+            if request.get('queryIdentity') == query_identity and status.get('status') in {'completed', 'archived', 'queued', 'running'}:
                 return {**status, 'cacheHit': status['status'] in {'completed', 'archived'}}
         lon, lat = section['definition']['queried']
-        return self.manager.submit({'runType': 'pointQuery', 'requestId': body.get('requestId') or 'SECTION-' + uuid.uuid4().hex,
+        original=read_json(source/'request.json')
+        result=read_json(source/'result.json')
+        payload={**{key:copy.deepcopy(original[key]) for key in ('inputs','routing','context','lineage')},
+            'runType': 'pointQuery', 'requestId': body.get('requestId') or 'SECTION-' + uuid.uuid4().hex,
             'sourceTaskId': selected['sourceTaskId'], 'riverOnly': True,
-            'point': {'lon': lon, 'lat': lat, 'channelWidthM': 20}, 'resultSelection': context})
+            'point': {'lon': lon, 'lat': lat, 'channelWidthM': 20}, 'resultSelection': context,
+            'queryIdentity':query_identity,'queryImplementationSHA256':program,'sourceResultSHA256':sha(source/'result.json'),
+            'sourceRequestSHA256':sha(source/'request.json'),'sourceRoutingEvidence':result.get('routingEvidence'),
+            'spatialEvidence':point_assets()}
+        if original.get('science'):payload['science']=copy.deepcopy(original['science'])
+        return self.manager._enqueue(payload,run_type='pointQuery',label='断面流量查询')
 
     def query_result(self, task_id):
         status, result = self.manager.get(task_id), copy.deepcopy(self.manager.result(task_id))

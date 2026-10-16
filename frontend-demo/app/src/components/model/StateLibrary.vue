@@ -1,11 +1,11 @@
 <template>
   <section class="state-library panel" aria-label="状态库">
-    <div class="library-header"><div><h3>状态库 <small>{{ visible.length }} / {{ states.length }}</small></h3></div><div class="selection-actions"><button v-if="canImport && !namedOnly" class="btn" :disabled="busy || disabled" @click="fileInput.click()">导入状态</button><input ref="fileInput" type="file" accept=".json,application/json" hidden @change="readImport" /><button class="btn" :disabled="busy" @click="refresh"><Refresh class="icon" />刷新</button></div></div>
+    <div class="library-header"><div><h3>状态库 <small>{{ visible.length }}<template v-if="!namedOnly"> / {{ states.length }}</template> 条</small></h3></div><div class="selection-actions"><button v-if="canImport && !namedOnly" class="btn" :disabled="busy || disabled" @click="fileInput.click()">导入状态</button><input ref="fileInput" type="file" accept=".json,application/json" hidden @change="readImport" /><button class="btn" :disabled="busy" @click="refresh"><Refresh class="icon" />刷新</button></div></div>
     <form v-if="pendingImport" class="import-review" @submit.prevent="commitImport"><strong>状态文件 · {{ pendingImport.time?.replace('T', ' ') }}</strong><span>{{ pendingImport.gridIds?.length }} 个网格 · {{ pendingImport.context?.projectId }}</span><input v-model="importName" class="input" aria-label="导入状态名称" placeholder="状态名称（选填）" maxlength="80" :disabled="busy" /><div class="selection-actions"><button class="btn primary" :disabled="busy || disabled">{{ busy ? '正在导入…' : '确认导入' }}</button><button type="button" class="btn" :disabled="busy" @click="pendingImport = null">取消</button></div></form>
     <p v-if="importMessage" role="status">{{ importMessage }}</p>
-    <div class="library-toolbar"><label v-if="namedOnly"><input v-model="allNodes" type="checkbox" /> 全部计算状态</label>
+    <div class="library-toolbar">
       <label class="search"><Search class="icon" /><input v-model="query" class="input" aria-label="检索状态" placeholder="名称、时间或编号" type="search" /></label>
-      <select v-model="strategy" class="input" aria-label="状态来源"><option value="">全部来源</option><option value="MODEL_END_STATE">模型末状态</option><option value="CONTINUOUS">从连续起点补算</option><option value="FIXED_WARMUP">降雨预热</option><option value="OBSERVED_FLOW_ANCHORED">按实测流量初始化</option><option value="IMPORTED">导入状态</option></select>
+      <select v-if="!namedOnly" v-model="strategy" class="input" aria-label="状态来源"><option value="">全部来源</option><option value="MODEL_END_STATE">模型末状态</option><option value="CONTINUOUS">从连续起点补算</option><option value="FIXED_WARMUP">降雨预热</option><option value="OBSERVED_FLOW_ANCHORED">按实测流量初始化</option><option value="IMPORTED">导入状态</option></select>
       <button class="btn favorite-filter" :class="{ selected: favorites }" :aria-pressed="favorites" @click="favorites = !favorites"><StarFilled class="icon" />收藏</button>
     </div>
     <p v-if="error" class="library-error" role="alert">{{ error }}</p>
@@ -67,8 +67,7 @@ const metadata = ref({}), query = ref(''), strategy = ref(''), favorites = ref(f
 const selected = computed(() => visible.value.find(row => row.id === props.activeId))
 const nodeList = ref(null)
 const savedName = computed(() => metadata.value[props.activeId]?.name || '')
-const allNodes=ref(false)
-const visible = computed(() => filterStates(props.states.filter(row=>!props.namedOnly||allNodes.value||Boolean(metadata.value[row.id]?.name?.trim())), metadata.value, { query: query.value, strategy: strategy.value, favorites: favorites.value }))
+const visible = computed(() => filterStates(props.states.filter(row=>!props.namedOnly||Boolean(metadata.value[row.id]?.name?.trim())), metadata.value, { query: query.value, strategy: strategy.value, favorites: favorites.value }))
 function revealSelection() {
   const list = nodeList.value, active = list?.querySelector('.active')
   if (!active) return

@@ -5,7 +5,8 @@
       <section class="panel panel-pad conditions">
         <form @submit.prevent="run">
           <template v-if="!continuing">
-            <label for="simulation-parameter">参数库 <button type="button" class="text-button" title="修改参数名称" :disabled="!parameterSchemeId || running" @click="renameParameter">✎</button><select id="simulation-parameter" v-model="parameterSchemeId" class="input" :disabled="loading || running" @change="rememberParameter"><option value="" disabled>选择已保存参数</option><option v-for="row in parameters" :key="row.id" :value="row.id">{{ row.name }}</option></select></label>
+            <label for="simulation-parameter">采用参数 <button type="button" class="text-button" title="修改参数名称" :disabled="!parameterSchemeId || parameterSchemeId==='@result' || running" @click="renameParameter">✎</button><select id="simulation-parameter" v-model="parameterSchemeId" class="input" :disabled="loading || running" @change="rememberParameter"><option value="" disabled>选择已保存参数或计算记录</option><option v-if="sourceParameters" value="@result">{{ sourceParameters.name }} · 计算参数</option><option v-for="row in parameters" :key="row.id" :value="row.id">{{ row.name }}</option></select></label>
+            <p v-if="sourceParameters && parameterSchemeId==='@result'" class="source-parameters">参数来自 {{ sourceParameters.name }}，未另建参数库记录。采用其{{ sourceParameters.statePolicy==='continuous-origin'?'连续起算':'分场预热' }}规则，预热 {{ sourceParameters.warmupDays }} 天；确认选择后点击开始模拟。</p>
             <RouterLink v-if="!loading && !parameters.length" to="/calibration" class="empty-link">进入参数率定</RouterLink>
             <div class="mode-switch" role="tablist" aria-label="模拟方式"><button type="button" role="tab" :aria-selected="mode === 'event'" :class="{active:mode === 'event'}" :disabled="running" @click="mode='event'">洪水场次</button><button type="button" role="tab" :aria-selected="mode === 'continuous'" :class="{active:mode === 'continuous'}" :disabled="running" @click="mode='continuous'">连续时段</button></div>
             <template v-if="mode === 'event'"><div class="selected-count">已选 {{ selectedEvents.length }} 场洪水<button type="button" class="text-button" :disabled="running || !selectedEvents.length" @click="selectedIds=[]">清空</button></div></template>
@@ -48,6 +49,7 @@ const app = useAppStore(), route = useRoute()
 const loading = ref(false), parameters = ref([]), floods = ref([]), parameterSchemeId = ref(''), selectedIds = ref([])
 const mode = ref('event'), startTime = ref(''), endTime = ref(''), year = ref(''), search = ref(''), pageError = ref('')
 const sourceEnd = ref(''), sourceLabel = ref('')
+const sourceParameters=ref(null)
 const continuing = computed(() => route.query.continue === '1' && Boolean(route.query.source))
 const { operation, result, error, submitting, inspect, submit, cancel, clear } = useDailyOperation({contextKey:()=>app.contextKey,onChange:row=>saveDailySelection(app.contextKey,'simulation',{...readDailySelection(app.contextKey,'simulation'),operationId:operationId(row)})})
 const running = computed(() => submitting.value || activeOperation(operation.value))
@@ -67,8 +69,9 @@ async function renameParameter(){
 }
 function selectVisible() { selectedIds.value=[...new Set([...selectedIds.value,...filteredFloods.value.map(row=>row.id)])] }
 let revision=0
-watch(()=>[app.contextKey,route.query.source,route.query.operation,route.query.continue,route.query.task,route.query.legacyConditionId,route.query.sourceTask,route.query.parameter,route.query.event], async()=>{
+watch(()=>[app.contextKey,route.query.source,route.query.operation,route.query.continue,route.query.task,route.query.legacyConditionId,route.query.sourceTask,route.query.parameter,route.query.event,route.query.parameterResult], async()=>{
   const token=++revision, key=app.contextKey; clear(); loading.value=true; pageError.value=''; floods.value=[]; parameters.value=[]; selectedIds.value=[]; sourceEnd.value=''
+  sourceParameters.value=null
   const saved=readDailySelection(key,'simulation'); mode.value=saved.mode||'event'; startTime.value=saved.startTime||''; endTime.value=saved.endTime||''
   try {
     const sources=await Promise.allSettled([dailyClient.parameters(),dailyClient.floods(app.activeContext)])
@@ -78,6 +81,7 @@ watch(()=>[app.contextKey,route.query.source,route.query.operation,route.query.c
     parameters.value=named.filter(row=>belongsToOperationContext(row,key)); floods.value=events.map(row=>({...row,id:row.id||row.eventId,start:row.start||row.startTime,end:row.end||row.endTime}))
     parameterSchemeId.value=rememberedParameter(parameters.value, route.query.parameter || readDailySelection(key,'parameter').id || saved.parameterSchemeId)
     selectedIds.value=(saved.selectedIds||[]).filter(id=>floods.value.some(row=>row.id===id))
+    if(route.query.parameterResult){const snapshot=await modelApi('results/'+encodeURIComponent(route.query.parameterResult)+'/parameter-snapshot');if(token!==revision)return;sourceParameters.value=snapshot;parameterSchemeId.value='@result'}
     if(route.query.event){selectedIds.value=[String(route.query.event)].filter(id=>floods.value.some(row=>row.id===id));mode.value='event'}
     if(continuing.value){
       const [task,payload]=await Promise.all([modelApi(`tasks/${encodeURIComponent(route.query.source)}`),modelApi(`tasks/${encodeURIComponent(route.query.source)}/result`)])
@@ -89,9 +93,9 @@ watch(()=>[app.contextKey,route.query.source,route.query.operation,route.query.c
       if(token!==revision)return
       const request=task.runConfig||{}; mode.value=request.period?.events?.length?'event':'continuous';startTime.value=hourInput(route.query.start||request.period?.startTime);endTime.value=hourInput(route.query.end||request.period?.endTime)
       selectedIds.value=(request.period?.events||[]).map(row=>row.id)
-      parameterSchemeId.value=historicalParameterId(parameters.value,task,route.query.parameter)
+      if(!route.query.parameterResult)parameterSchemeId.value=historicalParameterId(parameters.value,task,route.query.parameter)
     }
-    const id=route.query.operation || (!continuing.value && !route.query.event && !route.query.task && !route.query.legacyConditionId ? saved.operationId : '')
+    const id=route.query.operation || (!route.query.parameterResult && !continuing.value && !route.query.event && !route.query.task && !route.query.legacyConditionId ? saved.operationId : '')
     if(id){
       await inspect(id)
       if(token!==revision)return
@@ -116,7 +120,7 @@ async function run(){
   if(!canRun.value)return
   pageError.value=''
   const body=continuing.value?{operation:'continuation',sourceTaskId:route.query.source,period:{endTime:endTime.value},context:operationContext(app.activeContext)}
-    :{operation:mode.value==='event'?'eventSimulation':'continuousSimulation',parameterSchemeId:parameterSchemeId.value,context:operationContext(app.activeContext),
+    :{operation:mode.value==='event'?'eventSimulation':'continuousSimulation',...(parameterSchemeId.value==='@result'?{parameterSourceResultId:route.query.parameterResult}:{parameterSchemeId:parameterSchemeId.value}),context:operationContext(app.activeContext),
       ...(mode.value==='event'?{events:selectedEvents.value.map(({id,start,end})=>({id,start,end}))}:{period:{startTime:startTime.value,endTime:endTime.value}})}
   await submit(body)
 }

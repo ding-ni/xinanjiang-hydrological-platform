@@ -3,11 +3,11 @@
     <header class="heading"><div><span class="eyebrow">{{ route.query.label || app.basinName }}</span><h2>{{ resultContext ? '河道流量' : '进阶诊断' }}</h2></div><div class="actions"><RouterLink v-if="resultContext" to="/archive" class="btn">计算成果</RouterLink><button class="btn" :disabled="loading || busy || !supported" @click="refresh"><Refresh class="tool-icon" />刷新</button></div></header>
     <p v-if="!supported" class="notice">模型诊断：南安溪 · 1 km。</p>
     <template v-else>
-      <div v-if="!resultContext" class="identity"><span>计算汇流 <b>{{ selectedVersionName }}</b></span><details><summary>资料与版本来源</summary><div>输入 <code>{{ app.selectedInputBundleVersionId }}</code></div><div>汇流 <code>{{ app.selectedRoutingVersionId }}</code></div></details></div>
+      <p v-if="!resultContext" class="notice">这里保留历史查询。日常断面管理与图件制作请进入 <RouterLink to="/config?tab=routing">河网与断面</RouterLink>；流量查询请从计算成果进入。</p>
       <p v-if="error" role="alert" class="error">{{ error }}</p><p v-if="message" role="status" class="message">{{ message }}</p>
       <nav v-if="!resultContext" class="tabs" role="tablist" aria-label="诊断分区"><button v-for="item in tabs" :key="item.id" role="tab" :aria-selected="tab === item.id" :class="{ selected: tab === item.id }" @click="tab = item.id">{{ item.label }}</button></nav>
       <section v-show="tab === 'routing'" class="section">
-        <RoutingWorkbench :spatial="spatial" :parameters="parameters" :versions="versions" :edit-version="editVersion" :selected-version-id="app.selectedRoutingVersionId" :visible="tab === 'routing'" v-model:name="versionName" :disabled="busy || loading || calibration.running" @version="changeRouting" @select="selectRouting" @register="registerRouting" @reset="loadRouting" @point="choosePoint" @export="download('routing-parameters', $event)" @spatial-export="download('spatial-products', spatial)" />
+        <RoutingWorkbench :spatial="spatial" query-only :visible="tab === 'routing'" />
         <div class="spatial-toolbar"><div><h3>空间成果</h3><span>30 m 地形 · 河网 · 汇流分区</span></div><button class="btn primary" :disabled="busy || loading || spatialRunning" @click="submitSpatial">{{ spatialRunning ? '正在制作空间成果…' : '生成空间成果' }}</button><button v-if="latestSpatial" class="btn" :disabled="busy" @click="inspect(latestSpatial)">查看最近成果</button></div>
       </section>
       <section v-if="tab === 'point'" class="section">
@@ -81,7 +81,7 @@ const supported = computed(() => app.usesModelBackend && app.basinId === 'nananx
 const tabs = [{ id: 'point', label: '河道流量查询' }, { id: 'routing', label: '汇流与拓扑设置' }]
 const tab = ref('point'), loading = ref(false), busy = ref(false), error = ref(''), message = ref('')
 const pointStart = ref(''), pointEnd = ref(''), querySpatial = ref(null)
-const versions = ref([]), tasks = ref([]), spatial = ref(null), editVersion = ref(''), parameters = ref(null), versionName = ref('')
+const tasks = ref([]), spatial = ref(null)
 const pointSource = ref(''), experimentSource = ref(''), experimentMode = ref('multiSeed'), values = ref([42, 101, 2026]), budget = ref(4)
 const point = reactive({ lon: null, lat: null, channelWidthM: 20 })
 const warmupYear = ref(2014), workflowBounds = ref('80,120,160'), workflowSeeds = ref('42,101,2026')
@@ -105,7 +105,6 @@ const minimumBudget = computed(() => {
   return optimizer?.strategy === 'staged' ? (optimizer.algorithm === 'DIFFERENTIAL_EVOLUTION' ? 10 : 4) : optimizer?.algorithm === 'DIFFERENTIAL_EVOLUTION' ? 4 : 1
 })
 watch(minimumBudget, value => { budget.value = Math.max(budget.value, value) })
-const selectedVersionName = computed(() => versions.value.find(row => row.routingVersionId === app.selectedRoutingVersionId)?.name || '控制切分 v2 参考汇流')
 const selectedSource = computed(() => simulations.value.find(row => row.taskId === pointSource.value))
 const independentRequired = ref(false)
 watch(()=>[pointSource.value,point.lon,point.lat],()=>{independentRequired.value=false})
@@ -115,15 +114,6 @@ const reportUrl = computed(() => `${String(import.meta.env.VITE_MODEL_API_BASE).
 const metric = value => Number.isFinite(value) ? value.toFixed(4) : '缺测'
 const pointSeries = computed(() => { const data = result.value?.pointQuery?.series; const rows = (data?.time || []).map((time, i) => [time, data.flow_cms[i]]).filter(([time]) => (!pointStart.value || time >= pointStart.value) && (!pointEnd.value || time <= pointEnd.value + ':00')); return rows })
 const chartOption = computed(() => ({ tooltip: { trigger: 'axis' }, grid: { left: 65, right: 20, bottom: 45, top: 25 }, xAxis: { type: 'category', data: pointSeries.value.map(row => row[0]) }, yAxis: { type: 'value', name: 'm³/s' }, series: [{ type: 'line', showSymbol: false, data: pointSeries.value.map(row => row[1]), lineStyle: { color: '#127f78', width: 2 } }] }))
-function loadRouting() { parameters.value = JSON.parse(JSON.stringify(versions.value.find(row => row.routingVersionId === editVersion.value)?.parameters || null)) }
-function changeRouting(version) {
-  const persisted = versions.value.find(row => row.routingVersionId === editVersion.value)?.parameters
-  if (JSON.stringify(parameters.value) !== JSON.stringify(persisted)
-    && !window.confirm('当前参数尚未登记，切换将放弃本次修改。是否继续？')) return
-  editVersion.value = version
-  loadRouting()
-}
-function selectRouting() { if (busy.value || calibration.running) return; app.updateWorkContext({ selectedRoutingVersionId: editVersion.value }); calibration.markNeedsRun('汇流版本已改变，请重新计算。'); message.value = '已选用汇流版本；历史任务不变，跨版本续算须重新初始化。' }
 function choosePoint(coordinates) { [point.lon, point.lat] = coordinates; independentRequired.value=false; error.value='';tab.value = 'point' }
 function resetValues() { values.value = experimentMode.value === 'multiSeed' ? [42, 101, 2026] : [80, 120, 160] }
 function download(name, payload) { const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })); const link = document.createElement('a'); link.href = url; link.download = `${name}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000) }
@@ -132,12 +122,11 @@ async function refresh(propagateError = false) {
   if (!supported.value) return
   loading.value = true
   try {
-    const [catalog, listing, metadata] = await Promise.all([modelApi('routing-versions'), modelApi('tasks'), modelApi('result-catalog')])
+    const [listing, metadata] = await Promise.all([modelApi('tasks'), modelApi('result-catalog')])
     const product = resultContext.value ? null : spatial.value?.bundleVersionId === input ? spatial.value : await modelApi(`spatial-products?bundleVersionId=${encodeURIComponent(input)}`, { timeoutMs: 30000 })
     if (disposed || token !== revision || key !== app.contextKey || input !== app.selectedInputBundleVersionId) return
-    versions.value = catalog.versions.filter(row => !row.searchReferenceOnly); tasks.value = listing.tasks.filter(row => row.contextKey === key)
+    tasks.value = listing.tasks.filter(row => row.contextKey === key)
     resultMetadata.value = metadata.metadata
-    if (!editVersion.value || !versions.value.some(row => row.routingVersionId === editVersion.value)) { editVersion.value = app.selectedRoutingVersionId; loadRouting() }
     if (spatial.value !== product) spatial.value = product
     if (!pointSource.value) pointSource.value = simulations.value.find(row => row.taskId === route.query.source)?.taskId || simulations.value[0]?.taskId || ''
     const selected = inspected.value?.taskId || route.query.task
@@ -147,7 +136,6 @@ async function refresh(propagateError = false) {
   finally { if (!disposed && token === revision) { loading.value = false; clearTimeout(poll); if (tasks.value.some(active)) poll = setTimeout(refresh, 2500) } }
 }
 async function mutate(action) { if (busy.value) return; busy.value = true; error.value = ''; message.value = ''; const key = app.contextKey; try { const answer = await action(); if (disposed || key !== app.contextKey) return; await refresh(true); return answer } catch (failure) { if (!disposed && key === app.contextKey) error.value = failure.message } finally { busy.value = false } }
-async function registerRouting() { const row = await mutate(() => modelApi('routing-versions', { method: 'POST', body: { name: versionName.value, parentVersionId: editVersion.value, parameters: parameters.value } })); if (row) { editVersion.value = row.routingVersionId; loadRouting(); versionName.value = ''; message.value = '新汇流版本已登记，尚未选用。' } }
 async function submitSpatial() {
   const row = await mutate(() => modelApi('tasks', { method: 'POST', body: {
     requestId: uniqueRequestId('SPATIAL'), runType: 'spatialExport', inputs: { bundleVersionId: app.selectedInputBundleVersionId },
@@ -209,7 +197,7 @@ watch(() => route.query.source, () => {
   tab.value = 'point'
   refresh()
 })
-watch(() => [app.contextKey, app.selectedInputBundleVersionId], () => { revision++; inspectRevision++; clearTimeout(poll); tasks.value = []; spatial.value = null; inspected.value = null; result.value = null; parameters.value = null; editVersion.value = ''; pointSource.value = ''; experimentSource.value = ''; error.value = ''; message.value = ''; refresh() })
+watch(() => [app.contextKey, app.selectedInputBundleVersionId], () => { revision++; inspectRevision++; clearTimeout(poll); tasks.value = []; spatial.value = null; inspected.value = null; result.value = null; pointSource.value = ''; experimentSource.value = ''; error.value = ''; message.value = ''; refresh() })
 onMounted(refresh)
 onBeforeUnmount(() => { disposed = true; revision++; inspectRevision++; clearTimeout(poll) })
 </script>

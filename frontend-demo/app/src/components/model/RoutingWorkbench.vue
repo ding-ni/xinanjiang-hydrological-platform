@@ -98,10 +98,12 @@ async function drawMap() {
   const token = ++drawRevision
   map?.remove()
   map = null
+  if (mapHost.value) delete mapHost.value.__hydroMap
   await nextTick()
   if (disposed || token !== drawRevision || !props.spatial || !mapHost.value) return
   const product = props.spatial
   map = new maplibregl.Map({ container: mapHost.value, style: { version: 8, sources: {}, layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#f3f6f3' } }] }, center: product.topology.reaches[0].startLonLat, zoom: 11 })
+  Object.defineProperty(mapHost.value, '__hydroMap', { value: map, configurable: true })
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
   const current = map
   current.on('load', () => {
@@ -140,7 +142,7 @@ async function drawMap() {
 }
 watch(() => props.spatial, drawMap, { immediate: true })
 watch(() => props.visible, () => nextTick(() => map?.resize()))
-onBeforeUnmount(() => { disposed = true; drawRevision++; map?.remove() })
+onBeforeUnmount(() => { disposed = true; drawRevision++; map?.remove(); if (mapHost.value) delete mapHost.value.__hydroMap })
 </script>
 
 <style scoped>

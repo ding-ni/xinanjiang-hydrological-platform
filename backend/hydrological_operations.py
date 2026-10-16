@@ -97,7 +97,7 @@ class HydrologicalOperations:
 
     def submit(self, body):
         allowed = {'operation', 'requestId', 'request', 'rainfallMethod', 'context', 'parameterSchemeId',
-                   'events', 'period', 'sourceTaskId', 'issueTime', 'endTime', 'lastIssueTime', 'leadHours', 'name'}
+                   'events', 'period', 'sourceTaskId', 'issueTime', 'endTime', 'lastIssueTime', 'leadHours', 'name', 'trialContext', 'routingParameters'}
         if not isinstance(body, dict) or set(body) - allowed or body.get('operation') not in LABELS:
             raise ValueError('请选择计算方式')
         request = copy.deepcopy(body)
@@ -154,9 +154,15 @@ class HydrologicalOperations:
                 settings['optimizer'] = {'algorithm': 'FIXED_PARAMETERS', 'maxEvaluations': 1}
                 for key in ('searchParameters', 'routingSearchParameters', 'target', 'jointProfile'):
                     settings.pop(key, None)
+                if request.get('routingParameters') is not None:
+                    routing = self.manager.routing_versions.create({'name': '人工试调计算参数', 'parentVersionId': model.get('routing', {}).get('versionId'), 'parameters': request.pop('routingParameters')})
+                    model['routing'] = {'versionId': routing['routingVersionId']}
+                    for key in ('routingVersionId', 'routingManifestSHA256', 'routingParametersSHA256', 'routingParameterSHA256'):
+                        model.get('lineage', {}).pop(key, None)
+                model = self.manager.schemes.freeze_trial(model, request.get('trialContext'))
             elif model.get('calibration', {}).get('evaluationMode', 'automatic') != 'automatic':
                 raise ValueError('自动率定须使用参数搜索设置')
-            request['request'] = self.manager.schemes.freeze(model, strict=True)
+            request['request'] = model if kind == 'manualTrial' else self.manager.schemes.freeze(model, strict=True)
         elif kind == 'stateReplay':
             source_id = request.get('sourceTaskId')
             if not self.manager.available_artifact(source_id):
@@ -328,6 +334,8 @@ class HydrologicalOperations:
                 options['period']['startTime'] = (hourly_time(options['period']['startTime']) - timedelta(hours=1)).isoformat()
             if options.get('continuousOrigin'):
                 options['continuousOrigin'] = (hourly_time(options['continuousOrigin']) - timedelta(hours=1)).isoformat()
+        # Draft trials can have different flood windows from their saved scheme.
+        # Their actual preparation options already provide the reusable cache key.
         selection = request.get('scheme')
         binding = None
         if selection and request['inputs'].get('dataMode') == 'historical-database':
@@ -562,7 +570,7 @@ class HydrologicalOperations:
             model = self.prepare(identifier, model, request.get('rainfallMethod') or 'reuse')
         # Keep the scheme's source identity while binding the actual prepared
         # product in the immutable request.
-        if model.get('scheme') and not source_plan:
+        if (model.get('scheme') or model.get('lineage', {}).get('trialContext')) and not source_plan:
             model['inputs']['sourceBundleVersionId'] = request['request']['inputs'].get('sourceBundleVersionId') or request['request']['inputs']['bundleVersionId']
             model['inputs']['preparationTaskId'] = model['lineage']['preparationTaskId']
         preparation_seconds = time.perf_counter() - preparation_started

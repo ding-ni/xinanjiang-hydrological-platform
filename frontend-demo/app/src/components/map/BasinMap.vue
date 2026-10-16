@@ -94,6 +94,7 @@ const props = defineProps({
     })
   },
   selectedId: { type: String, default: null },
+  selectedGridId: { type: [String, Number], default: null },
   showTools: { type: Boolean, default: true },
   legendMode: { type: String, default: 'rain' }, // rain | runoff | soil | snow | frost | melt | none
   interactiveGrid: { type: Boolean, default: false },
@@ -645,6 +646,12 @@ function ensureLayers(map) {
       }
     },
     {
+      id: 'grid-hover', type:'line',source:'grid',filter:['==',['get','id'],''],paint:{'line-color':'#f5faf7','line-width':2,'line-opacity':0.95}
+    },
+    {
+      id: 'grid-selected', type:'line',source:'grid',filter:['==',['get','id'],props.selectedGridId??''],paint:{'line-color':'#e8a62e','line-width':3}
+    },
+    {
       id: 'rivers',
       type: 'line',
       source: 'rivers',
@@ -777,6 +784,8 @@ function applyLayerVisibility(map) {
   if (map.getLayer('grid-fill')) {
     map.setLayoutProperty('grid-fill', 'visibility', vis(props.layers.grid || props.interactiveGrid))
     map.setLayoutProperty('grid-line', 'visibility', vis(props.layers.grid || props.interactiveGrid))
+    map.setLayoutProperty('grid-hover', 'visibility', vis(props.interactiveGrid))
+    map.setLayoutProperty('grid-selected', 'visibility', vis(props.interactiveGrid))
   }
   if (map.getLayer('qpf-grid-fill')) {
     map.setLayoutProperty('qpf-grid-fill', 'visibility', vis(props.layers.qpfGrid))
@@ -972,6 +981,13 @@ function stationPopupHtml(p) {
 }
 
 function bindEvents(map) {
+  if(props.interactiveGrid){
+    const canvas=map.getCanvas();canvas.style.cursor='default'
+    map.on('mousemove','grid-fill',event=>{if(map.isMoving())return;canvas.style.cursor='default';map.setFilter('grid-hover',['==',['get','id'],event.features?.[0]?.properties.id??''])})
+    map.on('mouseleave','grid-fill',()=>{canvas.style.cursor='default';map.setFilter('grid-hover',['==',['get','id'],''])})
+    map.on('dragstart',()=>{canvas.style.cursor='grabbing'})
+    map.on('dragend',()=>{canvas.style.cursor='default'})
+  }
   for (const layerId of ['stations-circle', 'stations-priority-circle']) {
     map.on('mouseenter', layerId, (e) => {
       map.getCanvas().style.cursor = 'pointer'
@@ -992,7 +1008,7 @@ function bindEvents(map) {
     })
 
     map.on('mouseleave', layerId, () => {
-      map.getCanvas().style.cursor = ''
+      map.getCanvas().style.cursor = props.interactiveGrid ? 'default' : ''
       emit('hover-station', null)
       popup?.remove()
     })
@@ -1283,6 +1299,7 @@ watch(
   () => updateStations(),
   { deep: true }
 )
+watch(()=>props.selectedGridId,id=>{const map=mapRef.value;if(map?.getLayer('grid-selected'))map.setFilter('grid-selected',['==',['get','id'],id??''])})
 
 watch(
   () => props.layers,

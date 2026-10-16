@@ -60,11 +60,19 @@ class ParameterSchemes:
             return self._save(body)
 
     def _save(self, body):
-        if not isinstance(body, dict) or set(body) - {'name', 'sourceTaskId'}:
+        if not isinstance(body, dict) or set(body) - {'name', 'sourceTaskId', 'requestId', 'schemeId', 'adoptionRevision'}:
             raise ValueError('请填写参数名称并选择计算成果')
         name = str(body.get('name') or '').strip()
         if not name or len(name) > 80:
             raise ValueError('请为参数命名，最多80个字符')
+        if body.get('requestId'):
+            for path in self.root.glob('PARAMSET-*.json'):
+                old = read_json(path)
+                if old.get('requestId') == body['requestId']:
+                    identity = lambda value: {key: item for key, item in value.items() if key != 'adoptionRevision'}
+                    if identity(old.get('saveRequest', {})) != identity(body):
+                        raise ValueError('该保存请求已用于另一组参数')
+                    return self._adopt(old, body)
         task_id = body.get('sourceTaskId')
         if str(task_id).startswith('OP-'):
             result = self.manager.operations.result(task_id)
@@ -73,6 +81,10 @@ class ParameterSchemes:
             raise ValueError('请选择已完成的计算成果')
         source = self.manager.result(task_id)
         request = read_json(safe_task(self.manager.root, task_id) / 'request.json')
+        if body.get('schemeId'):
+            scheme = self.manager.schemes.get(body['schemeId'])
+            if scheme['definition'].get('context', {}).get('contextKey') != request['context']['contextKey']:
+                raise ValueError('参数和方案所属流域不一致')
         parameters = source.get('bestParameters') or source.get('parameters')
         if not isinstance(parameters, dict) or not parameters:
             raise ValueError('该成果没有可保存的参数')
@@ -100,6 +112,9 @@ class ParameterSchemes:
                 warmup = descriptor['statePolicy'].get('warmupHours', 168) / 24
         identifier = 'PARAMSET-' + uuid.uuid4().hex
         record = {'id': identifier, 'name': name, 'createdAt': now(), 'sourceTaskId': task_id,
+                  'sourceScheme': copy.deepcopy(request.get('scheme') or {'id': request.get('lineage', {}).get('schemeId')}),
+                  'generationMethod': 'manual' if request.get('calibration', {}).get('evaluationMode') == 'manual' else 'automatic' if request.get('runType') == 'calibration' else 'simulation',
+                  'requestId': body.get('requestId'), 'saveRequest': copy.deepcopy(body),
                   'context': copy.deepcopy(request['context']), 'contextKey': request['context']['contextKey'],
                   'parameters': copy.deepcopy(parameters), 'routing': {'versionId': resolved['routingVersionId']},
                   'routingParameters': resolved['parameters'], 'science': copy.deepcopy(science),
@@ -109,4 +124,16 @@ class ParameterSchemes:
                   'sourceInputs': copy.deepcopy(request['inputs']), 'sourceLineage': source.get('lineage', {}),
                   'metrics': {key: source.get(key) for key in ('calibrationMetrics', 'validationMetrics', 'independentTest')}}
         write_json(self.root / (identifier + '.json'), record)
+        return self._adopt(record, body)
+
+    def _adopt(self, record, body):
+        if body.get('schemeId'):
+            scheme = self.manager.schemes.get(body['schemeId'])
+            if scheme['definition'].get('context', {}).get('contextKey') != record['contextKey']:
+                raise ValueError('参数和方案所属流域不一致')
+            try:
+                adopted = self.manager.schemes.adopt_parameter(body['schemeId'], record['id'], body.get('adoptionRevision', 0))
+                return {**record, 'adoptedParameter': adopted, 'adoptionError': None}
+            except RuntimeError as error:
+                return {**record, 'adoptedParameter': None, 'adoptionError': str(error)}
         return record

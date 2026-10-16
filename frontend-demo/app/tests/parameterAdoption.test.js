@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 
 test('manual trial is blocked until a saved reference parameter set has been completely read, without changing other pages', async () => {
   const source = readFileSync(new URL('../src/views/CalibrationView.vue', import.meta.url), 'utf8')
-  const selectionAction = source.slice(source.indexOf('async function applyReference('), source.indexOf('function openSaveParameters('))
+  const selectionAction = source.slice(source.indexOf('async function applyReference('), source.indexOf('async function openSaveParameters('))
   const eligibility = source.slice(source.indexOf('const canRun ='), source.indexOf('const calculationBlockReason ='))
   let finishSelection
   const verification = new Promise(resolve => { finishSelection = resolve })
@@ -17,14 +17,14 @@ test('manual trial is blocked until a saved reference parameter set has been com
   const empty = { value: '' }
   const actions = new Function('computed', 'app', 'cal', 'parameterLoading', 'parameterConstraint', 'physicalConflict',
     'physicalGrouping', 'trialMode', 'searchError', 'routingSearchError', 'objectiveWeightValid', 'routingError',
-    'referenceParameterId', 'calculationError', 'modelApi', 'originError', 'routingValidityError', 'ElMessageBox',
+    'referenceParameterId', 'calculationError', 'modelApi', 'originError', 'routingValidityError', 'ElMessageBox','loadPairedConditions','trialReady','trialScope','selectedEventRows','activeEvent',
     selectionAction + '\n' + eligibility + '\nreturn { applyReference, canRun }')(
     fn => ({ get value() { return fn() } }), app, cal, parameterLoading, empty, empty,
     { value: { errors: [] } }, { value: 'manual' }, empty, empty, { value: true }, empty,
     referenceParameterId, calculationError, async () => { await verification; return {
       id: 'PARAMSET-reference', parameters: { SM: 41 }, routing: { versionId: 'ROUTING-reference' },
       science: { versionId: 'SCIENCE-reference' }, warmupDays: 7, statePolicy: 'independent-warmup'
-    } }, empty, empty, {confirm:async()=>{throw 'cancel'}})
+    } }, empty, empty, {confirm:async()=>{throw 'cancel'}},{value:false},{value:true},{value:'current'},{value:[]},{value:{purpose:'验证'}})
   assert.equal(actions.canRun.value, true)
   const adopting = actions.applyReference('PARAMSET-reference')
   assert.equal(actions.canRun.value, false)

@@ -65,17 +65,20 @@ class RiverSections:
         return value.strip()
 
     def locate(self, body):
-        if not isinstance(body, dict) or set(body) != {'resultId', 'processId', 'point'}:
-            raise ValueError('请先选择成果、洪水与地图位置')
+        if not isinstance(body, dict) or set(body) not in ({'resultId', 'processId', 'point'}, {'projectId', 'point'}):
+            raise ValueError('请选择流域与地图位置')
+        if body.get('projectId', 'nananxi-xufan') != 'nananxi-xufan':
+            raise ValueError('当前仅支持南安溪断面')
         point = body['point']
         if not isinstance(point, dict) or set(point) != {'lon', 'lat'}:
             raise ValueError('请提供地图经纬度')
         if any(type(point[key]) not in (int, float) or not math.isfinite(point[key]) or not lo <= point[key] <= hi for key, lo, hi in [('lon', -180, 180), ('lat', -90, 90)]):
             raise ValueError('地图经纬度无效')
-        process = self.manager.results.process(body['resultId'], body['processId'])
-        bundle = self.bundle(body['resultId'], body['processId'])
-        request = self.manager.get(process['sourceTaskId'])['runConfig']
-        parameters = self.manager.routing_versions.resolve(request['routing']['versionId'])['parameters']
+        bundle = self.bundle(body.get('resultId'), body.get('processId'))
+        # Snapping uses the frozen spatial network; routing coefficients do not
+        # determine location. No calculation result is required to save a point.
+        from common import ROUTING_VERSION
+        parameters = self.manager.routing_versions.resolve(ROUTING_VERSION)['parameters']
         from diagnostic_jobs import make_point_engine, locate_river_point
         with tempfile.TemporaryDirectory(prefix='xaj-section-') as folder:
             engine = make_point_engine(bundle, Path(folder), parameters)
@@ -83,10 +86,10 @@ class RiverSections:
         return {**location, 'spatialSHA256': spatial_identity(bundle)}
 
     def create(self, body):
-        if not isinstance(body, dict) or set(body) != {'name', 'resultId', 'processId', 'point'}:
+        if not isinstance(body, dict) or set(body) not in ({'name', 'resultId', 'processId', 'point'}, {'name', 'projectId', 'point'}):
             raise ValueError('请填写断面名称并选择地图位置')
         name = self.name(body['name'])
-        definition = self.locate({key: body[key] for key in ('resultId', 'processId', 'point')})
+        definition = self.locate({key: value for key, value in body.items() if key != 'name'})
         identifier, instant = 'SECTION-' + uuid.uuid4().hex, now()
         with self.manager.database.connect() as db:
             db.execute('INSERT INTO river_sections VALUES (?,?,?,?,?,?,?)', (identifier, name, 'nananxi-xufan', json.dumps(definition), 1, instant, instant))

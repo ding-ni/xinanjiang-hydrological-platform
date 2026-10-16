@@ -78,7 +78,8 @@ class ResultRepository:
             can_query = (folder / 'routing-evidence.json').is_file()
             label = window.get('name') or state.get('label')
             if not label or label == key or str(label).startswith('xf-'):
-                label = str(first or '').replace('T', ' ')[:16] + (' 连续过程' if key == 'process' else ' 洪水')
+                continuous = frozen.get('period', {}).get('mode') == 'continuous'
+                label = str(first or '').replace('T', ' ')[:16] + (' ' + str(window.get('purpose') or '连续') + '过程' if continuous else ' 连续过程' if key == 'process' else ' 洪水')
             processes.append({'id': key, 'name': label, 'start': first, 'end': last, 'purpose': window.get('purpose'),
                 'sourceTaskId': task_id, 'endStateVersionId': state.get('endStateVersionId') or result.get('endStateVersionId'),
                 'canQuery': can_query, 'queryUnavailableReason': None if can_query else '该历史成果未保留完整汇流过程，请按原条件复算',
@@ -155,6 +156,8 @@ class ResultRepository:
                 'completedAt': status.get('completedAt'), 'contextKey': status.get('contextKey') or model.get('context', {}).get('contextKey'),
                 'schemeId': scheme.get('id') or status.get('lineage', {}).get('schemeId'),
                 'parameterName': request.get('parameterSnapshot', {}).get('name') or status.get('lineage', {}).get('parameterName'),
+                'parameterSource': (request.get('trialContext') or {}).get('parameterSource') or request.get('parameterSnapshot', {}).get('name'),
+                'evaluationMode': 'manual' if status.get('operation') == 'manualTrial' else model.get('calibration', {}).get('evaluationMode'),
                 'processCount': len(selected) or len(period.get('windows', [])) or 1,
                 'error': status.get('errorMessage'), 'statusLabel': status.get('stageLabel')})
             rows[-1]['sourceTaskIds'] = status.get('childTaskIds', [])

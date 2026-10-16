@@ -20,7 +20,7 @@ it('calibration workbench keeps a full process chart and reduces to one column o
   assert.match(source, /\.process-panel\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column/)
   const chartMinimum = Number(source.match(/\.process-panel\s*\{[^}]*height:\s*(\d+)px/)?.[1])
   assert.ok(chartMinimum >= 320, 'The process chart retains at least 320px of plotting space')
-  assert.match(source, /@media\(max-width:900px\)\{\.workbench,\.workbench\.manual-mode\{grid-template-columns:1fr/s)
+  assert.match(source, /@media\(max-width:900px\)\{\s*\.workbench,\.workbench\.manual-mode\{grid-template-columns:1fr/s)
   assert.match(source, /latestComparableTrial/)
   const dataView = readFileSync(new URL('../src/views/DataView.vue', import.meta.url), 'utf8')
   assert.doesNotMatch(dataView, /id="scheme-task"/)

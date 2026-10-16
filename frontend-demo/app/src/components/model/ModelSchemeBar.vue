@@ -19,7 +19,7 @@
   </section>
   <header v-else class="scheme-heading" aria-label="当前率定方案">
     <button class="btn" :disabled="busy" @click="back">← 方案列表</button><h1>{{ cal.modelSchemeName }}</h1><button class="btn icon-name" title="修改方案名称" aria-label="修改方案名称" :disabled="busy || cal.running" @click="rename">✎</button>
-    <span class="revision-label">{{ editing ? '正在编辑' : '已保存 · 查看' }}<template v-if="cal.configurationPending"> · 待完善计算条件</template></span>
+    <span class="revision-label">{{ editing ? hasChanges() ? (saving ? '正在暂存修改' : error ? '草稿暂存失败' : draftIdentity !== calibrationEditorIdentity(calibrationEditor(cal)) ? '正在暂存修改' : '修改已暂存') : '正在编辑' : '已保存 · 查看' }}<template v-if="cal.configurationPending"> · 待完善计算条件</template></span>
     <button v-if="!editing" class="btn" :disabled="busy || cal.running" @click="beginEdit">编辑方案</button>
     <button v-if="editing" class="btn primary" :disabled="busy || cal.running" @click="commit">保存修改</button>
     <button v-if="editing" class="btn" :disabled="busy || cal.running" @click="discard">放弃修改</button>
@@ -29,13 +29,14 @@
     <span v-if="saving" class="save-status" role="status">保存中</span>
     <span v-else-if="error" class="scheme-error" role="alert">{{ error }} <button class="text-button" @click="flush">重试</button></span>
   </header>
-  <dialog ref="historyDialog" class="scheme-history"><header><h2>修改历史</h2><button class="btn" @click="historyDialog.close()">关闭</button></header><p>恢复历史会保存为当前方案，已有成果保持原计算条件。</p><div v-for="item in savedRow?.revisions || []" :key="item.revision" class="history-item"><div><b>{{ dateLabel(item.created_at) }}</b><p>{{ item.summary || '保存方案' }}<template v-if="item.note"> · {{ item.note }}</template></p></div><button class="btn" @click="annotateHistory(item)">备注</button><button class="btn" :disabled="busy" @click="viewHistory(item)">查看条件</button><button class="btn" :disabled="busy || item.revision === cal.modelSchemeLatestRevision" @click="restoreHistory(item)">恢复此保存</button></div></dialog>
+  <HydrologyDialog ref="historyDialog" class="scheme-history"><header><h2>修改历史</h2><button class="btn" @click="historyDialog.close()">关闭</button></header><p>恢复历史会保存为当前方案，已有成果保持原计算条件。</p><div v-for="item in savedRow?.revisions || []" :key="item.revision" class="history-item"><div><b>{{ dateLabel(item.created_at) }}</b><p>{{ item.summary || '保存方案' }}<template v-if="item.note"> · {{ item.note }}</template></p></div><button class="btn" @click="annotateHistory(item)">备注</button><button class="btn" :disabled="busy" @click="viewHistory(item)">查看条件</button><button class="btn" :disabled="busy || item.revision === cal.modelSchemeLatestRevision" @click="restoreHistory(item)">恢复此保存</button></div></HydrologyDialog>
 </template>
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
+import HydrologyDialog from './HydrologyDialog.vue'
 import { modelApi } from '@/services/modelBackendService'
 import { calibrationEditor, calibrationEditorIdentity, restoreModelScheme, saveCalibrationEditor, schemeDefinition, recoverActiveCalibrationOperation } from '@/services/modelSchemeService'
 import { operationStatuses } from '@/services/dailyOperationService'
@@ -43,6 +44,7 @@ import { useAppStore } from '@/stores/app'
 import { useCalibrationStore } from '@/stores/calibration'
 
 const props = defineProps({ commit: { type: Function, required: true } })
+const draftIdentity=ref('')
 const editing = ref(false), savedRow = ref(null), cleanIdentity = ref('')
 const app = useAppStore(), cal = useCalibrationStore()
 const route = useRoute()
@@ -70,6 +72,7 @@ async function refreshCatalog() {
   cal.loadFullFloodCatalog(payload.events || [])
 }
 async function load(id, revision = null) {
+  if (cal.activeOperationId) await recoverActiveCalibrationOperation(cal)
   if ((cal.running || cal.activeOperationId) && cal.modelSchemeId !== id) { error.value = '请先完成或停止当前计算'; return }
   busy.value = true; loading = true; error.value = ''
   try {
@@ -139,7 +142,7 @@ async function flush() {
   pendingSave = pendingSave.catch(() => {}).then(async () => {
     if (cal.modelSchemeId !== id) return
     saving.value = true
-    try { await saveCalibrationEditor(cal); error.value = '' }
+    try { const identity=calibrationEditorIdentity(calibrationEditor(cal));await saveCalibrationEditor(cal);draftIdentity.value=identity;error.value = '' }
     catch (failure) { error.value = failure.message; throw failure }
     finally { saving.value = false }
   })
@@ -163,7 +166,7 @@ onMounted(async () => {
   }
 })
 function setEditing(value) { editing.value = value; emit('editing', value) }
-function warnBeforeUnload(event) { if(hasChanges()){event.preventDefault();event.returnValue=''} }
+function warnBeforeUnload(event) { if(hasChanges() && (saving.value || error.value || draftIdentity.value!==calibrationEditorIdentity(calibrationEditor(cal)))){event.preventDefault();event.returnValue=''} }
 function hasChanges() { return editing.value && calibrationEditorIdentity(calibrationEditor(cal)) !== cleanIdentity.value }
 function beginEdit() { setEditing(true) }
 async function resumeDraft() {
@@ -176,7 +179,7 @@ async function commit() {
   clearTimeout(timer)
   busy.value = true; loading = true; error.value = ''
   try {
-    await pendingSave
+    await pendingSave.catch(() => {})
     const row = await props.commit()
     savedRow.value = row
     cleanIdentity.value = calibrationEditorIdentity(calibrationEditor(cal)); setEditing(false)
@@ -187,7 +190,7 @@ async function commit() {
 async function discard() {
   clearTimeout(timer); loading = true
   try {
-    await pendingSave
+    await pendingSave.catch(() => {})
     await modelApi('model-schemes/' + cal.modelSchemeId + '/discard-draft', { method: 'POST', body: {
       revision: cal.modelSchemeLatestRevision || 0, draftRevision: cal.modelSchemeDraftRevision || 0 } })
     await load(cal.modelSchemeId)
@@ -196,17 +199,12 @@ async function discard() {
 }
 async function settleChanges() {
   if (!hasChanges()) return true
-  try {
-    await ElMessageBox.confirm('方案有尚未保存的修改。保存修改后继续？选择放弃将恢复上次保存。关闭此窗口则继续编辑。', '保存方案修改', {
-      confirmButtonText: '保存修改', cancelButtonText: '放弃修改', distinguishCancelAndClose: true })
-    return await commit()
-  } catch (action) {
-    if (action !== 'cancel') return false
-    await discard(); return !error.value
-  }
+  await flush()
+  if(!error.value)return true
+  try{await ElMessageBox.confirm('草稿暂存失败，离开可能丢失本次修改。仍然离开？','暂存失败',{confirmButtonText:'仍然离开',cancelButtonText:'继续编辑'});return true}catch{return false}
 }
 async function ensureSaved() {
-  if (hasChanges() || !cal.modelSchemeRevision) return await settleChanges() && Boolean(cal.modelSchemeRevision)
+  if (hasChanges() || !cal.modelSchemeRevision) return await commit() && Boolean(cal.modelSchemeRevision)
   return true
 }
 async function rename() {
@@ -233,7 +231,7 @@ async function restoreHistory(item) {
 async function saveAs() {
   try {
     const { value } = await ElMessageBox.prompt('填写新方案名称', '另存方案', { inputValue: cal.modelSchemeName + ' · 副本', inputValidator: value => Boolean(value?.trim()) && value.trim().length <= 80, confirmButtonText: '另存', cancelButtonText: '取消' })
-    clearTimeout(timer); await pendingSave
+    clearTimeout(timer); await pendingSave.catch(() => {})
     const source = { id: cal.modelSchemeId, revision: cal.modelSchemeRevision, latest: cal.modelSchemeLatestRevision, name: cal.modelSchemeName, draft: cal.modelSchemeDraftRevision }
     cal.modelSchemeSourceId = source.id; cal.modelSchemeSourceRevision = source.revision
     cal.modelSchemeId = null; cal.modelSchemeRevision = 0; cal.modelSchemeLatestRevision = 0; cal.modelSchemeDraftRevision = null; cal.modelSchemeName = value.trim()
@@ -245,18 +243,61 @@ async function saveAs() {
 }
 onBeforeRouteLeave(settleChanges)
 onBeforeUnmount(() => { window.removeEventListener('beforeunload',warnBeforeUnload); clearTimeout(timer) })
-defineExpose({ refresh, flush, load, ensureSaved })
+defineExpose({ refresh, flush, load, ensureSaved, hasChanges })
 </script>
 
 <style scoped>
-.original-records{margin-top:20px;border-top:1px solid #e4ece9;padding-top:14px}.original-records summary{font-size:12px;color:#768a7d;cursor:pointer;margin-bottom:12px}.original-records .scheme-choice{grid-template-columns:1fr 28px;margin-top:8px}
-.scheme-heading{flex-wrap:wrap}.revision-label{font-size:12px;color:#6b8177}.revision-select{width:auto;max-width:260px}.icon-name{padding:4px 8px}.scheme-list{max-width:960px;margin:32px auto;padding:28px;background:#fff;border:1px solid #d6e2df;border-radius:5px}.scheme-list header,.scheme-heading{display:flex;align-items:center;gap:16px}.scheme-list header{justify-content:space-between;margin-bottom:24px}.scheme-list h1,.scheme-heading h1{font-size:20px;color:#244c44;margin:0}.scheme-list header p{margin:8px 0 0;color:#71837d;font-size:13px}.scheme-create{display:grid;grid-template-columns:auto minmax(160px,1fr) auto auto;gap:10px;align-items:center;padding:18px 0;border-top:1px solid #e4ece9}.scheme-create label{font-size:13px}.scheme-cards{display:grid;gap:8px}.scheme-choice{display:grid;grid-template-columns:1fr auto 28px;align-items:center;gap:20px;padding:17px 18px;background:#fbfdfc;border:1px solid #dce7e2;border-radius:4px;text-align:left;cursor:pointer;color:#31584c}.scheme-choice:hover{background:#eef6f2;border-color:#92b5a8}.scheme-choice span{font-size:12px;color:#75877e}.scheme-choice i{font-style:normal;font-size:20px}.scheme-choice:focus-visible{outline:2px solid #258276;outline-offset:2px}.empty{padding:52px 0;text-align:center;color:#8b9b94;font-size:14px}.scheme-heading{padding:7px 0}.save-status{margin-left:auto;color:#8a9d94;font-size:12px}.scheme-error{color:#a93636;font-size:13px}.text-button{border:0;background:none;color:inherit;text-decoration:underline;cursor:pointer}
-@media(max-width:640px){.scheme-list{margin:12px 0;padding:18px}.scheme-create{grid-template-columns:1fr 1fr}.scheme-create label,.scheme-create input{grid-column:1/-1}.scheme-choice{grid-template-columns:1fr 25px}.scheme-choice span{display:none}}
-.scheme-list :is(label,p,span,summary,.btn,.input),.scheme-heading :is(span,.btn){font-size:14px}
-.scheme-list :is(.btn,.input),.scheme-heading .btn{min-height:36px}
-.scheme-processing{font-size:12px;color:#637c72;margin:4px 0 12px}.scheme-processing summary{cursor:pointer}.scheme-processing>div{padding:12px;background:#fff;border-bottom:1px solid #dce7e2}.scheme-processing pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto}
-</style>
-
-<style scoped>
-.scheme-list{width:100%;max-width:1180px;margin:16px auto;padding:30px}.scheme-eyebrow{display:block;color:#56837c;font-size:14px;margin-bottom:12px}.scheme-list h1{font-size:28px;font-weight:650}.scheme-list-tools{display:flex;align-items:center;gap:12px;padding:18px 0;border-top:1px solid #e0e9e5}.scheme-list-tools input{max-width:450px;flex:1}.scheme-list-tools select{width:150px}.scheme-list-tools>span{margin-left:auto;color:#71887f;font-size:14px}.scheme-cards{gap:0;border-top:1px solid #dce6e2}.scheme-choice{grid-template-columns:minmax(0,1fr) 180px 70px;border-width:0 0 1px;border-radius:0;padding:20px 12px;background:white;gap:20px}.scheme-choice b{font-size:18px;color:#285b54}.scheme-choice p{margin:8px 0 0;font-size:14px;line-height:1.5}.scheme-choice i{font-size:14px;color:#237b80}.scheme-origin{color:#617f73}.scheme-pagination{display:flex;gap:8px;align-items:center;margin-top:20px;font-size:14px}.scheme-pagination>span{margin-right:auto;color:#6e857a}.scheme-history{width:min(860px,94vw);max-height:85vh;border:1px solid #adc9c4;border-radius:8px;padding:24px;color:#34584e}.scheme-history::backdrop{background:#103f3650}.scheme-history header{display:flex;align-items:center;justify-content:space-between}.scheme-history h2{font-size:20px}.scheme-history p{font-size:14px;color:#72867d}.history-item{display:flex;gap:8px;align-items:center;padding:16px 0;border-top:1px solid #e1e9e5;font-size:14px}.history-item>div{margin-right:auto}.scheme-history .btn{min-height:36px}@media(max-width:900px){.scheme-choice{grid-template-columns:minmax(0,1fr) 70px}.scheme-choice>span{display:none}.scheme-list{padding:20px}.history-item{flex-wrap:wrap}.history-item>div{width:100%}}
+.scheme-list { width:100%; max-width:1180px; margin:16px auto; padding:30px; background:#fff; border:1px solid #d6e2df; border-radius:5px }
+.scheme-list header, .scheme-heading { display:flex; align-items:center; gap:16px }
+.scheme-list header { justify-content:space-between; margin-bottom:24px }
+.scheme-eyebrow { display:block; color:#56837c; font-size:14px; margin-bottom:12px }
+.scheme-list h1, .scheme-heading h1 { color:#244c44; margin:0 }
+.scheme-list h1 { font-size:28px; font-weight:650 }
+.scheme-heading { flex-wrap:wrap; padding:7px 0 }
+.scheme-heading h1 { font-size:20px }
+.scheme-list header p { margin:8px 0 0; color:#71837d; font-size:14px }
+.scheme-create { display:grid; grid-template-columns:auto minmax(160px,1fr) auto auto; gap:10px; align-items:center; padding:18px 0; border-top:1px solid #e4ece9 }
+.scheme-list-tools { display:flex; align-items:center; gap:12px; padding:18px 0; border-top:1px solid #e0e9e5 }
+.scheme-list-tools input { max-width:450px; flex:1 }
+.scheme-list-tools select { width:150px }
+.scheme-list-tools>span { margin-left:auto; color:#71887f }
+.scheme-cards { display:grid; border-top:1px solid #dce6e2 }
+.scheme-choice { display:grid; grid-template-columns:minmax(0,1fr) 180px 70px; align-items:center; gap:20px; padding:20px 12px; background:#fff; border:0; border-bottom:1px solid #dce7e2; text-align:left; cursor:pointer; color:#31584c }
+.scheme-choice:hover { background:#eef6f2; border-color:#92b5a8 }
+.scheme-choice:focus-visible { outline:2px solid #258276; outline-offset:2px }
+.scheme-choice b { font-size:18px; color:#285b54 }
+.scheme-choice p { margin:8px 0 0; font-size:14px; line-height:1.5 }
+.scheme-choice span { color:#75877e }
+.scheme-choice i { font-style:normal; font-size:14px; color:#237b80 }
+.scheme-origin { color:#617f73 }
+.scheme-pagination { display:flex; gap:8px; align-items:center; margin-top:20px }
+.scheme-pagination>span { margin-right:auto; color:#6e857a }
+.revision-label { color:#6b8177 }
+.icon-name { padding:4px 8px }
+.empty { padding:52px 0; text-align:center; color:#8b9b94; font-size:14px }
+.save-status { margin-left:auto; color:#8a9d94 }
+.scheme-error { color:#a93636; font-size:14px }
+.text-button { border:0; background:none; color:inherit; text-decoration:underline; cursor:pointer }
+.scheme-list :is(label,p,span,summary,.btn,.input), .scheme-heading :is(span,.btn) { font-size:14px }
+.scheme-list :is(.btn,.input), .scheme-heading .btn { min-height:36px }
+.scheme-history { width:min(860px,94vw); max-height:85vh; border:1px solid #adc9c4; border-radius:8px; padding:24px; color:#34584e }
+.scheme-history header { display:flex; align-items:center; justify-content:space-between }
+.scheme-history h2 { font-size:20px }
+.scheme-history p { font-size:14px; color:#72867d }
+.history-item { display:flex; gap:8px; align-items:center; padding:16px 0; border-top:1px solid #e1e9e5; font-size:14px }
+.history-item>div { margin-right:auto }
+.scheme-history .btn { min-height:36px }
+@media(max-width:900px) {
+  .scheme-choice { grid-template-columns:minmax(0,1fr) 70px }
+  .scheme-choice>span { display:none }
+  .scheme-list { padding:20px }
+  .history-item { flex-wrap:wrap }
+  .history-item>div { width:100% }
+}
+@media(max-width:640px) {
+  .scheme-list { margin:12px 0; padding:18px }
+  .scheme-create { grid-template-columns:1fr 1fr }
+  .scheme-create label, .scheme-create input { grid-column:1/-1 }
+  .scheme-list-tools { flex-wrap:wrap }
+}
 </style>

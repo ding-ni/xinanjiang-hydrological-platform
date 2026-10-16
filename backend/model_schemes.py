@@ -17,7 +17,7 @@ def calculation_identity(request):
     return result
 
 def editor_identity(editor):
-    return {key:value for key,value in editor.items() if key not in {'eventId','activeOperationId','activeOperationRequest'}}
+    return {key:value for key,value in editor.items() if key not in {'eventId','editorTrialMode','activeOperationId','activeOperationRequest'}}
 
 
 def change_summary(before, after):
@@ -96,6 +96,9 @@ class ModelSchemes:
                 CREATE TABLE IF NOT EXISTS model_scheme_history_notes (
                     scheme_id TEXT NOT NULL, revision INTEGER NOT NULL, note TEXT NOT NULL,
                     PRIMARY KEY(scheme_id,revision));
+                CREATE TABLE IF NOT EXISTS model_scheme_parameters (
+                    scheme_id TEXT PRIMARY KEY REFERENCES model_schemes(id),
+                    parameter_id TEXT NOT NULL, revision INTEGER NOT NULL, updated_at TEXT NOT NULL);
             ''')
 
     def defaults(self, body=None):
@@ -173,7 +176,9 @@ class ModelSchemes:
                 revisions.append({'revision': item['revision'], 'created_at': item['created_at'], 'note': item['note'] or '', 'summary': change_summary(previous, request)})
                 previous = request
             revisions.reverse()
+            adopted = db.execute('SELECT * FROM model_scheme_parameters WHERE scheme_id=?', (scheme_id,)).fetchone()
             return {**dict(scheme), 'latestRevision': scheme['revision'], 'revision': selected,
+                    'adoptedParameter': dict(adopted) if adopted else None,
                     'definition': json.loads(row['definition']) if row else {'context': editing.get('context', {}), 'period': {}},
                     'calculationDraft': json.loads(row['calculation_draft']) if row else {},
                     'definitionSHA256': row['definition_sha256'] if row else None,
@@ -183,6 +188,34 @@ class ModelSchemes:
                     'draftRevision': draft_version[0] if draft_version else 0,
                     'hasDraft': bool(editing), 'legacyDraft': bool(editing) and not snapshot,
                     'revisions': revisions}
+
+    def adopt_parameter(self, scheme_id, parameter_id, revision):
+        self.get(scheme_id)
+        with self.database.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old = db.execute('SELECT * FROM model_scheme_parameters WHERE scheme_id=?', (scheme_id,)).fetchone()
+            if old and old['parameter_id'] == parameter_id:
+                return dict(old)
+            if type(revision) is not int or revision != (old['revision'] if old else 0):
+                raise RuntimeError('方案采用参数已被另一页面修改；参数已入库，请刷新方案后重新采用')
+            db.execute('INSERT INTO model_scheme_parameters VALUES(?,?,?,?) ON CONFLICT(scheme_id) DO UPDATE SET parameter_id=excluded.parameter_id,revision=excluded.revision,updated_at=excluded.updated_at',
+                       (scheme_id, parameter_id, revision + 1, now()))
+        return self.get(scheme_id)['adoptedParameter']
+
+    def freeze_trial(self, request, context):
+        """A trial freezes its own conditions, without saving a scheme revision."""
+        request = copy.deepcopy(request)
+        context = copy.deepcopy(context or {})
+        selection = context.get('scheme') or request.pop('scheme', None)
+        request.pop('scheme', None)
+        if selection:
+            record = self.get(selection['id'], selection.get('revision'))
+            if record['definition'].get('context', {}).get('contextKey') != request.get('context', {}).get('contextKey'):
+                raise ValueError('试调与方案所属流域不一致')
+            context['scheme'] = {'id': record['id'], 'revision': record['revision'], 'name': record['name']}
+            request.setdefault('lineage', {}).update(schemeId=record['id'], schemeRevision=record['revision'], schemeName=record['name'])
+        request.setdefault('lineage', {})['trialContext'] = context
+        return request
 
     def rename(self, scheme_id, body):
         self.get(scheme_id)

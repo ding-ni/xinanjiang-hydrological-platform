@@ -28,6 +28,7 @@ const mainNav = [
   { path: '/data', name: 'data', label: '水文资料库', icon: Coin },
   { path: '/simulation', name: 'simulation', label: '洪水模拟', icon: TrendCharts },
   { path: '/forecast', name: 'forecast', label: '洪水预报', icon: TrendCharts },
+  { path: '/state', name:'state', label:'过程与状态',icon:Operation },
   { path: '/archive', name: 'archive', label: '计算成果', icon: FolderOpened }
 ]
 const modelNav = [

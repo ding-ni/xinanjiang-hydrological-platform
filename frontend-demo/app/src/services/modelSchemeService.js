@@ -12,6 +12,24 @@ export function schemeDefinition(request, rainfallMethod = 'reuse') {
     continuousOrigin: request.calibration?.continuousOrigin || request.period.continuousOrigin || null }
 }
 
+// A trial freezes its own inputs without committing or changing the scheme editor.
+export async function prepareTrialInputs(cal, request, api = modelApi) {
+  const saved = cal.modelSchemeRevision ? await api(`model-schemes/${cal.modelSchemeId}?revision=${cal.modelSchemeRevision}`) : null
+  const projected = schemeDefinition(request, cal.rainfallMethod)
+  const selection = definition => ({ period: definition?.period, statePolicy: definition?.statePolicy,
+    continuousOrigin: definition?.continuousOrigin, stationNetwork: definition?.inputs?.stationNetwork,
+    rainfallMethod: definition?.inputs?.rainfallMethod, idwPower: definition?.inputs?.idwPower, minimumStations: definition?.inputs?.minimumStations })
+  const rebuild = saved?.definition?.period && JSON.stringify(selection(saved.definition)) !== JSON.stringify(selection(projected))
+  if (rebuild || !saved?.definition?.period || cal.schemeDataMode === 'historical-database') {
+    request.inputs = { ...request.inputs, dataMode: 'historical-database', bundleVersionId: 'HISTORICAL_SPATIAL_V1',
+      sourceBundleVersionId: 'HISTORICAL_SPATIAL_V1', rainfallMethod: 'stationIdw', stationSourceId: 'LOCAL_OBSERVATIONS',
+      stationNetwork: rebuild && cal.schemeDataMode !== 'historical-database' ? await api('database/network') : cal.schemeStationNetwork || await api('database/network') }
+    for (const key of ['bundleManifestSHA256', 'preparationTaskId']) delete request.inputs[key]
+    for (const key of ['inputBundleVersionId', 'bundleManifestSHA256', 'preparationTaskId', 'preparationSHA256']) delete request.lineage[key]
+  }
+  return request
+}
+
 export async function saveModelScheme(cal, request, api = modelApi) {
   if (!cal.modelSchemeName?.trim()) throw new Error('请先填写方案名称')
   cal.modelSchemeName = cal.modelSchemeName.trim()
@@ -27,9 +45,6 @@ export async function saveModelScheme(cal, request, api = modelApi) {
       continuousOrigin: definition?.continuousOrigin, stationNetwork: definition?.inputs?.stationNetwork,
       rainfallMethod: definition?.inputs?.rainfallMethod, idwPower: definition?.inputs?.idwPower, minimumStations: definition?.inputs?.minimumStations })
     if (before?.period && JSON.stringify(inputSelection(before)) !== JSON.stringify(inputSelection(projected))) {
-      const { ElMessageBox } = await import('element-plus')
-      const initializationNotice = cal.sourcePlan ? ' 原交付专用初始种群仅适用于原条件；新版本改用当前初值，算法、预算、随机种子和搜索范围保留。若原河道配置仅供搜索，请在率定设置中主动采用原方案最佳参数或配置有效汇流参数。' : ''
-      await ElMessageBox.confirm('洪水、时段或资料规则已修改。保存后将从水文资料库重新准备全部选用资料，历史成果保持原条件。' + initializationNotice, '更新方案输入', { confirmButtonText: '保存修改', cancelButtonText: '继续编辑' })
       if (cal.schemeDataMode !== 'historical-database') cal.schemeStationNetwork = await api('database/network')
       cal.schemeDataMode = 'historical-database'; cal.rainfallMethod = 'stationIdw'
       cal.stationSourceId = 'LOCAL_OBSERVATIONS'; cal.schemeSourceBundleVersionId = 'HISTORICAL_SPATIAL_V1'
@@ -135,7 +150,7 @@ export function calibrationEditor(cal) {
 
 export function calibrationEditorIdentity(editor) {
   const copy = JSON.parse(JSON.stringify(editor))
-  for (const key of ['eventId', 'activeOperationId', 'activeOperationRequest']) delete copy[key]
+  for (const key of ['eventId', 'activeOperationId', 'activeOperationRequest', 'editorTrialMode']) delete copy[key]
   return JSON.stringify(copy)
 }
 

@@ -1,9 +1,9 @@
 <template>
   <section class="state-library panel" aria-label="状态库">
-    <div class="library-header"><div><h3>状态库 <small>{{ visible.length }} / {{ states.length }}</small></h3></div><div class="selection-actions"><button v-if="canImport" class="btn" :disabled="busy || disabled" @click="fileInput.click()">导入状态</button><input ref="fileInput" type="file" accept=".json,application/json" hidden @change="readImport" /><button class="btn" :disabled="busy" @click="refresh"><Refresh class="icon" />刷新</button></div></div>
+    <div class="library-header"><div><h3>状态库 <small>{{ visible.length }} / {{ states.length }}</small></h3></div><div class="selection-actions"><button v-if="canImport && !namedOnly" class="btn" :disabled="busy || disabled" @click="fileInput.click()">导入状态</button><input ref="fileInput" type="file" accept=".json,application/json" hidden @change="readImport" /><button class="btn" :disabled="busy" @click="refresh"><Refresh class="icon" />刷新</button></div></div>
     <form v-if="pendingImport" class="import-review" @submit.prevent="commitImport"><strong>状态文件 · {{ pendingImport.time?.replace('T', ' ') }}</strong><span>{{ pendingImport.gridIds?.length }} 个网格 · {{ pendingImport.context?.projectId }}</span><input v-model="importName" class="input" aria-label="导入状态名称" placeholder="状态名称（选填）" maxlength="80" :disabled="busy" /><div class="selection-actions"><button class="btn primary" :disabled="busy || disabled">{{ busy ? '正在导入…' : '确认导入' }}</button><button type="button" class="btn" :disabled="busy" @click="pendingImport = null">取消</button></div></form>
     <p v-if="importMessage" role="status">{{ importMessage }}</p>
-    <div class="library-toolbar">
+    <div class="library-toolbar"><label v-if="namedOnly"><input v-model="allNodes" type="checkbox" /> 全部计算状态</label>
       <label class="search"><Search class="icon" /><input v-model="query" class="input" aria-label="检索状态" placeholder="名称、时间或编号" type="search" /></label>
       <select v-model="strategy" class="input" aria-label="状态来源"><option value="">全部来源</option><option value="MODEL_END_STATE">模型末状态</option><option value="CONTINUOUS">从连续起点补算</option><option value="FIXED_WARMUP">降雨预热</option><option value="OBSERVED_FLOW_ANCHORED">按实测流量初始化</option><option value="IMPORTED">导入状态</option></select>
       <button class="btn favorite-filter" :class="{ selected: favorites }" :aria-pressed="favorites" @click="favorites = !favorites"><StarFilled class="icon" />收藏</button>
@@ -17,11 +17,13 @@
         <div v-if="!visible.length" class="library-empty">{{ states.length ? '没有匹配的状态' : '暂无状态' }}</div>
       </div>
       <div v-if="selected" class="state-selection">
+        <p v-if="namedOnly">{{ selected.sourceResultName || selected.source || '计算末状态' }}<template v-if="selected.processName"> · {{ selected.processName }}</template></p>
+        <button v-if="namedOnly" class="btn" @click="$emit('view')">查看过程与状态</button>
         <form class="name-editor" @submit.prevent="saveName"><input v-model="name" class="input" aria-label="状态名称" maxlength="80" :placeholder="stateName(selected, {})" :disabled="busy || disabled" /><button class="btn icon-btn" aria-label="保存状态名称" title="保存名称" :disabled="busy || disabled || name === savedName"><Check class="icon" /></button><button class="btn icon-btn" type="button" :aria-label="metadata[activeId]?.favorite ? '取消收藏状态' : '收藏状态'" :title="metadata[activeId]?.favorite ? '取消收藏' : '收藏'" :disabled="busy || disabled" @click="toggleFavorite"><StarFilled v-if="metadata[activeId]?.favorite" class="icon starred" /><Star v-else class="icon" /></button></form>
         <div class="selection-metrics"><div><span>状态时刻</span><b>{{ selected.time.slice(0, 16) }}</b></div><div><span>张力水 W/WM</span><b>{{ number(selected.means.soil, 3) }}</b></div><div><span>自由水 S</span><b>{{ number(selected.means.free, 2) }} <small>mm</small></b></div><div v-if="selected.checkpoint?.initialization?.anchor"><span>徐畈初始流量</span><b>{{ number(selected.checkpoint.initialization.anchor.flowCms, 2) }} <small>m³/s</small></b></div></div>
         <p v-if="stateScienceBlockReason(selected)" class="library-error" role="status">{{ stateScienceBlockReason(selected) }}</p>
         <div class="selection-actions"><button class="btn primary" :disabled="disabled || Boolean(stateScienceBlockReason(selected))" @click="$emit('continue')">用于续算</button><button class="btn" :disabled="busy" @click="download('json')"><Download class="icon" />状态文件</button><button class="btn" :disabled="busy" @click="download('csv')">网格 CSV</button></div>
-        <details><summary>版本信息</summary><dl><dt>状态</dt><dd>{{ selected.id }}</dd><dt>参数</dt><dd>{{ selected.parameterVersionId }}</dd><dt>输入</dt><dd>{{ selected.inputBundleVersionId }}</dd><dt>汇流</dt><dd>{{ selected.checkpoint?.routingVersionId }}</dd></dl></details>
+        <details><summary>计算条件详情</summary><dl><dt>状态</dt><dd>{{ selected.id }}</dd><dt>参数</dt><dd>{{ selected.parameterVersionId }}</dd><dt>输入</dt><dd>{{ selected.inputBundleVersionId }}</dd><dt>汇流</dt><dd>{{ selected.checkpoint?.routingVersionId }}</dd></dl></details>
       </div>
     </div>
   </section>
@@ -34,8 +36,8 @@ import { modelApi } from '@/services/modelBackendService'
 import { checkpointCsv, filterStates, stateName } from '@/services/statePresentation'
 import { stateScienceBlockReason as scientificStateBlockReason } from '@/services/scientificSelectionService'
 
-const props = defineProps({ states: { type: Array, default: () => [] }, activeId: String, disabled: Boolean, modelHash: String })
-const emit = defineEmits(['select', 'continue', 'refresh', 'imported'])
+const props = defineProps({ states: { type: Array, default: () => [] }, activeId: String, disabled: Boolean, modelHash: String, namedOnly:Boolean })
+const emit = defineEmits(['select', 'continue', 'refresh', 'imported','view'])
 const stateScienceBlockReason = state => scientificStateBlockReason(state, props.modelHash)
 const fileInput = ref(null), canImport = ref(false), pendingImport = ref(null), importName = ref(''), importMessage = ref('')
 async function readImport(event) {
@@ -62,10 +64,11 @@ async function commitImport() {
   finally { busy.value = false }
 }
 const metadata = ref({}), query = ref(''), strategy = ref(''), favorites = ref(false), busy = ref(false), error = ref(''), name = ref('')
-const selected = computed(() => props.states.find(row => row.id === props.activeId))
+const selected = computed(() => visible.value.find(row => row.id === props.activeId))
 const nodeList = ref(null)
 const savedName = computed(() => metadata.value[props.activeId]?.name || '')
-const visible = computed(() => filterStates(props.states, metadata.value, { query: query.value, strategy: strategy.value, favorites: favorites.value }))
+const allNodes=ref(false)
+const visible = computed(() => filterStates(props.states.filter(row=>!props.namedOnly||allNodes.value||Boolean(metadata.value[row.id]?.name?.trim())), metadata.value, { query: query.value, strategy: strategy.value, favorites: favorites.value }))
 function revealSelection() {
   const list = nodeList.value, active = list?.querySelector('.active')
   if (!active) return
@@ -74,6 +77,7 @@ function revealSelection() {
   else if (box.bottom > frame.bottom) list.scrollTop += box.bottom - frame.bottom
 }
 watch([() => props.activeId, visible], revealSelection, { flush: 'post' })
+watch(visible,rows=>{if(props.namedOnly && rows.length && !rows.some(row=>row.id===props.activeId))emit('select',rows[0].id)})
 watch([() => props.activeId, savedName], () => { name.value = savedName.value }, { immediate: true })
 const number = (value, digits) => Number.isFinite(value) ? value.toFixed(digits) : '—'
 async function refresh() {

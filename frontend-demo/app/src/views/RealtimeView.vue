@@ -1,5 +1,5 @@
 <template>
-  <section class="view-realtime" :class="{ 'has-product': app.hasLakeBalance }">
+  <section class="view-realtime" :class="{ 'has-product': app.hasLakeBalance }" style="container-type:inline-size">
     <div class="metric-strip">
       <div class="metric"><span>当前流域</span><b>{{ displaySummary.basinName }}</b></div>
       <div class="metric"><span>{{ app.hasLakeBalance ? '入湖控制断面' : '出口断面' }}</span><b>{{ displaySummary.targetSection }}</b></div>
@@ -504,7 +504,6 @@ function bringToForecast() {
   gap: 10px;
   width: 100%;
   height: auto;
-  min-height:100%;
   min-height: 0;
 }
 .view-realtime.has-product { grid-template-rows: 46px auto minmax(0, 1fr) auto; }
@@ -566,6 +565,7 @@ function bringToForecast() {
   grid-template-columns: 240px minmax(0, 1fr);
   gap: 10px;
   min-height: 0;
+  align-items: start;
 }
 
 .main-row.detail-open {
@@ -729,7 +729,9 @@ function bringToForecast() {
   display: grid;
   grid-template-rows: 42px minmax(0, 1fr) auto;
   min-height: 0;
+  height: clamp(440px, 65vh, 720px);
 }
+.right-detail{height:clamp(440px,65vh,720px);max-height:720px}
 
 .map-head {
   display: flex;
@@ -765,6 +767,15 @@ function bringToForecast() {
 .project-forcing { grid-template-columns: minmax(0, 2fr) minmax(160px, 1fr) 100px; }
 .project-forcing .forcing-status { grid-column: 1 / -1; }
 
+@container (max-width: 1450px) {
+  .main-row.detail-open{grid-template-columns:minmax(450px,1fr) 340px}
+  .detail-open .left-stack{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;max-height:260px;overflow:auto}
+}
+@container (max-width: 1050px) {
+  .main-row,.main-row.detail-open{grid-template-columns:220px minmax(0,1fr)}
+  .detail-open .left-stack{grid-column:auto;display:block;max-height:none}
+  .right-detail{grid-column:1/-1}
+}
 @media (max-width: 1200px) {
   .view-realtime,
   .view-realtime.has-product {

@@ -3,9 +3,9 @@
     <div class="figure-legend" aria-label="率定过程图图例">
       <span v-if="forcing.precipitation?.length"><i class="bar rain" />{{ rainfallLabel }}</span>
       <span v-if="hasTemperature"><i class="line temperature" />面平均气温</span>
-      <span><i class="line observed" />实测流量</span>
-      <span v-if="!observedOnly"><i class="line simulated" :style="{ borderColor: currentCurve.color }" />{{ currentCurve.label }}</span>
-      <span v-for="trial in visibleComparisons" :key="trial.taskId"><i class="line" :style="{ borderColor: trial.color }" />{{ trial.label }}</span>
+      <span v-if="showObserved"><i class="line observed" />实测流量</span>
+      <span v-if="!observedOnly && showCurrent"><i class="line simulated" :style="{ borderColor: currentCurve.color }" />{{ currentCurve.label }}</span>
+      <span v-for="trial in visibleComparisons" :key="trial.taskId"><i class="line" :style="{ borderColor: trial.color, borderTopStyle: trial.lineType || 'solid' }" />{{ trial.label }}</span>
       <span v-for="item in activeComponentLegends" :key="item.key"><i class="line component" :style="{ borderColor: item.color, borderTopStyle: item.style }" />{{ item.name }}</span>
     </div>
     <BaseChart class="hydrology-chart" :option="option" @select-time="index => emit('select-time', hydrograph.times?.[index] || hydrograph.forecast?.[index]?.time || hydrograph.obs?.[index]?.time)" />
@@ -23,7 +23,8 @@ const props = defineProps({
   forcing: { type: Object, required: true },
   visibleComponents: { type: Object, required: true },
   displayMode: { type: String, default: 'process' },
-  observedOnly: { type: Boolean, default: false }
+  observedOnly: { type: Boolean, default: false },
+  showObserved:{type:Boolean,default:true},showCurrent:{type:Boolean,default:true}
   ,comparisons: { type: Array, default: () => [] }
   ,currentCurve: { type: Object, default: () => ({ label: '模拟流量', color: '#D55E00' }) }
 })
@@ -37,7 +38,7 @@ const componentDefs = [
 
 const activeComponentLegends = computed(() => props.displayMode === 'components' ? componentDefs.filter((item) => props.visibleComponents[item.key]) : [])
 const hasTemperature = computed(() => !props.observedOnly && Boolean(props.forcing.temperature?.length))
-const visibleComparisons = computed(() => props.observedOnly ? [] : props.comparisons.slice(-1))
+const visibleComparisons = computed(() => props.observedOnly ? [] : props.comparisons)
 const rainfallLabel = computed(() => props.forcing.rainfallLabel || (props.forcing.controlAreaKm2 ? '控制区面积加权降雨' : '面平均降雨'))
 
 function axisTime(value) {
@@ -56,7 +57,7 @@ const option = computed(() => {
   const trialSeries = axis => visibleComparisons.value.map(trial => ({
     id: trial.taskId, name: trial.label, type: 'line', xAxisIndex: axis, yAxisIndex: axis,
     data: alignedTrialSeries(trial.hydrograph, times), connectNulls: false, showSymbol: false,
-    lineStyle: { width: 1.8, color: trial.color }, itemStyle: { color: trial.color },
+    lineStyle: { width: 1.8, color: trial.color, type: trial.lineType || 'solid' }, itemStyle: { color: trial.color },
     emphasis: { focus: 'series' }, z: 6
   }))
   const components = props.forcing.components || {}
@@ -86,7 +87,7 @@ const option = computed(() => {
       axisPointer: { link: [{ xAxisIndex: 'all' }] },
       grid: [
         { left: 64, right: 26, top: 10, height: '25%' },
-        { left: 64, right: 26, top: '42%', bottom: 45 }
+        { left: 64, right: 26, top: '42%', bottom: 72 }
       ],
       xAxis: [
         { type: 'category', gridIndex: 0, boundaryGap: true, data: times, axisLabel: { show: false }, axisTick: { show: false } },
@@ -102,8 +103,8 @@ const option = computed(() => {
       ],
       series: [
         { name: rainfallLabel.value, type: 'bar', xAxisIndex: 0, yAxisIndex: 0, data: props.forcing.precipitation || [], barMaxWidth: 8, itemStyle: { color: '#4C9BD3' } },
-        { name: '实测流量', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: observed, showSymbol: false, connectNulls: false, lineStyle: { width: 2.2, color: '#1B365D' }, itemStyle: { color: '#1B365D' } },
-        ...(!props.observedOnly ? [{ name: props.currentCurve.label, type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: simulated, connectNulls: false, showSymbol: false, lineStyle: { width: 2.3, type: 'dashed', color: props.currentCurve.color }, itemStyle: { color: props.currentCurve.color } }] : []),
+        { name: '实测流量', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: props.showObserved?observed:[], showSymbol: false, connectNulls: false, lineStyle: { width: 2.2, color: '#1B365D' }, itemStyle: { color: '#1B365D' } },
+        ...(!props.observedOnly && props.showCurrent ? [{ name: props.currentCurve.label, type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: simulated, connectNulls: false, showSymbol: false, lineStyle: { width: 2.3, type: 'dashed', color: props.currentCurve.color }, itemStyle: { color: props.currentCurve.color } }] : []),
         ...trialSeries(1)
       ]
     }
@@ -134,7 +135,7 @@ const option = computed(() => {
     grid: [
       { left: 64, right: 30, top: 12, height: '18%' },
       { left: 64, right: 30, top: '25%', height: '15%' },
-      { left: 64, right: 30, top: '47%', bottom: 48 }
+      { left: 64, right: 30, top: '47%', bottom: 72 }
     ],
     xAxis: [
       { type: 'category', gridIndex: 0, boundaryGap: true, data: times, axisLabel: { show: false }, axisTick: { show: false }, axisLine: { lineStyle: { color: '#aebdca' } } },
@@ -153,8 +154,8 @@ const option = computed(() => {
     series: [
       { name: rainfallLabel.value, type: 'bar', xAxisIndex: 0, yAxisIndex: 0, data: props.forcing.precipitation || [], barMaxWidth: 8, itemStyle: { color: '#4C9BD3' }, emphasis: { itemStyle: { color: '#2377ae' } }, z: 2 },
       { name: '面平均气温', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: props.forcing.temperature || [], showSymbol: false, lineStyle: { width: 1.9, color: '#D55E00' }, markLine: { silent: true, symbol: 'none', lineStyle: { color: '#8798a5', type: 'dashed', width: 1 }, label: { formatter: '0 °C', color: '#657786', fontSize: 9 }, data: [{ yAxis: 0 }] }, z: 4 },
-      { name: '实测流量', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: observed, connectNulls: false, showSymbol: false, symbol: 'circle', symbolSize: 4, lineStyle: { width: 2.2, color: '#1B365D' }, itemStyle: { color: '#1B365D' }, emphasis: { focus: 'series' }, z: 8 },
-      { name: props.currentCurve.label, type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: simulated, connectNulls: false, showSymbol: false, lineStyle: { width: 2.3, type: 'dashed', color: props.currentCurve.color }, emphasis: { focus: 'series' }, z: 7 },
+      { name: '实测流量', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: props.showObserved?observed:[], connectNulls: false, showSymbol: false, symbol: 'circle', symbolSize: 4, lineStyle: { width: 2.2, color: '#1B365D' }, itemStyle: { color: '#1B365D' }, emphasis: { focus: 'series' }, z: 8 },
+      ...(!props.observedOnly && props.showCurrent ? [{ name: props.currentCurve.label, type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: simulated, connectNulls: false, showSymbol: false, lineStyle: { width: 2.3, type: 'dashed', color: props.currentCurve.color }, emphasis: { focus: 'series' }, z: 7 }] : []),
       ...componentSeries,
       ...trialSeries(2)
     ]
@@ -164,7 +165,7 @@ const option = computed(() => {
 
 <style scoped>
 .hydrology-figure { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); width: 100%; height: 100%; min-height: 0; min-width: 0; }
-.figure-legend { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px 14px; min-height: 29px; padding: 3px 7px 5px; border-bottom: 1px solid #e2e9ee; color: #344f63; font-size: 10px; overflow-x: auto; }
+.figure-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; min-height: 29px; padding: 3px 7px 5px; border-bottom: 1px solid #e2e9ee; color: #344f63; font-size: 12px; }
 .figure-legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .figure-legend i { display: inline-block; flex: 0 0 auto; }
 .figure-legend .bar { width: 12px; height: 8px; background: #4c9bd3; }

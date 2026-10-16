@@ -48,6 +48,21 @@ from xaj_routing.control_area import contributing_grid_areas
 from xaj_routing.io import read_topology_json
 
 
+def driving_digest(event, evaluation, grid_ids):
+    """Actual antecedent forcing for this process, independent of parameters."""
+    end = event.times.searchsorted(evaluation.end, side='right')
+    digest = hashlib.sha256()
+    digest.update(json.dumps({'times': [str(value) for value in event.times[:end]],
+                              'start': str(evaluation.start), 'end': str(evaluation.end),
+                              'grids': list(grid_ids)}, sort_keys=True).encode('utf-8'))
+    for values in (event.precip[:end], event.pet_mm_h[:end], evaluation.observed.to_numpy()):
+        array = np.asarray(values, dtype='<f8').copy(order='C')
+        array[np.isnan(array)] = np.nan
+        digest.update(str(array.shape).encode('ascii'))
+        digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
 class ModelJob:
     def __init__(self, folder, publish_parameters=False):
         self.job_started = time.perf_counter()
@@ -645,7 +660,7 @@ class ModelJob:
                     loss = evaluation_cache[key]
                     return loss
                 shared = simulate(timeline, params) if timeline is not None else None
-                frame = pd.DataFrame([kernels.metrics(e.observed, (shared if shared is not None else simulate(e, params)).loc[e.start:e.end]) for e in events if e.group == "CALIBRATION"])
+                frame = pd.DataFrame([kernels.metrics(e.observed, (shared if shared is not None else simulate(e, params)).loc[e.start:e.end]) for e in events if e.group == "CALIBRATION" or self.request['calibration'].get('evaluationMode') == 'manual'])
                 loss = kernels.objective_loss(frame, terms)
                 evaluation_cache[key] = loss
                 if len(evaluation_cache) > 4096:
@@ -726,6 +741,7 @@ class ModelJob:
         version = f"PARAM-{self.task_id}"
         parameters = {k.split(".")[-1]: v for k, v in kernels.resolved_runoff_parameters(runoff_best).items()}
         result = {"parameterVersionId": version, "bestParameters": parameters, "calibrationMode": self.period["mode"],
+                  'processDrivingSHA256': {event.event_id: driving_digest(timeline if timeline is not None else by_id[membership[event.event_id]], event, self.grid_ids) for event in views},
                   "evaluationMode": self.request['calibration'].get('evaluationMode', 'automatic'),
                   'simulationOnly': self.request['calibration'].get('simulationOnly', False),
                   "periods": self.period.get("windows"), "periodQuality": audits if continuous else None,

@@ -52,6 +52,10 @@ def continuous_windows(period):
         raise ValueError('评价期须按率定、验证、独立检验的时间顺序排列')
     if period.get("initialStateVersionId"):
         raise ValueError("连续率定须为每组候选参数重新演算状态，不使用已有末状态")
+    if period.get('manualProcessId'):
+        windows = [row for row in windows if row['id'] == period['manualProcessId']]
+        if not windows:
+            raise ValueError('请选择有效的评价期')
     if "windows" in period and period["windows"] != windows:
         raise ValueError("冻结时段与率定设置不一致")
     return windows
@@ -180,6 +184,8 @@ def normalize_request(request, catalog, runtime_root=None):
         evaluation_mode = request['calibration'].get('evaluationMode', 'automatic')
         if 'simulationOnly' in request['calibration'] and (request['calibration']['simulationOnly'] is not True or evaluation_mode != 'manual' or period.get('mode') != 'event'):
             raise ValueError('场次模拟须使用指定参数与场次时段')
+        if period.get('manualProcessId') and evaluation_mode != 'manual':
+            raise ValueError('单评价期试算仅用于人工试调')
         if evaluation_mode not in {'automatic', 'manual'}:
             raise ValueError('请选择自动率定或人工试调')
         if evaluation_mode == 'manual':
@@ -231,6 +237,15 @@ def normalize_request(request, catalog, runtime_root=None):
         else:
             validate_event_period(period, request, case, runtime_root)
         objectives = request["calibration"].get("objectives", {})
+        if evaluation_mode == 'manual':
+            # A fixed simulation needs no search objective configuration. Keep
+            # valid user metrics; incomplete search drafts cannot block it.
+            from calibration_objectives import objective_terms
+            try:
+                objective_terms(objectives)
+            except (ValueError, TypeError, AttributeError):
+                objectives = {'metrics': {'nse': True}, 'weights': {'nse': 1}}
+                request['calibration']['objectives'] = objectives
         for key in ("metrics", "weights"):
             if not isinstance(objectives.get(key), dict):
                 raise ValueError(f"calibration.objectives.{key} 必须为 JSON 对象")
@@ -348,7 +363,7 @@ def validate_event_period(period, request, case, runtime_root=None):
                 raise ValueError("场次窗口与已登记洪水资料不一致；请先登记修订版本")
             if start >= end:
                 raise ValueError("场次开始必须早于结束")
-        if not any(row["purpose"] == "率定" for row in rows):
+        if request['calibration'].get('evaluationMode', 'automatic') != 'manual' and not any(row["purpose"] == "率定" for row in rows):
             raise ValueError("至少需要一场率定或人工试算洪水")
         if request['calibration'].get('evaluationMode', 'automatic') != 'manual' and not any(row["purpose"] == "验证" for row in rows):
             raise ValueError("自动率定至少需要一场验证洪水")

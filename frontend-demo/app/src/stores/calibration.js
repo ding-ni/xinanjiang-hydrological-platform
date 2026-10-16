@@ -759,10 +759,10 @@ export const useCalibrationStore = defineStore('calibration', {
       this.dirty = true; this.running = false; this.runStatus = 'needs-run'; this.runMessage = ''
       this.saveCurrentWorkspace()
     },
-    async runOperationRequest(request, operation = 'calibration') {
-      this.running = true; this.dirty = false; this.runStatus = 'running'; this.runMessage = ''
+    async runOperationRequest(request, operation = 'calibration', options = {}) {
+      this.running = true; if(operation!=='manualTrial')this.dirty = false; this.runStatus = 'running'; this.runMessage = ''
       try {
-        const task = await modelApi('operations', { method: 'POST', body: { operation, requestId: request.requestId, request, rainfallMethod: this.rainfallMethod }, timeoutMs: 60000 })
+        const task = await modelApi('operations', { method: 'POST', body: { operation, requestId: request.requestId, request, rainfallMethod: this.rainfallMethod, ...options }, timeoutMs: 60000 })
         this.activeOperationId = task.operationId || task.taskId || task.id
         this.activeOperationRequest = clonePlain(request); this.operationProgress = task
         this.saveCurrentWorkspace()
@@ -800,10 +800,8 @@ export const useCalibrationStore = defineStore('calibration', {
           const current = workspace()
           if (current) {
             current.activeOperationId = null; current.activeOperationRequest = null; current.operationProgress = task
-            if (!current.dirty && result.bestParameters) {
-              current.params = { ...result.bestParameters }
-              if (result.routingCandidate?.routingVersionId) current.schemeRoutingVersionId = result.routingCandidate.routingVersionId
-            }
+            // Completed curves own their parameters. Adopting a named set or
+            // replacing automatic initial values is always an explicit action.
           }
           if (this.contextKey === key) this.saveCurrentWorkspace()
           return { ok: true, result, task }

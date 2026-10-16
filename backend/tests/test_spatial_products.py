@@ -32,7 +32,8 @@ class SpatialProductsTests(unittest.TestCase):
         with patch('server.ThreadPoolExecutor'):
             cls.manager = TaskManager(cls.root / 'tasks')
         cls.products = cls.manager.products
-        cls.task = cls.manager.submit({'runType': 'spatialExport', 'requestId': 'spatial-test'})
+        cls.task = cls.manager.submit({'runType': 'spatialExport', 'requestId': 'spatial-test',
+                                      'inputs': {'bundleVersionId': 'HISTORICAL_SPATIAL_V1'}})
         cls.folder = cls.root / 'tasks' / cls.task['taskId']
         cls.request = read_json(cls.folder / 'request.json')
         cls.result = generate(cls.folder, cls.request, cls.products)
@@ -139,7 +140,16 @@ class SpatialProductsTests(unittest.TestCase):
         clone = self.manager.clone(self.task['taskId'])
         self.assertEqual(clone['runConfig']['spatialEvidence'], self.request['spatialEvidence'])
         self.assertEqual(clone['lineage']['sourceTaskId'], self.task['taskId'])
-        self.assertEqual(self.manager.submit({'runType': 'spatialExport', 'requestId': 'spatial-test'})['taskId'], self.task['taskId'])
+        self.assertEqual(self.manager.submit({'runType': 'spatialExport', 'requestId': 'spatial-test',
+                                             'inputs': {'bundleVersionId': 'HISTORICAL_SPATIAL_V1'}})['taskId'], self.task['taskId'])
+
+    def test_spatial_only_request_does_not_require_hydrological_coverage(self):
+        from contracts import freeze_input_selection
+        self.assertEqual(self.request['lineage']['inputBundleVersionId'], 'HISTORICAL_SPATIAL_V1')
+        self.assertEqual(self.request['inputs']['bundleManifestSHA256'], self.request['lineage']['inputBundleManifestSHA256'])
+        self.assertNotIn('forcingVersion', self.request['lineage'])
+        with self.assertRaisesRegex(ValueError, '先按方案准备'):
+            freeze_input_selection({'inputs': {'bundleVersionId': 'HISTORICAL_SPATIAL_V1'}}, self.products)
 
     def test_http_success_archived_and_unfinished_task_gates(self):
         for status in ('completed', 'archived'):

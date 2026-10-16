@@ -68,7 +68,7 @@ const titleMap = {
   diagnostics: '进阶诊断',
   realtime: '雨水情',
   forecast: '洪水预报',
-  state: '模拟状态',
+  state: '过程与状态',
   calibration: '参数率定',
   simulation: '洪水模拟',
   archive: '计算成果',

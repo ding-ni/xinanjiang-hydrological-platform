@@ -61,7 +61,9 @@
       <section v-else-if="tab === 'events'" class="event-section">
         <div class="section-toolbar"><h2>历史洪水目录 <small>{{ filteredEvents.length }} 场</small></h2><label class="search-box"><Search /><input v-model="eventSearch" placeholder="年份或场次编号" aria-label="检索洪水场次" /></label></div>
         <p class="section-intro">选择洪水查看实测雨量与流量，或带入模拟、建立率定方案。</p>
-        <div class="records-scroll"><table class="table"><thead><tr><th>场次编号</th><th>开始</th><th>结束</th><th>历时</th><th>洪峰流量（m³/s）</th><th>操作</th></tr></thead><tbody><tr v-for="event in filteredEvents" :key="event.eventId"><td><b>{{ event.floodCode || event.eventId }}</b></td><td>{{ event.start?.replace('T',' ') }}</td><td>{{ event.end?.replace('T',' ') }}</td><td>{{ event.durationHours }} h</td><td class="numeric">{{ value(event.observedInputs?.observedPeakFlowM3s) }}</td><td class="event-actions"><button class="text-action" @click="viewEvent(event)">查看实测过程</button><RouterLink class="text-action" :to="{path:'/simulation',query:{event:event.eventId}}">带入模拟</RouterLink><RouterLink class="text-action" :to="{path:'/calibration',query:{event:event.eventId}}">新建方案</RouterLink></td></tr></tbody></table></div>
+        <p v-if="eventYear || eventMin!=='' || eventMax!=='' || sortKey" class="section-intro">{{ eventYear ? eventYear+'年 · ' : '' }}洪峰 {{ eventMin===''?'不限':eventMin }} 至 {{ eventMax===''?'不限':eventMax }} m³/s <button class="text-action" @click="clearEventFilters">清除筛选与排序</button></p>
+        <div class="records-scroll"><table class="table"><thead><tr><th>场次编号</th><th><FloodColumnHeader label="开始" column="start" :sort-key="sortKey" :direction="sortDirection" filter @sort="setEventSort"><label>年份<select v-model="eventYear" class="input"><option value="">全部年份</option><option v-for="year in eventYears" :key="year">{{ year }}</option></select></label></FloodColumnHeader></th><th><FloodColumnHeader label="结束" column="end" :sort-key="sortKey" :direction="sortDirection" @sort="setEventSort" /></th><th><FloodColumnHeader label="历时" column="duration" :sort-key="sortKey" :direction="sortDirection" @sort="setEventSort" /></th><th><FloodColumnHeader label="洪峰流量（m³/s）" column="peak" :sort-key="sortKey" :direction="sortDirection" filter @sort="setEventSort"><label>下限<input v-model="eventMin" class="input" type="number" min="0" /></label><label>上限<input v-model="eventMax" class="input" type="number" min="0" /></label></FloodColumnHeader></th><th>操作</th></tr></thead><tbody><tr v-for="event in pagedEvents" :key="event.eventId"><td><b>{{ event.floodCode || event.eventId }}</b></td><td>{{ event.start?.replace('T',' ') }}</td><td>{{ event.end?.replace('T',' ') }}</td><td>{{ event.durationHours }} h</td><td class="numeric">{{ value(event.observedInputs?.observedPeakFlowM3s) }}</td><td class="event-actions"><button class="text-action" @click="viewEvent(event)">查看实测过程</button><RouterLink class="text-action" :to="{path:'/simulation',query:{event:event.eventId}}">带入模拟</RouterLink><RouterLink class="text-action" :to="{path:'/calibration',query:{event:event.eventId}}">新建方案</RouterLink></td></tr></tbody></table></div>
+        <footer class="table-heading"><span>{{ eventPage }} / {{ eventPages }} 页 · 每页10场</span><div><button class="btn" :disabled="eventPage<=1" @click="eventPage--">上一页</button><button class="btn" :disabled="eventPage>=eventPages" @click="eventPage++">下一页</button></div></footer>
       </section>
 
 
@@ -77,6 +79,8 @@ import { useAppStore } from '@/stores/app'
 import { useMonitorStore } from '@/stores/monitor'
 import { modelApi, modelBackendEnabled } from '@/services/modelBackendService'
 import BaseChart from '@/components/charts/BaseChart.vue'
+import FloodColumnHeader from '@/components/model/FloodColumnHeader.vue'
+import { filterFloodRows, sortFloodRows } from '@/services/floodTablePresentation'
 import { initialObservationWindow, observationHour, observationTime } from '@/services/observationWindowPresentation.js'
 
 const app = useAppStore()
@@ -105,7 +109,14 @@ const timeLabel = v => String(v || '').replace('T', ' ')
 const queryKey = computed(() => [stationId.value, variable.value, start.value, end.value, sourceId.value].join('|'))
 const queryChanged = computed(() => resultQuery.value !== queryKey.value)
 const filteredStations = computed(() => stations.value.filter(s => s.variable === variable.value && `${s.name}${s.id}`.includes(stationSearch.value.trim())))
-const filteredEvents = computed(() => events.value.filter(e => `${e.eventId}${e.floodCode}${e.start}`.includes(eventSearch.value.trim())))
+const eventYear=ref(''),eventMin=ref(''),eventMax=ref(''),sortKey=ref(''),sortDirection=ref(''),eventPage=ref(1)
+const eventYears=computed(()=>[...new Set(events.value.map(row=>String(row.start).slice(0,4)))].sort().reverse())
+const filteredEvents = computed(() => sortFloodRows(filterFloodRows(events.value.filter(e => `${e.eventId}${e.floodCode}${e.start}`.includes(eventSearch.value.trim())),{year:eventYear.value,minimum:eventMin.value,maximum:eventMax.value}),sortKey.value,sortDirection.value))
+const eventPages=computed(()=>Math.max(1,Math.ceil(filteredEvents.value.length/10)))
+const pagedEvents=computed(()=>filteredEvents.value.slice((eventPage.value-1)*10,eventPage.value*10))
+function setEventSort(key,direction){sortKey.value=direction?key:'';sortDirection.value=direction}
+function clearEventFilters(){eventYear.value='';eventMin.value='';eventMax.value='';sortKey.value='';sortDirection.value=''}
+watch([eventSearch,eventYear,eventMin,eventMax,sortKey,sortDirection],()=>eventPage.value=1)
 const pageCount = computed(() => Math.max(1, Math.ceil((result.value?.series.length || 0) / 24)))
 const pagedSeries = computed(() => result.value?.series.slice(page.value * 24, (page.value + 1) * 24) || [])
 const chartOption = computed(() => {

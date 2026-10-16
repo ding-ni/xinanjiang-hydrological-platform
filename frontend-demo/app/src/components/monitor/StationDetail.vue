@@ -152,7 +152,7 @@ const rainTimeRange = computed(() => {
 const rainOption = computed(() => {
   const series = rainSeries.value
   return {
-    grid: { left: 36, right: 40, top: 36, bottom: 28 },
+    grid: { left: 54, right: 54, top: 60, bottom: 60 },
     tooltip: {
       trigger: 'axis',
       confine: true,
@@ -162,23 +162,23 @@ const rainOption = computed(() => {
       textStyle: { fontSize: 12, color: '#203657' },
       axisPointer: { type: 'line' }
     },
-    legend: { top: 0, right: 0, textStyle: { fontSize: 11 } },
+    legend: { top: 0, left: 'center', textStyle: { fontSize: 12 }, itemGap: 10 },
     xAxis: {
       type: 'category',
-      data: series.map((d) => d.label),
+      data: series.map((d) => d.time || d.label),
       axisLabel: { fontSize: 10, color: '#6a7c95', interval: Math.ceil(series.length / 6) }
     },
     yAxis: [
       {
         type: 'value',
-        name: 'mm',
+        name: 'mm',nameLocation:'middle',nameGap:36,
         nameTextStyle: { fontSize: 10 },
         axisLabel: { fontSize: 10 },
         splitLine: { lineStyle: { color: '#e8f0fa' } }
       },
       {
         type: 'value',
-        name: '累计',
+        name: '累计 mm',nameLocation:'middle',nameGap:36,
         nameTextStyle: { fontSize: 10 },
         axisLabel: { fontSize: 10 },
         splitLine: { show: false }
@@ -209,15 +209,15 @@ const rainOption = computed(() => {
 })
 
 const flowOption = computed(() => ({
-  grid: { left: 48, right: 18, top: 30, bottom: 32 },
+  grid: { left: 54, right: 18, top: 36, bottom: 60 },
   tooltip: { trigger: 'axis', confine: true, valueFormatter: (value) => value == null ? '缺测' : `${value} m³/s` },
-  xAxis: { type: 'category', data: hydroSeries.value.map((row) => row.label), axisLabel: { fontSize: 10, interval: Math.ceil(hydroSeries.value.length / 5) } },
+  xAxis: { type: 'category', data: hydroSeries.value.map((row) => row.time || row.label), axisLabel: { hideOverlap: true } },
   yAxis: { type: 'value', name: 'm³/s', axisLabel: { fontSize: 10 } },
   series: [{ name: isModelQC.value ? '整编流量' : '实测流量', type: 'line', data: hydroSeries.value.map((row) => row.flow), smooth: false, connectNulls: false, showSymbol: false, lineStyle: { color: '#3b7ddd', width: 2 } }]
 }))
 const levelOption = computed(() => ({
-  grid: { left: 48, right: 18, top: 30, bottom: 32 }, tooltip: { trigger: 'axis', confine: true },
-  xAxis: { type: 'category', data: levelSeries.value.map(row => row.label), axisLabel: { fontSize: 10, hideOverlap: true } },
+  grid: { left: 54, right: 18, top: 36, bottom: 60 }, tooltip: { trigger: 'axis', confine: true },
+  xAxis: { type: 'category', data: levelSeries.value.map(row => row.time || row.label), axisLabel: { hideOverlap: true } },
   yAxis: { type: 'value', name: 'm', scale: true },
   series: [{ name: '实测水位', type: 'line', data: levelSeries.value.map(row => row.level), smooth: false, connectNulls: false, showSymbol: false, lineStyle: { color: '#177c72', width: 2 } }]
 }))

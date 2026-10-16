@@ -200,7 +200,7 @@
 
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import { useForecastStore } from '@/stores/forecast'
 import { useStateStore } from '@/stores/state'
@@ -226,6 +226,7 @@ const calibration = useCalibrationStore()
 const app = useAppStore()
 const tasks = useTasksStore()
 const router = useRouter()
+const route = useRoute()
 const isModelState = computed(() => state.activeInitialState.resultSource === 'model-backend')
 const isModelWorkspace = computed(() => isModelState.value || (app.usesModelBackend && app.basinId !== 'selinco'))
 const replayCatalog = ref(null)
@@ -564,7 +565,7 @@ async function refreshStates() {
   const context = app.contextKey
   try {
     const response = await modelApi('states')
-    if (app.contextKey === context) state.hydrateBackendStates(response.states)
+    if (app.contextKey === context) {state.hydrateBackendStates(response.states);if(route.query.state&&state.domainInitialStates.some(row=>row.id===route.query.state))loadNode(String(route.query.state))}
   } catch (failure) { ElMessage.error(failure.message) }
 }
 

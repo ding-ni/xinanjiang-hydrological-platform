@@ -46,7 +46,25 @@ def normalize_spatial(request, products):
         raise ValueError('空间成果对应南安溪 1 km 模型')
     if not isinstance(request.get('inputs', {}), dict) or set(request.get('inputs', {})) - {'bundleVersionId', 'bundleManifestSHA256'}:
         raise ValueError('空间成果只能选择登记输入版本')
-    request, bundle = freeze_input_selection(request, products)
+    from input_products import HISTORICAL_SPATIAL_ID
+    if request.get('inputs', {}).get('bundleVersionId') == HISTORICAL_SPATIAL_ID:
+        bundle = products.resolve(HISTORICAL_SPATIAL_ID)
+        # Spatial export needs no rainfall coverage. General model computation
+        # continues to reject this preparation-only spatial definition.
+        digest = bundle['manifestSHA256']
+        if request['inputs'].get('bundleManifestSHA256', digest) != digest:
+            raise ValueError('请求空间配置摘要与后端登记不一致')
+        request['inputs']['bundleManifestSHA256'] = digest
+        lineage = request.setdefault('lineage', {})
+        if not isinstance(lineage, dict):
+            raise ValueError('空间来源记录须为对象')
+        for key, value in {'inputBundleVersionId': HISTORICAL_SPATIAL_ID,
+                           'inputBundleManifestSHA256': digest}.items():
+            if lineage.get(key, value) != value:
+                raise ValueError('请求空间来源与后端登记不一致')
+            lineage[key] = value
+    else:
+        request, bundle = freeze_input_selection(request, products)
     evidence = source_evidence(bundle)
     if request.get('spatialEvidence', evidence) != evidence:
         raise ValueError('空间来源已改变，请重新生成成果')

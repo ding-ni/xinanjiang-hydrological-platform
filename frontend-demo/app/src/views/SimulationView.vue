@@ -1,6 +1,6 @@
 <template>
   <section class="simulation-view">
-    <header class="page-heading"><h2>{{ continuing ? '继续模拟' : '洪水模拟' }}</h2><div><RouterLink to="/state/advanced" class="btn">状态库</RouterLink> <RouterLink to="/archive" class="btn">计算成果</RouterLink></div></header>
+    <header class="page-heading"><h2>{{ continuing ? '继续模拟' : '洪水模拟' }}</h2><div><RouterLink to="/state?tab=library" class="btn">状态库</RouterLink> <RouterLink to="/archive" class="btn">计算成果</RouterLink></div></header>
     <div class="simulation-layout">
       <section class="panel panel-pad conditions">
         <form @submit.prevent="run">
@@ -24,7 +24,7 @@
         <section v-if="!continuing && mode === 'event'" class="panel panel-pad flood-picker">
           <div class="flood-heading"><h3>选择洪水</h3><span>{{ floods.length }} 场</span></div>
           <div class="flood-filters"><select v-model="year" class="input" aria-label="洪水年份"><option value="">全部年份</option><option v-for="value in years" :key="value" :value="value">{{ value }} 年</option></select><input v-model="search" class="input" type="search" placeholder="洪水名称或日期" aria-label="检索洪水" /><button class="btn" type="button" :disabled="running || !filteredFloods.length" @click="selectVisible">选择当前列表</button></div>
-          <div class="flood-table"><table class="table"><thead><tr><th>选用</th><th>洪水</th><th>开始</th><th>结束</th><th>实测洪峰 · m³/s</th></tr></thead><tbody><tr v-for="row in filteredFloods" :key="row.id" :class="{selected:selectedIds.includes(row.id)}"><td><input v-model="selectedIds" type="checkbox" :value="row.id" :aria-label="`选用${row.name || row.id}`" :disabled="running" /></td><td>{{ row.name || row.id }}</td><td>{{ hourText(row.start) }}</td><td>{{ hourText(row.end) }}</td><td>{{ number(row.observedPeak ?? row.observedPeakFlowM3s) }}</td></tr><tr v-if="!filteredFloods.length"><td colspan="5" class="empty-cell">{{ loading ? '正在读取洪水目录…' : '暂无匹配洪水' }}</td></tr></tbody></table></div>
+          <p v-if="year || search || peakMinimum!=='' || peakMaximum!=='' || sortKey" class="filter-summary">匹配 {{ filteredFloods.length }} 场 <button class="text-button" @click="year='';search='';peakMinimum='';peakMaximum='';sortKey='';sortDirection=''">清除筛选和排序</button></p><div class="flood-table"><table class="table"><thead><tr><th>选用</th><th>洪水</th><th><FloodColumnHeader label="开始" column="start" :sort-key="sortKey" :direction="sortDirection" filter @sort="sortFloods"><select v-model="year" class="input"><option value="">全部年份</option><option v-for="value in years" :key="value" :value="value">{{ value }} 年</option></select></FloodColumnHeader></th><th><FloodColumnHeader label="结束" column="end" :sort-key="sortKey" :direction="sortDirection" @sort="sortFloods" /></th><th><FloodColumnHeader label="历时 · h" column="duration" :sort-key="sortKey" :direction="sortDirection" @sort="sortFloods" /></th><th><FloodColumnHeader label="实测洪峰 · m³/s" column="peak" :sort-key="sortKey" :direction="sortDirection" filter @sort="sortFloods"><input v-model="peakMinimum" class="input" type="number" placeholder="洪峰下限" /><input v-model="peakMaximum" class="input" type="number" placeholder="洪峰上限" /></FloodColumnHeader></th></tr></thead><tbody><tr v-for="row in pagedFloods" :key="row.id" :class="{selected:selectedIds.includes(row.id)}"><td><input v-model="selectedIds" type="checkbox" :value="row.id" :aria-label="`选用${row.name || row.id}`" :disabled="running" /></td><td>{{ row.name || row.id }}</td><td>{{ hourText(row.start) }}</td><td>{{ hourText(row.end) }}</td><td>{{ number(row.durationHours ?? (Date.parse(row.end)-Date.parse(row.start))/3600000) }}</td><td>{{ number(row.observedPeak ?? row.observedPeakFlowM3s) }}</td></tr><tr v-if="!filteredFloods.length"><td colspan="6" class="empty-cell">{{ loading ? '正在读取洪水目录…' : '暂无匹配洪水' }}</td></tr></tbody></table></div><footer class="flood-filters"><span>第 {{ floodPage }} / {{ floodPages }} 页</span><button class="btn" :disabled="floodPage===1" @click="floodPage--">上一页</button><button class="btn" :disabled="floodPage>=floodPages" @click="floodPage++">下一页</button></footer>
         </section>
         <DailyResultPanel :operation="operation" :result="result" :task-id="result?.primaryTaskId || result?.sourceTaskId" />
       </div>
@@ -42,6 +42,8 @@ import { useDailyOperation } from '@/composables/useDailyOperation'
 import DailyOperationProgress from '@/components/model/DailyOperationProgress.vue'
 import DailyResultPanel from '@/components/model/DailyResultPanel.vue'
 import NumericReadiness from '@/components/model/NumericReadiness.vue'
+import FloodColumnHeader from '@/components/model/FloodColumnHeader.vue'
+import { filterFloodRows, sortFloodRows } from '@/services/floodTablePresentation'
 const app = useAppStore(), route = useRoute()
 const loading = ref(false), parameters = ref([]), floods = ref([]), parameterSchemeId = ref(''), selectedIds = ref([])
 const mode = ref('event'), startTime = ref(''), endTime = ref(''), year = ref(''), search = ref(''), pageError = ref('')
@@ -51,7 +53,12 @@ const { operation, result, error, submitting, inspect, submit, cancel, clear } =
 const running = computed(() => submitting.value || activeOperation(operation.value))
 const selectedEvents = computed(() => floods.value.filter(row=>selectedIds.value.includes(row.id)))
 const years = computed(() => [...new Set(floods.value.map(row=>String(row.start).slice(0,4)))].sort((a,b)=>b.localeCompare(a)))
-const filteredFloods = computed(() => floods.value.filter(row=>(!year.value || String(row.start).startsWith(year.value)) && (!search.value || `${row.name || row.id} ${row.start} ${row.end}`.includes(search.value))))
+const sortKey=ref(''),sortDirection=ref(''),peakMinimum=ref(''),peakMaximum=ref(''),floodPage=ref(1)
+const filteredFloods = computed(() => sortFloodRows(filterFloodRows(floods.value.filter(row=>(!search.value || `${row.name || row.id} ${row.start} ${row.end}`.includes(search.value))),{year:year.value,minimum:peakMinimum.value,maximum:peakMaximum.value}),sortKey.value,sortDirection.value))
+const floodPages=computed(()=>Math.max(1,Math.ceil(filteredFloods.value.length/10)))
+const pagedFloods=computed(()=>filteredFloods.value.slice((floodPage.value-1)*10,floodPage.value*10))
+function sortFloods(key,direction){sortKey.value=direction?key:'';sortDirection.value=direction}
+watch([year,search,sortKey,sortDirection,peakMinimum,peakMaximum],()=>floodPage.value=1)
 const canRun = computed(() => !loading.value && !running.value && (continuing.value ? Boolean(endTime.value) : Boolean(parameterSchemeId.value) && (mode.value==='event' ? selectedEvents.value.length>0 : Boolean(startTime.value && endTime.value))))
 const number = value => value != null && Number.isFinite(Number(value)) ? Number(value).toFixed(1) : '—'
 async function renameParameter(){
@@ -64,8 +71,10 @@ watch(()=>[app.contextKey,route.query.source,route.query.operation,route.query.c
   const token=++revision, key=app.contextKey; clear(); loading.value=true; pageError.value=''; floods.value=[]; parameters.value=[]; selectedIds.value=[]; sourceEnd.value=''
   const saved=readDailySelection(key,'simulation'); mode.value=saved.mode||'event'; startTime.value=saved.startTime||''; endTime.value=saved.endTime||''
   try {
-    const [named,events]=await Promise.all([dailyClient.parameters(),dailyClient.floods(app.activeContext)])
+    const sources=await Promise.allSettled([dailyClient.parameters(),dailyClient.floods(app.activeContext)])
     if(token!==revision) return
+    const named=sources[0].status==='fulfilled'?sources[0].value:[],events=sources[1].status==='fulfilled'?sources[1].value:[]
+    pageError.value=sources.filter(row=>row.status==='rejected').map(row=>row.reason.message).join('；')
     parameters.value=named.filter(row=>belongsToOperationContext(row,key)); floods.value=events.map(row=>({...row,id:row.id||row.eventId,start:row.start||row.startTime,end:row.end||row.endTime}))
     parameterSchemeId.value=rememberedParameter(parameters.value, route.query.parameter || readDailySelection(key,'parameter').id || saved.parameterSchemeId)
     selectedIds.value=(saved.selectedIds||[]).filter(id=>floods.value.some(row=>row.id===id))

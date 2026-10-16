@@ -31,8 +31,8 @@
       </aside>
 
       <main class="panel panel-pad">
-        <RoutingDefaults v-if="tab==='河网与汇流'" />
-        <section v-if="tab==='状态库'"><h2>状态库</h2><p class="hint">保存计算成果的完整末状态，用于继续模拟。</p><RouterLink class="btn primary" to="/state/advanced">打开状态库</RouterLink></section>
+        <RoutingDefaults v-if="tab==='河网与断面'" />
+        <section v-if="tab==='状态库'"><h2>状态库</h2><p class="hint">保存计算成果的完整末状态，用于继续模拟。</p><RouterLink class="btn primary" to="/state?tab=library">打开状态库</RouterLink></section>
         <template v-if="tab === '水雨情资料'">
           <div class="panel-title-row">
             <h3 class="panel-title">水雨情资料</h3>
@@ -111,7 +111,7 @@
 
         <template v-else-if="tab === '模型方案'">
           <h3 class="panel-title">分布式模型方案</h3>
-          <p v-if="isModelInputWorkspace" class="hint"><button class="link" @click="tab='河网与汇流'">查看河网与新方案默认汇流参数</button> · <RouterLink to="/calibration">编辑率定方案参数</RouterLink></p>
+          <p v-if="isModelInputWorkspace" class="hint"><button class="link" @click="tab='河网与断面'">查看河网与保存常用断面</button> · <RouterLink to="/calibration">编辑率定方案参数</RouterLink></p>
           <div class="scheme-summary">
             <div><span>方案</span><b>{{ activeConfig.name }}</b><small>{{ app.backendCase ? '参数库：' : '' }}{{ activeConfig.version }} · {{ activeConfig.status }}</small></div>
             <div><span>计算尺度</span><b>{{ activeConfig.grid }} / {{ activeConfig.gridCount.toLocaleString() }} 有效网格</b><small>{{ activeConfig.subbasins }} 个{{ app.hasLakeBalance ? '入湖流域' : '流域空间单元' }} · {{ activeConfig.dem }}</small></div>
@@ -124,7 +124,7 @@
             <div class="field"><label>河网汇流</label><input class="input" :value="activeConfig.channel" readonly /></div>
             <div class="field"><label>参数分区</label><input class="input" :value="isModelInputWorkspace ? '产流参数 · 单元坡面参数 · 河段参数' : '离线方案目录'" readonly /></div>
           </div>
-          <div v-if="app.backendCase" class="scheme-note"><b>计算分区</b><span>1 km 网格产流，按固定面积权重汇入汇流单元</span><span>汇流单元三分量线性水库 → 河段 Muskingum 汇流 → 徐畈流量</span><span>30 m 是提取河网与汇流分区的地形分辨率</span></div>
+          <div v-if="app.backendCase" class="scheme-note"><b>计算分区</b><span>1 km 网格产流，按固定面积权重汇入汇流单元</span><span>汇流单元三分量线性水库 → 河段 Muskingum 汇流 → 徐畈流量</span><span>30 m 是提取河网与断面分区的地形分辨率</span></div>
           <div v-else class="scheme-note"><b>计算分区</b><span>网格：承接降水并计算产流</span><span>子流域：参数分区、坡面汇流和河网组织</span><span>面雨量：按控制区面积加权</span></div>
           <details v-if="isModelInputWorkspace"><summary>模型功能目录</summary><table class="table module-status" aria-label="模型功能目录">
             <thead><tr><th>功能</th><th>状态</th><th>说明</th></tr></thead>
@@ -220,7 +220,7 @@
               <tr v-for="row in namedParameters" :key="row.id"><td>{{ row.name }} <button class="link" :aria-label="'修改参数名称 '+row.name" @click="renameNamedParameter(row)">✎</button></td><td>{{ row.statePolicy === 'continuous-origin' ? '连续演算' : '分场预热' }} · {{ row.warmupDays }}天</td><td><RouterLink :to="{path:'/archive',query:{task:row.sourceTaskId}}">查看原计算</RouterLink></td><td><RouterLink :to="{path:'/calibration',query:{parameter:row.id}}">用作初值</RouterLink> · <RouterLink :to="{path:'/simulation',query:{parameter:row.id}}">洪水模拟</RouterLink></td></tr>
                 <tr v-if="!namedParameters.length"><td colspan="4">暂无命名参数，请从计算成果中保存。</td></tr>
               </tbody></table>
-              <p class="hint"><RouterLink to="/simulation">洪水模拟</RouterLink> · <RouterLink to="/state/advanced">状态库</RouterLink> · <RouterLink to="/archive">查看计算成果</RouterLink></p>
+              <p class="hint"><RouterLink to="/simulation">洪水模拟</RouterLink> · <RouterLink to="/state?tab=library">状态库</RouterLink> · <RouterLink to="/archive">查看计算成果</RouterLink></p>
               <details><summary>历史参数记录</summary><div class="parameter-library-note"><b>率定参数</b><strong>{{ parameterLibrary?.simulationRateLibrary?.status || '正在读取' }}</strong></div>
               <table class="table parameter-library-table">
                 <thead><tr><th>参数版本</th><th>状态</th><th>对应场次集</th><th>独立检验</th><th>操作</th></tr></thead>
@@ -354,7 +354,7 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useConfigStore } from '@/stores/config'
 import { useForecastStore } from '@/stores/forecast'
 import { useMonitorStore } from '@/stores/monitor'
@@ -405,8 +405,9 @@ async function savePreparationDefaults() {
   try { preparationDefaults.value = await modelApi('database/preparation-defaults', { method: 'POST', body: { idwPower: preparationDefaults.value.idwPower, minimumStations: preparationDefaults.value.minimumStations } }); ElMessage.success('默认处理规则已保存，下次新建方案时采用') }
   catch (failure) { ElMessage.error(failure.message) }
 }
-const tabs = ['流域与站网', '河网与汇流', '模型方案', '参数库', '状态库']
-const tab = ref(tabs[0])
+const tabs = ['流域与站网', '河网与断面', '模型方案', '参数库', '状态库']
+const route = useRoute()
+const tab = ref(route.query.tab==='routing'?'河网与断面':tabs[0])
 const algorithmCatalog = ref([])
 const projectObservationCatalog = ref(null)
 const databaseStations = ref([])

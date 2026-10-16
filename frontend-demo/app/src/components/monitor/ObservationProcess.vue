@@ -17,8 +17,8 @@ const data = computed(() => observationProcess(props.preview, props.summary, rai
 const start = computed(() => data.value.times[0]?.replace('T', ' ').slice(0, 16))
 const end = computed(() => data.value.times.at(-1)?.replace('T', ' ').slice(0, 16))
 function selectTime(index) { if (Number.isInteger(index) && index >= 0 && index < data.value.times.length) emit('select-time', index) }
-const option = computed(() => ({ animation: false, tooltip: { trigger: 'axis' }, legend: { data: ['小时雨量', '实测流量'], top: 0 },
-  grid: [{ left: 66, right: 30, top: 36, height: '23%' }, { left: 66, right: 30, top: '42%', bottom: 44 }],
+const option = computed(() => ({ animation: false, tooltip: { trigger: 'axis',confine:true }, legend: { data: ['小时雨量', '实测流量'], top: 0,left:'center',textStyle:{fontSize:12} },
+  grid: [{ left: 76, right: 30, top: 42, height: '21%' }, { left: 76, right: 30, top: '44%', bottom: 78 }],
   xAxis: [0, 1].map(i => ({ type: 'category', gridIndex: i, data: data.value.times, axisLabel: { show: i === 1, formatter: time => time.slice(5, 16).replace('T', '\n') }, axisTick: { show: false } })),
   yAxis: [{ type: 'value', gridIndex: 0, inverse: true, name: '雨量 mm', nameLocation:'middle',nameGap:44,min: 0 }, { type: 'value', gridIndex: 1, name: '流量 m³/s',nameLocation:'middle',nameGap:44, min: 0 }],
   axisPointer: { link: [{ xAxisIndex: 'all' }] }, dataZoom: [{ type: 'inside', xAxisIndex: [0, 1] }, { type: 'slider', xAxisIndex: [0, 1], height: 13, bottom: 2 }],

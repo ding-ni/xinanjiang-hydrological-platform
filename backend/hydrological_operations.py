@@ -103,6 +103,7 @@ class HydrologicalOperations:
         if not isinstance(body, dict) or set(body) - allowed or body.get('operation') not in LABELS:
             raise ValueError('请选择计算方式')
         request = copy.deepcopy(body)
+        self.manager.results.lifecycle.assert_scheme_active(request)
         context = request.get('context') or (request.get('request') or {}).get('context') or CONTEXT
         if any(context.get(key) != value for key, value in CONTEXT.items()):
             raise ValueError('当前计算对应南安溪徐畈1 km模型')
@@ -149,6 +150,8 @@ class HydrologicalOperations:
             model = request.get('request')
             if not isinstance(model, dict) or model.get('runType') != 'calibration':
                 raise ValueError('请选定率定方案与洪水')
+            from event_start import validate_event_start
+            validate_event_start(model, self.manager.runtime_root)
             if kind == 'manualTrial':
                 model.pop('sourcePlan', None)
                 settings = model.setdefault('calibration', {})
@@ -325,6 +328,8 @@ class HydrologicalOperations:
                    'statePolicy': request.get('calibration', {}).get('statePolicy') or ('continuous-origin' if request['period'].get('continuousOrigin') else 'independent-warmup'),
                    'continuousOrigin': origin or request.get('calibration', {}).get('continuousOrigin') or request['period'].get('continuousOrigin'),
                    'operationPurpose': purpose}
+        if request.get('sourcePlan'):
+            options['sourcePlan'] = copy.deepcopy(request['sourcePlan'])
         if request['inputs'].get('stationSourceId'):
             options['stationSourceId'] = request['inputs']['stationSourceId']
         if method == 'stationIdw' and request['inputs'].get('stationNetwork'):
@@ -485,8 +490,8 @@ class HydrologicalOperations:
                 'stateCalculationTaskId': output['taskId']}
 
     def event_simulation(self, identifier, request):
-        from calibration_groups import group_windows
-        groups = group_windows([{**row, 'purpose': '率定'} for row in request['events']])
+        groups = [{'start': row['start'], 'end': row['end'], 'memberEventIds': [row['id']]}
+                  for row in request['events']]
         first, last = min(row['start'] for row in groups), max(row['end'] for row in groups)
         model = self.daily_request(request, {'startTime': first, 'endTime': last})
         model['period'].update(mode='event', events=[{**row, 'purpose': '率定'} for row in request['events']])
@@ -623,7 +628,8 @@ class HydrologicalOperations:
             groups = [{'start': min(row['start'] for row in rows), 'end': max(row['end'] for row in rows),
                        'memberEventIds': [row['id'] for row in rows]}]
         else:
-            groups = group_windows(rows)
+            groups = ([{'start': row['start'], 'end': row['end'], 'memberEventIds': [row['id']]} for row in rows]
+                      if output.get('evaluationPolicy') == 'EQUAL_INDEPENDENT_EVENTS' else group_windows(rows))
         for index, group in enumerate(groups):
             replay = copy.deepcopy(base)
             replay['period'] = {'startTime': group['start'], 'endTime': group['end'], 'warmupDays': frozen['period'].get('warmupDays', 7)}

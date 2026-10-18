@@ -1,5 +1,7 @@
 import { onBeforeUnmount, ref } from 'vue'
 import { activeOperation, belongsToOperationContext, completedOperation, dailyClient, operationId } from '@/services/dailyOperationService'
+import { modelApi } from '@/services/modelBackendService'
+import { trackTemporary } from '@/services/resultRetentionService'
 
 export function useDailyOperation({ client = dailyClient, onChange = () => {}, contextKey = () => null } = {}) {
   const operation = ref(null), result = ref(null), error = ref(''), submitting = ref(false)
@@ -16,7 +18,10 @@ export function useDailyOperation({ client = dailyClient, onChange = () => {}, c
         operation.value = row; onChange(row)
         if (completedOperation(row)) {
           const payload = await client.result(id)
-          if (!disposed && revision === generation) result.value = payload
+          if (!disposed && revision === generation) {
+            result.value = payload
+            modelApi('result-catalog').then(catalog=>{const record=catalog.results.find(item=>item.id===id);if(record)trackTemporary(record)}).catch(()=>{})
+          }
         } else if (activeOperation(row)) timer = setTimeout(refresh, 1500)
         else if (row.status === 'failed') error.value = row.errorMessage || row.error || '计算未完成'
       } catch (failure) {

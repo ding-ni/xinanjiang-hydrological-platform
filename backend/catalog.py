@@ -20,6 +20,7 @@ PARAMETERS = {
 }
 ALGORITHMS = [
     {"id": "DIFFERENTIAL_EVOLUTION", "label": "差分进化法", "note": "合作者模型中的真实差分进化搜索"},
+    {"id": "SCE_UA", "label": "SCE-UA 混合复合形法", "note": "复合体演化与洗牌，严格计入初值和无效候选预算"},
     {"id": "RANDOM_SEARCH", "label": "随机搜索", "note": "有界、可复现随机搜索"},
     {"id": "GRID_SEARCH", "label": "网格搜索", "note": "受最大评价次数约束的参数网格搜索"},
 ]

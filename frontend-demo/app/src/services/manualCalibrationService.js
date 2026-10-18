@@ -36,8 +36,9 @@ export function changedParameters(before = {}, after = {}) {
 }
 
 export function alignedTrialSeries(hydrograph, times) {
-  const values = new Map((hydrograph?.forecast || []).map(row => [row.time, row.value]))
-  return times.map(time => values.get(time) ?? null)
+  const hour=value=>String(value||'').replace(' ','T').slice(0,16)
+  const values = new Map((hydrograph?.forecast || []).map(row => [hour(row.time), row.value]))
+  return times.map(time => values.get(hour(time)) ?? null)
 }
 
 export function latestComparableTrial(records = [], current, periodId) {

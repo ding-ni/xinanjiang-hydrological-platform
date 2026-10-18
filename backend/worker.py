@@ -14,7 +14,7 @@ from collections import OrderedDict
 import sys
 from pathlib import Path
 
-from common import MODEL, RUNTIME, ROUTING_VERSION, read_json, write_json, clean
+from common import MODEL, RUNTIME, ROUTING_VERSION, read_json, write_json, clean, safe_task
 from contracts import freeze_input_selection, freeze_routing_selection
 from input_products import InputProducts
 from routing_versions import RoutingVersions
@@ -40,7 +40,7 @@ from forecast_products import ForecastProducts
 import run_formal_multievent_calibration as kernels
 from calibration_platform.algorithms import search
 from runoff_platform.config_loader import load_parameter_set
-from runoff_platform.data.event_quality import evaluate_event_quality
+from strict_forcing import evaluate_event_quality
 from runoff_platform.data.pet_forcing import PetProvider
 from runoff_platform.models.xaj_vectorized import simulate_xaj_liquid_grids
 from state_initialization.core import build_uniform_land_state, validate_land_state_arrays
@@ -73,6 +73,8 @@ class ModelJob:
         if (self.request.get('calibration') or {}).get('simulationOnly'):
             self.publish_parameters = False
         self.request = validate_original_request(self.request, RUNTIME)
+        from event_start import validate_event_start
+        validate_event_start(self.request, RUNTIME)
         self.products = InputProducts(runtime_root=RUNTIME)
         self.request, self.bundle = freeze_input_selection(self.request, self.products)
         self.request = freeze_routing_selection(self.request, self.bundle)
@@ -209,7 +211,8 @@ class ModelJob:
         print(stage, flush=True)
 
     def load(self, rows, warmup):
-        if self.request['runType'] != 'calibration' or self.bundle.get('manifest', {}).get('forcingPolicy') == 'STRICT_MISSING' or self.period.get('mode') == 'continuous' or self.request.get('scheme'):
+        independent_event = self.period.get('mode') == 'event' and (self.request.get('calibration') or {}).get('statePolicy', 'independent-warmup') == 'independent-warmup'
+        if independent_event or self.request['runType'] != 'calibration' or self.bundle.get('manifest', {}).get('forcingPolicy') == 'STRICT_MISSING' or self.period.get('mode') == 'continuous' or self.request.get('scheme'):
             from strict_forcing import load_hourly_forcing
             data = []
             for row in rows:
@@ -520,14 +523,25 @@ class ModelJob:
         groups = {"率定": "CALIBRATION", "验证": "VALIDATION", "独立检验": "INDEPENDENT_TEST"}
         selected = [row for row in self.period["windows" if continuous else "events"]
                     if row['purpose'] in groups and row.get('status') != 'inactive']
+        state_policy = self.request['calibration'].get('statePolicy', self.science['statePolicy']['strategy'])
+        independent_events = not continuous and state_policy == 'independent-warmup'
+        replay_source = self.request.get('lineage', {}).get('replayOfTaskId')
+        if independent_events and replay_source:
+            from event_start import validate_event_start
+            validate_event_start(self.request, RUNTIME)
+            source = read_json(safe_task(RUNTIME / 'tasks', replay_source) / 'result.json')
+            independent_events = source.get('evaluationPolicy') == 'EQUAL_INDEPENDENT_EVENTS'
         physical_groups = group_windows(selected)
-        union_rows, membership = scoring_events(selected, physical_groups, groups)
+        calculation_groups = ([{'id': row['id'], 'start': row['start'], 'end': row['end'],
+                                'purpose': row['purpose'], 'memberEventIds': [row['id']],
+                                'uniqueHours': int((pd.Timestamp(row['end']) - pd.Timestamp(row['start'])).total_seconds() / 3600) + 1}
+                               for row in selected] if independent_events else physical_groups)
+        union_rows, membership = scoring_events(selected, calculation_groups, groups)
         union_rows = [{**row, 'start': pd.Timestamp(row['start']), 'end': pd.Timestamp(row['end'])} for row in union_rows]
         rows = [{"event_id": row["id"], "year": pd.Timestamp(row["start"]).year,
                  "start": pd.Timestamp(row["start"]), "end": pd.Timestamp(row["end"]), "group": groups[row["purpose"]]}
                 for row in selected]
         warmup = int(round(float(self.period.get('warmupDays', 7)) * 24))
-        state_policy = self.request['calibration'].get('statePolicy', self.science['statePolicy']['strategy'])
         self.progress(5, "读取率定、验证及独立检验资料")
         events = self.load(union_rows, 0 if state_policy == 'continuous-origin' else warmup)
         by_id = {event.event_id: event for event in events}
@@ -576,7 +590,8 @@ class ModelJob:
             indexes = np.flatnonzero(areas > 0)
             audits = [evaluate_event_quality(event_id=e.event_id, start=e.start, end=e.end, times=e.times,
                       grid_precipitation_mm=e.precip[:, indexes], grid_areas_km2=areas[indexes], observed_flow_cms=e.observed,
-                      source_station_count=e.source_station_count, config=quality) for e in views]
+                      source_station_count=e.source_station_count, config=quality,
+                      legacy=bool(self.request.get('sourcePlan'))) for e in views]
             for audit, event in zip(audits, views):
                 coverage = evaluate_observation_coverage(pd.date_range(event.start, event.end, freq='h'), event.observed, quality)
                 audit['observation_coverage'] = coverage
@@ -604,7 +619,7 @@ class ModelJob:
                                   'start': start, 'end': end, 'group': 'TRAJECTORY'}],
                                  int((start - origin).total_seconds() / 3600))[0]
             timeline.pet_mm_h = provider.values(timeline.times)
-        self.warnings.append('重叠洪水共享同一状态轨迹；按物理洪水组去重小时后重新计算指标，各组等权。')
+        self.warnings.append('各场从自身预热段独立起算，场间不传递状态；重叠窗口不代表独立样本。' if independent_events else '重叠洪水共享同一状态轨迹；按物理洪水组去重小时后重新计算指标，各组等权。')
         criteria = self.request["calibration"]["objectives"]
         terms = objective_terms(criteria)
         initial_parameters = {key.split('.')[-1]: value for key, value in kernels.resolved_runoff_parameters(self.params).items()}
@@ -695,7 +710,7 @@ class ModelJob:
                           **kernels.metrics(event.observed, simulations[event.event_id].loc[event.start:event.end]),
                           **masked_volume_metrics(pd.date_range(event.start, event.end, freq='h'), event.observed,
                                                   simulations[event.event_id].loc[event.start:event.end])}
-                         for group, event in zip(physical_groups, events)]
+                         for group, event in zip(calculation_groups, events)]
         event_metrics, hydrographs = [], {}
         for index, event in enumerate(views):
             self.progress(80 + 19 * (index + 1) / len(views), f"冻结参数独立评价 {index + 1}/{len(views)}")
@@ -748,8 +763,8 @@ class ModelJob:
                   "statePolicy": state_policy, 'actualWarmupHours': int((timeline.start - self.continuous_origin).total_seconds() / 3600) if timeline is not None else warmup,
                   'continuousOrigin': self.continuous_origin.isoformat() if timeline is not None else None,
                   "optimizationGroups": ["CALIBRATION"],
-                  'evaluationPolicy': 'EQUAL_PHYSICAL_GROUP_UNIQUE_HOURS', 'overlapGroups': physical_groups,
-                  'overlapGroupMetrics': group_metrics,
+                  'evaluationPolicy': 'EQUAL_INDEPENDENT_EVENTS' if independent_events else 'EQUAL_PHYSICAL_GROUP_UNIQUE_HOURS', 'overlapGroups': physical_groups,
+                  'overlapGroupMetrics': [] if independent_events else group_metrics,
                   'windowSummary': {group: kernels.summary_for(pd.DataFrame(event_metrics).query('group == @group')) for group in groups.values()},
                   "qualificationPolicy": read_json(MODEL / "config/qualification_config_event.json"),
                   "requestedTolerances": criteria.get("tolerances"),

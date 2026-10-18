@@ -137,7 +137,7 @@ export const CALIBRATION_EDITOR_FIELDS = [
   'searchParameterOrder', 'eventSplitSeed', 'eventAssignment', 'warmupDays', 'statePolicy', 'continuousOrigin', 'scienceVersionId',
   'scienceDescriptor', 'evaporationMode', 'scienceConditionsDraft', 'candidateWarmupHours', 'sourcePlan', 'sourcePlanRequestTemplate', 'originalCalibrationPlan',
   'activeOperationId', 'activeOperationRequest', 'editorTrialMode', 'manualRoutingPayload', 'searchRangeOverrides',
-  'deliverySelection', 'configurationPending', 'deliveryProcessing'
+  'deliverySelection', 'configurationPending', 'deliveryProcessing', 'modeStartSettings'
 ]
 
 export function calibrationEditor(cal) {

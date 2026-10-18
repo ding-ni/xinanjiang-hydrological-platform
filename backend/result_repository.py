@@ -13,6 +13,8 @@ class ResultRepository:
                 # those selections once, before automatic naming is enabled.
                 db.execute("UPDATE result_metadata SET favorite=1 WHERE trim(name)<>''")
                 db.execute('INSERT INTO schema_migrations VALUES (3,?,?)', ('named-calculation-records-and-favorites', now()))
+        from result_lifecycle import ResultLifecycle
+        self.lifecycle = ResultLifecycle(self)
 
     @staticmethod
     def suggested_name(status):
@@ -47,6 +49,9 @@ class ResultRepository:
         with self.manager.database.connect() as db:
             db.execute('INSERT OR IGNORE INTO result_metadata VALUES (?,?,?,?,?,?,?)',
                        (status['taskId'], self.suggested_name(status), '', '', 0, 0, now()))
+            if str(status.get('createdAt') or '') >= self.lifecycle.enabled_at:
+                db.execute('INSERT OR IGNORE INTO result_retention VALUES(?,?,?,?,?)',
+                           (status['taskId'], 'temporary', 'temporary', 0, now()))
 
     def metadata(self):
         with self.manager.database.connect() as db:
@@ -63,6 +68,7 @@ class ResultRepository:
                 raise ValueError(f'{key} 最多 {limit} 个字符')
         if type(body['favorite']) is not bool or type(body['revision']) is not int or body['revision'] < 0:
             raise ValueError('收藏或修订号格式无效')
+        self.lifecycle.value(self.status(task_id), self.annotation(task_id))
         with self.manager.database.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             old = db.execute('SELECT revision FROM result_metadata WHERE task_id=?', (task_id,)).fetchone()
@@ -175,8 +181,9 @@ class ResultRepository:
             request.pop(key,None)
         return request
 
-    def catalog(self):
+    def catalog(self, include_trashed=False):
         metadata = self.metadata()
+        retention = self.lifecycle.records()
         operations = [read_json(path) for path in (self.manager.runtime_root / 'operations').glob('*/status.json')]
         children = {identifier for row in operations for identifier in row.get('childTaskIds', [])}
         tasks = [row for row in self.manager.list() if row['taskId'] not in children and not row.get('internal')
@@ -200,11 +207,15 @@ class ResultRepository:
             selected = request.get('events') or [row for row in period.get('events', []) if row.get('purpose') != '未使用']
             suggested_name = self.suggested_name(status)
             favorite = bool(annotation.get('favorite'))
+            retained = self.lifecycle.value(status, annotation, retention)
+            if retained['retention'] == 'trashed' and not include_trashed:
+                continue
             record_type = status.get('operation') or status.get('runType')
             if record_type == 'rerun':
                 record_type = ('manualTrial' if model.get('calibration', {}).get('evaluationMode') == 'manual' else 'calibration') if model.get('runType') == 'calibration' else model.get('runType', record_type)
             rows.append({'id': identifier, 'name': annotation.get('name') or suggested_name, 'suggestedName': suggested_name,
-                'saved': favorite, 'favorite': favorite, 'metadata': annotation, 'status': status['status'],
+                'saved': retained['retention'] == 'saved', 'favorite': favorite, 'metadata': annotation, 'status': status['status'],
+                'retention': retained['retention'], 'retentionRevision': retained['revision'], 'legacy': retained.get('legacy', False),
                 'type': record_type, 'createdAt': status.get('createdAt'),
                 'completedAt': status.get('completedAt'), 'contextKey': status.get('contextKey') or model.get('context', {}).get('contextKey'),
                 'schemeId': scheme.get('id') or model.get('lineage', {}).get('schemeId') or status.get('lineage', {}).get('schemeId'),

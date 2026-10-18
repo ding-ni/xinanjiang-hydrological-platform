@@ -90,7 +90,7 @@ class InputService:
         code_root = str(MODEL / "code")
         if code_root not in sys.path:
             sys.path.insert(0, code_root)
-        from runoff_platform.data.event_quality import evaluate_event_quality
+        from strict_forcing import evaluate_event_quality
         from runoff_platform.data.precipitation_quality import read_station_count
         from xaj_routing.control_area import contributing_grid_areas
         from xaj_routing.io import read_topology_json

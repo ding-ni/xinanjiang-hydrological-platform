@@ -47,9 +47,13 @@ def history_name(before, after):
 def preparation_binding_key(record, request):
     # Parameter-only versions share inputs; PET/science changes require their
     # own coverage check even when the selected floods have not changed.
-    return manifest_digest({'definition': record['definitionSHA256'],
-                            'science': request.get('science', {}),
-                            'evaporation': request.get('inputs', {}).get('evaporation', {})})
+    definition = {'definition': record['definitionSHA256'],
+                  'science': request.get('science', {}),
+                  'evaporation': request.get('inputs', {}).get('evaporation', {})}
+    if request.get('period', {}).get('mode') == 'event' and request.get('runType') == 'calibration' and not request.get('sourcePlan'):
+        from strict_forcing import EVENT_QUALITY_POLICY
+        definition['eventQualityPolicy'] = EVENT_QUALITY_POLICY
+    return manifest_digest(definition)
 
 
 def input_definition(request, rainfall_method='reuse'):

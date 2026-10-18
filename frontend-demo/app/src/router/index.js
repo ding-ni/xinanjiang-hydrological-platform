@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import { settleTemporary, sameResultWorkspace } from '@/services/resultRetentionService'
 
 const routes = [
   { path: '/results/:id/sections', name: 'result-sections', component: () => import('@/views/RiverSectionView.vue'), meta: { title: '断面流量' } },
@@ -56,4 +57,8 @@ const router = createRouter({
   routes
 })
 
+router.beforeEach(async (to, from) => {
+  if (from.matched.length && !sameResultWorkspace(to, from)) return settleTemporary()
+  return true
+})
 export default router

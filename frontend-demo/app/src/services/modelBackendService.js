@@ -29,6 +29,14 @@ export function uniqueRequestId(prefix = 'REQ') {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
 }
 
+export async function modelDownload(path, body, filename) {
+  if (!modelBackendEnabled()) throw new Error('模型服务未启用')
+  const response=await fetch(String(import.meta.env.VITE_MODEL_API_BASE).replace(/\/$/,'')+'/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+  if(!response.ok){const error=await response.json();throw new Error(error.error||'导出失败')}
+  const url=URL.createObjectURL(await response.blob()),link=document.createElement('a')
+  link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)
+}
+
 export function normalizeBackendTask(task) {
   const request = task.runConfig || {}
   const context = request.context || {}
@@ -64,7 +72,7 @@ export function normalizeBackendTask(task) {
         resolvedContinuousOrigin: request.calibration?.continuousOrigin || period.continuousOrigin || null } : null,
       evaporationMode: request.inputs?.evaporation?.mode || 'constant-zero',
       searchSeed: request.calibration?.optimizer?.seed ?? 42,
-      optimizerSettings: Object.fromEntries(['differentialWeight', 'crossoverProbability', 'generations', 'initializationPolicy', 'initialCandidates', 'effectiveInitialCandidates']
+      optimizerSettings: Object.fromEntries(['differentialWeight', 'crossoverProbability', 'generations', 'initializationPolicy', 'initialCandidates', 'effectiveInitialCandidates', 'complexes']
         .filter(key => request.calibration?.optimizer?.[key] !== undefined).map(key => [key, request.calibration.optimizer[key]])),
       sourcePlan: request.sourcePlan || null,
       searchParameterOrder: request.calibration?.searchParameterOrder || null,

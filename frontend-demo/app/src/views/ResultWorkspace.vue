@@ -2,7 +2,7 @@
   <section class="results-workspace">
     <header><h1>计算成果</h1><button class="btn" :disabled="loading" @click="refresh">刷新</button></header>
     <div class="results-tools">
-      <nav><button class="btn" :class="{primary:tab==='saved'}" @click="tab='saved'">我的成果</button><button class="btn" :class="{primary:tab==='recent'}" @click="tab='recent'">计算记录</button></nav>
+      <nav><button v-for="item in [{id:'saved',name:'我的成果'},{id:'temporary',name:'临时计算'},{id:'recent',name:'历史记录'},{id:'trashed',name:'回收站'}]" :key="item.id" class="btn" :class="{primary:tab===item.id}" @click="tab=item.id">{{ item.name }}</button></nav>
       <input v-model="search" type="search" class="input" aria-label="查找成果" placeholder="名称、参数或计算日期" />
       <select v-model="schemeFilter" class="input" aria-label="按方案筛选"><option value="">全部方案</option><option v-for="row in schemeOptions" :key="row.id" :value="row.id">{{ row.name }}</option></select>
       <select v-model="type" class="input" aria-label="成果计算类型"><option value="">全部类型</option><option v-for="(label,key) in operationLabels" :key="key" :value="key">{{ label }}</option></select>
@@ -13,7 +13,7 @@
         <button v-for="row in paged" :key="row.id" class="result-row" :class="{selected:selectedId===row.id}" @click="inspect(row)">
           <b>{{ row.favorite?'★ ':'' }}{{ row.name }}</b><span>{{ operationLabels[row.type] || '水文计算' }} · {{ statusLabels[row.status] || row.status }} · {{ row.processCount }} 个过程</span><small>{{ dateLabel(row.createdAt) }}</small>
         </button>
-        <p v-if="!paged.length" class="empty">{{ loading?'正在读取…':tab==='saved'?'暂无收藏成果，可在计算记录中点击收藏。':'暂无计算记录' }}</p>
+        <p v-if="!paged.length" class="empty">{{ loading?'正在读取…':tab==='saved'?'暂无正式成果，可在计算完成后点击保存成果。':'暂无计算记录' }}</p>
         <footer v-if="filtered.length"><span>{{ page }} / {{ pages }} 页</span><button class="btn" :disabled="page<=1" @click="page--">上一页</button><button class="btn" :disabled="page>=pages" @click="page++">下一页</button></footer>
       </section>
       <section v-if="selected" class="result-detail">
@@ -21,7 +21,7 @@
         <DailyResultPanel v-if="result" :operation="displayStatus" :result="result" :task-id="result.primaryTaskId || result.taskId || selectedId" :comparison-options="comparisons" title="雨量—流量过程" hide-save-bar hide-record-link @process-change="activeProcess=$event" />
         <section v-if="result" class="panel record-details">
           <div class="record-toolbar"><button class="btn" @click="saveParameter">保存参数</button><button class="btn" @click="simulateParameters">用这组参数模拟其他洪水</button><details><summary>更多操作</summary><button class="btn" :disabled="runningAction" @click="rerun">{{ repeatLabel }}</button><button class="btn" @click="saveAsScheme">另存为方案</button></details></div>
-          <ResultSaveBar :result-id="selectedId" :suggestion="selected.name" hide-record-link @saved="renamed" />
+          <ResultSaveBar :result-id="selectedId" :suggestion="selected.name" hide-record-link @saved="refresh" @discarded="result=null;selected=null;selectedId='';refresh()" />
           <nav class="detail-tabs"><button v-for="row in detailTabs" :key="row.id" :class="{active:detailTab===row.id}" @click="detailTab=row.id">{{ row.name }}</button></nav>
           <CalculationEvaluation v-if="detailTab==='evaluation'" :result="result" />
           <CalculationParameters v-if="detailTab==='parameters'" :result="result" />
@@ -53,7 +53,7 @@ const statusLabels={completed:'已完成',archived:'已完成',running:'计算�
 const timingLabels={operationSeconds:'总耗时',queueSeconds:'排队',inputPreparationSeconds:'资料准备',preparationSeconds:'读取与检查',searchSeconds:'参数搜索',finalEvaluationSeconds:'最终评价',stateSavingSeconds:'状态生成与保存',simulationSeconds:'模型计算',statePersistenceSeconds:'状态文件保存',warmupSeconds:'预热产流',loadingSeconds:'读取资料',runoffSeconds:'评价期产流',routingSeconds:'全程汇流',checkpointSeconds:'末状态保存'}
 const detailTabs=[{id:'evaluation',name:'全场评价'},{id:'parameters',name:'本组参数'},{id:'settings',name:'本次计算设置'},{id:'timings',name:'计算耗时'}]
 const schemeOptions=computed(()=>[...new Map(rows.value.filter(row=>row.schemeId).map(row=>[row.schemeId,{id:row.schemeId,name:row.schemeName||row.schemeId}])).values()])
-const filtered=computed(()=>rows.value.filter(row=>(tab.value!=='saved'||row.favorite)&&(!type.value||row.type===type.value)&&(!schemeFilter.value||row.schemeId===schemeFilter.value)&&[row.name,row.parameterName,row.createdAt].join(' ').toLowerCase().includes(search.value.trim().toLowerCase())))
+const filtered=computed(()=>rows.value.filter(row=>(tab.value==='recent'?row.retention!=='trashed':row.retention===tab.value)&&(!type.value||row.type===type.value)&&(!schemeFilter.value||row.schemeId===schemeFilter.value)&&[row.name,row.parameterName,row.createdAt].join(' ').toLowerCase().includes(search.value.trim().toLowerCase())))
 const pages=computed(()=>Math.max(1,Math.ceil(filtered.value.length/10))),paged=computed(()=>filtered.value.slice((page.value-1)*10,page.value*10))
 watch([tab,search,type,schemeFilter],()=>page.value=1)
 watch(pages,value=>page.value=Math.min(page.value,value))
@@ -65,9 +65,9 @@ const repeatLabel=computed(()=>calculationRequest.value.runType==='calibration'&
 const timingRows=computed(()=>Object.fromEntries(Object.entries(result.value?.timings||{}).filter(([key,value])=>timingLabels[key]&&typeof value==='number')))
 const dateLabel=value=>value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'日期未登记'
 let sequence=0,poll,disposed=false
-async function refresh(){loading.value=true;error.value='';try{const payload=await modelApi('result-catalog',{timeoutMs:60000});if(disposed)return;rows.value=(payload.results||[]).filter(row=>!row.contextKey||row.contextKey===app.contextKey);const requested=route.query.result||route.query.operation||route.query.task;const wanted=requested&&rows.value.find(row=>row.id===requested||row.sourceTaskIds?.includes(requested));if(wanted&&selectedId.value!==wanted.id){if(!wanted.favorite)tab.value='recent';await inspect(wanted)}else if(selected.value)selected.value=rows.value.find(row=>row.id===selectedId.value)||selected.value}catch(failure){error.value=failure.message}finally{loading.value=false}}
+async function refresh(){loading.value=true;error.value='';try{const payload=await modelApi('result-catalog?retention=all',{timeoutMs:60000});if(disposed)return;rows.value=(payload.results||[]).filter(row=>!row.contextKey||row.contextKey===app.contextKey);const requested=route.query.result||route.query.operation||route.query.task;const wanted=requested&&rows.value.find(row=>row.id===requested||row.sourceTaskIds?.includes(requested));if(wanted&&selectedId.value!==wanted.id){tab.value=wanted.retention||'recent';await inspect(wanted)}else if(selected.value)selected.value=rows.value.find(row=>row.id===selectedId.value)||selected.value}catch(failure){error.value=failure.message}finally{loading.value=false}}
 async function inspect(row){const token=++sequence;clearTimeout(poll);selected.value=row;selectedId.value=row.id;result.value=null;status.value=null;loadingResult.value=true;error.value='';actionMessage.value='';try{if(['completed','archived'].includes(row.status)){const payload=await modelApi('results/'+row.id,{timeoutMs:60000});if(token!==sequence||disposed)return;result.value=payload.result;status.value=payload.status}else{const current=await modelApi((row.id.startsWith('OP-')?'operations/':'tasks/')+row.id);if(token!==sequence||disposed)return;status.value=current;if(['queued','running','cancelling'].includes(current.status))poll=setTimeout(async()=>{await refresh();if(disposed||token!==sequence)return;const latest=rows.value.find(item=>item.id===row.id);if(latest)inspect(latest)},1500)}}catch(failure){if(token===sequence)error.value=failure.message}finally{if(token===sequence)loadingResult.value=false}}
-function renamed(metadata){selected.value={...selected.value,name:metadata.name,favorite:metadata.favorite,saved:metadata.favorite,metadata};rows.value=rows.value.map(row=>row.id===selectedId.value?selected.value:row)}
+function renamed(metadata){selected.value={...selected.value,name:metadata.name,favorite:metadata.favorite,saved:metadata.retention==='saved',retention:metadata.retention||selected.value.retention,metadata};rows.value=rows.value.map(row=>row.id===selectedId.value?selected.value:row)}
 async function cancel(){try{await modelApi((selectedId.value.startsWith('OP-')?'operations/':'tasks/')+selectedId.value+'/cancel',{method:'POST',body:{}});await refresh()}catch(failure){error.value=failure.message}}
 async function rerun(){runningAction.value=true;error.value='';try{const task=await modelApi('operations',{method:'POST',body:{operation:'rerun',sourceTaskId:selectedId.value}});tab.value='recent';await refresh();const row=rows.value.find(item=>item.id===task.taskId);if(row)await inspect(row)}catch(failure){error.value=failure.message}finally{runningAction.value=false}}
 async function saveParameter(){try{const {value}=await ElMessageBox.prompt('保存所选计算记录实际采用的产汇流参数','保存参数',{inputValue:selected.value.name,inputValidator:value=>Boolean(value?.trim())&&value.trim().length<=80});await modelApi('parameter-schemes',{method:'POST',body:{name:value.trim(),sourceTaskId:selectedId.value}});actionMessage.value='参数已保存，可在洪水模拟中选用。'}catch(failure){if(failure instanceof Error)error.value=failure.message}}

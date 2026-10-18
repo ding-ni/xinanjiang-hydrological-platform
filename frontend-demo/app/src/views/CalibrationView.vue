@@ -3,6 +3,8 @@
     <ModelSchemeBar ref="schemeBar" :commit="commitScheme" @editing="editing = $event" @opened="schemeOpened = $event" @loaded="restoreSchemeView" />
     <p v-if="route.query.parameter" class="settings-note">已从参数库选择参数。打开并编辑方案后，<button class="text-button" :disabled="!editing || cal.running" @click="applyReference(String(route.query.parameter))">采用该参数作为初值</button>。</p>
     <template v-if="schemeOpened">
+      <p v-if="legacyEventScheme" class="legacy-condition">原条件查看：这些场次从 {{ shortTime(cal.continuousOrigin) }} 连续演算。<button class="btn" :disabled="cal.running" @click="schemeBar.createEventScheme()">另建场次方案</button></p>
+      <p v-if="legacyEventScheme && displayResult?.bestParameters" class="settings-note"><button class="text-button" :disabled="cal.running" @click="newEventSchemeFromSelected">沿用所选计算参数另建场次方案</button></p>
       <section class="adopted-parameters"><b>方案采用参数</b><span>{{ namedParameters.find(row=>row.id===adoptedParameter?.parameter_id)?.name || (adoptedParameter?'正在读取名称':'尚未选定；从完成的计算中命名保存参数') }}</span><template v-if="adoptedParameter"><button class="btn" @click="router.push({path:'/simulation',query:{parameter:adoptedParameter.parameter_id}})">用于洪水模拟</button><button class="btn" :disabled="!editing || cal.running" @click="applyReference(adoptedParameter.parameter_id)">用于自动率定初值</button></template></section>
       <header class="workbench-toolbar">
         <details v-if="app.backendCase" class="readiness"><summary>计算准备</summary><NumericReadiness /></details>
@@ -45,7 +47,7 @@
       <div class="workbench" :class="{ 'manual-mode': trialMode === 'manual', 'flood-collapsed':floodCollapsed }">
         <aside v-show="!floodCollapsed" class="panel flood-panel">
           <template v-if="cal.calibrationMode === 'event'">
-            <div class="panel-heading"><h2>洪水目录 {{ cal.events.length }} 场</h2><span>已选 {{ eventCounts.calibration + eventCounts.validation + eventCounts.independent }} 场</span></div>
+            <div class="panel-heading"><h2>洪水目录 {{ cal.publicEvents.length }} 场</h2><span>已选 {{ eventCounts.calibration + eventCounts.validation + eventCounts.independent }} 场</span></div>
             <div class="event-browser-bar">
               <div class="event-scope" role="group" aria-label="洪水目录范围">
                 <button type="button" :class="{ active: eventScope === 'selected' }" @click="eventScope = 'selected'">已选洪水</button>
@@ -85,7 +87,6 @@
             </div>
             <footer class="pagination"><span>{{ eventPage }} / {{ pageCount }} 页</span><button class="btn mini" :disabled="eventPage === 1" @click="eventPage--">上一页</button><button class="btn mini" :disabled="eventPage >= pageCount" @click="eventPage++">下一页</button></footer>
             <p v-if="physicalConflict" class="field-error" role="alert">{{ physicalConflict }}</p>
-            <details class="custom-window"><summary>添加洪水时段</summary><div class="field"><label>洪水名称</label><input v-model.trim="windowDraft.id" class="input" :disabled="cal.running || !editing" /></div><div class="field"><label>开始</label><input v-model="windowDraft.start" class="input" type="datetime-local" step="3600" :disabled="cal.running || !editing" /></div><div class="field"><label>结束</label><input v-model="windowDraft.end" class="input" type="datetime-local" step="3600" :disabled="cal.running || !editing" /></div><button class="btn" :disabled="cal.running || !editing" @click="registerWindow">添加</button></details>
           </template>
 
           <template v-else>
@@ -101,20 +102,21 @@
 
         <main class="process-workspace">
           <section class="panel process-panel">
-            <div class="panel-heading process-heading"><div><h2>{{ activeProcessTitle }}</h2><span v-if="activeEvent && cal.calibrationMode === 'event'">{{ fullPeriod(activeEvent) }}</span></div><select v-if="cal.calibrationMode === 'continuous' && continuousPeriods.length" class="input period-select" v-model="selectedContinuousPeriod" aria-label="查看评价期"><option v-for="period in continuousPeriods" :key="period.id" :value="period.id">{{ period.label || period.id }}</option></select><button v-if="displayResult" class="btn mini" @click="openState">状态分布</button></div>
+            <div class="panel-heading process-heading"><div><h2>{{ activeProcessTitle }}</h2><span v-if="activeEvent && cal.calibrationMode === 'event'">{{ fullPeriod(activeEvent) }}</span></div><select v-if="cal.calibrationMode === 'continuous' && continuousPeriods.length" class="input period-select" v-model="selectedContinuousPeriod" aria-label="查看评价期"><option v-for="period in continuousPeriods" :key="period.id" :value="period.id">{{ period.label || period.id }}</option></select><button v-if="displayResult" class="btn mini" :disabled="!currentHydrograph" @click="openState">状态分布</button></div>
             <p v-if="previewLoading && !currentHydrograph" class="process-status">读取雨流过程</p>
             <p v-if="previewError && !currentHydrograph" class="process-status field-error">{{ previewError }}</p>
-            <div v-if="trialMode==='manual'" class="curve-controls" aria-label="选择对比曲线"><label><input v-model="showObserved" type="checkbox" /> 实测</label><select v-model="automaticReference" class="input" aria-label="自动率定参考"><option value="">不显示自动参考</option><option v-for="row in automaticCurves" :key="row.taskId" :value="row.taskId">{{ recordName(row) }}</option></select><div v-for="row in curveOptions" :key="row.taskId" class="curve-chip" :class="{selected:row.taskId===displayResult?.taskId}" :title="recordName(row)+'；'+curveParameterChanges(row)"><input type="checkbox" :aria-label="'显示'+row.label" :checked="curveSelection[row.taskId]!==false" @change="curveSelection[row.taskId]=$event.target.checked" /><button class="text-button" @click="viewCalculation(row)"><i :style="{background:row.color}" />{{ row.label }}</button><small v-if="!trialResults[row.taskId]?.hydrographs?.[currentPeriodId]">未算此场</small><small v-else-if="!sameProcessConditions(trialResults[row.taskId])">条件不同</small></div></div>
-            <div v-if="displayResult" class="selected-calculation"><b>{{ selectedRecordName }}</b><span v-for="metric in processMetrics" :key="metric.label">{{ metric.label }} <strong>{{ metric.value }}</strong></span></div>
-            <details v-if="selectedPeaks" class="peak-detail"><summary>峰值与峰现时刻</summary><span>实测 {{ finiteMetric(selectedPeaks.observedPeak,1) }} m³/s · {{ shortTime(selectedPeaks.observedTime) }}</span><span>模拟 {{ finiteMetric(selectedPeaks.simulatedPeak,1) }} m³/s · {{ shortTime(selectedPeaks.simulatedTime) }}</span><button class="text-button" @click="openRiverFlow">查询断面流量</button></details>
-            <CalibrationProcessChart v-if="displayHydrograph.times?.length || displayHydrograph.obs?.length || displayHydrograph.forecast?.length" :hydrograph="displayHydrograph" :forcing="displayForcing" :visible-components="{}" :show-observed="showObserved" :show-current="trialMode!=='manual'" :compact-legend="trialMode==='manual'" :observed-only="!currentHydrograph?.forecast?.length && !comparisonLines.length" :comparisons="comparisonLines" :current-curve="{ label: selectedRecordName || '本次模拟', color: '#ca6e30' }" />
+            <div v-if="trialMode==='manual'" class="curve-controls" aria-label="选择对比曲线"><label><input v-model="showObserved" type="checkbox" /> 实测</label><select v-model="automaticReference" class="input" aria-label="自动率定参考"><option value="">不显示自动参考</option><option v-for="row in automaticCurves" :key="row.taskId" :value="row.taskId">自动率定{{ automaticCurves.length>1 ? ' · '+shortTime(row.completedAt) : '' }}</option></select><div v-for="row in curveOptions" :key="row.taskId" class="curve-chip" :class="{selected:row.taskId===displayResult?.taskId}" :title="recordName(row)+'；'+curveParameterChanges(row)"><input type="checkbox" :aria-label="'显示'+row.label" :checked="curveSelection[row.taskId]!==false" @change="curveSelection[row.taskId]=$event.target.checked" /><button class="text-button" @click="viewCalculation(row)"><i :style="{background:row.color}" />{{ row.label }}</button><small v-if="!trialResults[row.taskId]?.hydrographs?.[currentPeriodId]">未算此场</small><small v-else-if="curveOverlayReason(trialResults[row.taskId])">{{ curveOverlayReason(trialResults[row.taskId]) }}</small><button v-if="row.manual" class="text-button" :aria-label="'丢弃'+row.label" @click="discardCurve(row)">丢弃</button></div></div>
+            <div v-if="displayResult" class="selected-calculation"><span v-for="metric in processMetrics" :key="metric.label">{{ metric.label }} <strong>{{ metric.value }}</strong></span><template v-if="selectedPeaks"><span>实测峰值 <strong>{{ finiteMetric(selectedPeaks.observedPeak,1) }} m³/s</strong> · {{ shortTime(selectedPeaks.observedTime) }}</span><span>模拟峰值 <strong>{{ finiteMetric(selectedPeaks.simulatedPeak,1) }} m³/s</strong> · {{ shortTime(selectedPeaks.simulatedTime) }}</span></template></div>
+            <p v-if="displayResult" class="calculation-record-info">计算记录：{{ selectedRecordName }}</p>
+            <p v-if="displayResult?.bestParameters && !selectedParametersAdopted" class="parameter-unsaved">本次参数已计算，尚未保存为方案采用参数。</p>
+            <CalibrationProcessChart v-if="displayHydrograph.times?.length || displayHydrograph.obs?.length || displayHydrograph.forecast?.length" :hydrograph="displayHydrograph" :forcing="displayForcing" :visible-components="{}" :show-observed="showObserved" :show-current="trialMode!=='manual'" :compact-legend="trialMode==='manual'" :observed-only="!currentHydrograph?.forecast?.length && !comparisonLines.length" :comparisons="comparisonLines" :current-curve="{ label: displayResult?.evaluationMode==='manual' ? '人工试调' : '自动率定', color: '#ca6e30' }" />
             <div v-else class="process-empty">{{ cal.calibrationMode === 'event' ? '选择洪水查看雨流过程' : '暂无计算结果' }}</div>
           </section>
 
           <section class="panel result-panel">
             <nav class="dock-tabs" aria-label="率定工作区"><button v-if="trialMode==='manual'" :class="{active:dockTab==='tune'}" @click="selectDock('tune')">人工参数</button><button :class="{active:dockTab==='evaluation'}" @click="selectDock('evaluation')">全场评价</button><button :class="{active:dockTab==='parameters'}" @click="selectDock('parameters')">本组参数</button><button :class="{active:dockTab==='records'}" @click="selectDock('records')">计算记录（{{ cal.trialRecords.length }}）</button><button class="dock-collapse" @click="dockOpen=!dockOpen">{{ dockOpen?'收起':'展开' }}</button></nav>
-            <div v-if="displayResult" class="record-actions"><button v-if="displayResult.bestParameters" class="btn primary" @click="openSaveParameters">保存参数</button><button v-if="displayResult.bestParameters" class="btn" @click="useSelectedForTrial">载入人工试调</button><details class="more-actions"><summary>更多操作</summary><button class="btn" @click="conditionsDialog.showModal()">本次计算设置</button><button class="btn" :disabled="cal.running" @click="rerunResult">{{ displayResult.evaluationMode==='manual'?'再次模拟':'再次自动率定' }}</button><button class="btn" @click="simulateBest">用这组参数模拟其他洪水</button></details><ResultSaveBar :result-id="canonicalResultId" :suggestion="selectedRecordName" @saved="recordRenamed" /></div>
-            <template v-if="dockOpen"><CalculationEvaluation v-if="dockTab==='evaluation' && displayResult" :result="displayResult" /><CalculationParameters v-if="dockTab==='parameters' && displayResult" :result="displayResult" /><div v-if="dockTab==='records'" class="calculation-history"><div v-for="record in [...cal.trialRecords].reverse()" :key="record.taskId" class="history-row"><button class="text-button" @click="viewCalculation(record)">{{ recordName(record) }}<small> · {{ record.manual?'人工试调':'自动率定' }} · {{ shortTime(record.completedAt) }}</small></button><span>{{ record.taskId===displayResult?.taskId?'正在查看':'' }}</span><button class="text-button" @click="renameCalculation(record)">✎ 改名</button></div></div><details v-if="displayResult?.optimizer?.history?.length && dockTab==='evaluation'" class="calculation-history"><summary>参数搜索过程 · {{ terminationLabel }}</summary><SearchProgress :optimizer="displayResult.optimizer" /></details><p v-if="savedParameterName" class="result-stamp">参数已保存：{{ savedParameterName }} <button class="text-button" @click="goSimulation">进入洪水模拟 →</button></p><p v-if="!displayResult && dockTab!=='tune'" class="empty">选择计算记录后查看评价和参数。</p></template>
+            <div v-if="displayResult" class="record-actions"><button v-if="displayResult.bestParameters" class="btn primary" @click="openSaveParameters">保存参数</button><button v-if="displayResult.bestParameters" class="btn" @click="useSelectedForTrial" :disabled="legacyEventScheme">载入所选参数</button><details class="more-actions"><summary>更多操作</summary><button class="btn" @click="conditionsDialog.showModal()">本次计算设置</button><button class="btn" :disabled="cal.running" @click="rerunResult">{{ displayResult.evaluationMode==='manual'?'再次模拟':'再次自动率定' }}</button><button class="btn" @click="simulateBest">用这组参数模拟其他洪水</button></details><ResultSaveBar :result-id="canonicalResultId" :suggestion="selectedRecordName" @saved="recordRenamed" /></div>
+            <template v-if="dockOpen"><CalculationEvaluation v-if="dockTab==='evaluation' && displayResult" :result="displayResult" :show-overlap-details="false" /><CalculationParameters v-if="dockTab==='parameters' && displayResult" :result="displayResult" /><div v-if="dockTab==='records'" class="calculation-history"><div v-for="record in [...cal.trialRecords].reverse()" :key="record.taskId" class="history-row"><button class="text-button" @click="viewCalculation(record)">{{ recordName(record) }}<small> · {{ record.manual?'人工试调':'自动率定' }} · {{ shortTime(record.completedAt) }}</small></button><span>{{ record.taskId===displayResult?.taskId?'正在查看':'' }}</span><button class="text-button" @click="renameCalculation(record)">✎ 改名</button></div></div><details v-if="displayResult?.optimizer?.history?.length && dockTab==='evaluation'" class="calculation-history"><summary>参数搜索过程 · {{ terminationLabel }}</summary><SearchProgress :optimizer="displayResult.optimizer" /></details><p v-if="savedParameterName" class="result-stamp">参数已保存：{{ savedParameterName }} <button class="text-button" @click="goSimulation">进入洪水模拟 →</button></p><p v-if="!displayResult && dockTab!=='tune'" class="empty">选择计算记录后查看评价和参数。</p></template>
           </section>
 
         <aside v-if="trialMode === 'manual'" v-show="dockOpen && dockTab==='tune'" class="panel parameter-panel">
@@ -133,7 +135,7 @@
         </main>
       </div>
 
-      <HydrologyDialog ref="conditionsDialog" class="settings-dialog"><header class="dialog-heading"><h2>本次计算设置</h2><button class="btn" @click="conditionsDialog.close()">关闭</button></header><CalculationConditions v-if="displayResult" :result="displayResult" :request="displayResult.frozenRequest || {}" /></HydrologyDialog>
+      <HydrologyDialog ref="conditionsDialog" class="settings-dialog"><header class="dialog-heading"><h2>本次计算设置</h2><button class="btn" @click="conditionsDialog.close()">关闭</button></header><CalculationConditions v-if="displayResult" :result="displayResult" :request="displayResult.frozenRequest || {}" :process-id="currentPeriodId" :comparisons="curveOptions.map(row=>({...row,result:trialResults[row.taskId]}))" /></HydrologyDialog>
       <HydrologyDialog ref="settings" class="settings-dialog" aria-labelledby="cal-settings-title" @click="closeBackdrop($event, settings)">
         <header class="dialog-heading"><h2 id="cal-settings-title">率定设置</h2><button class="btn" :disabled="parameterLoading" @click="settings.close()">完成</button></header>
         <div class="settings-summary"><span>{{ cal.section }}</span><span>新安江产流 · 坡面线性水库 · 马斯京根汇流</span></div>
@@ -154,12 +156,13 @@
             <div class="field"><label for="algorithm">调参算法</label><select id="algorithm" class="input" :value="cal.algorithm" :disabled="cal.running || !editing" @change="cal.setOptimizerConfig('algorithm', $event.target.value)"><option v-for="row in algorithms" :key="row.id" :value="row.id">{{ row.label }}</option></select></div>
             <div class="field"><label for="max-evals">评价次数</label><input id="max-evals" class="input" type="number" min="1" step="1" :value="cal.maxEvaluations" :disabled="cal.running || !editing" @change="cal.setOptimizerConfig('maxEvaluations', $event.target.value)" /></div>
           </div>
+          <p v-if="cal.algorithm==='SCE_UA'" class="settings-note">SCE-UA：{{ sceDimension }} 个活动参数 × {{ sceComplexes }} 个复合体，实际种群 {{ sceComplexes*(2*sceDimension+1) }}，至少 {{ sceComplexes*(2*sceDimension+1)+1 }} 次评价（含初值；分阶段分别计算）。<label>复合体数<input class="input" type="number" min="1" max="20" :value="sceComplexes" :disabled="cal.running||!editing" @change="cal.optimizerSettings={...cal.optimizerSettings,complexes:Number($event.target.value)}" /></label></p>
           <h3 class="settings-section-title">评价指标</h3>
           <div class="objective-list"><label v-for="objective in objectives" :key="objective.key"><span><input type="checkbox" :checked="cal.criteria.metrics[objective.key]" :disabled="cal.running || !editing" @change="cal.setObjectiveMetric(objective.key, $event.target.checked)" /> {{ objective.label }}</span><input type="number" min="0" max="1" step="0.05" :value="cal.criteria.weights[objective.key]" :aria-label="objective.label + ' 权重'" :disabled="cal.running || !editing" @change="cal.setObjectiveWeight(objective.key, $event.target.value)" /></label></div>
           <p v-if="!objectiveWeightValid" class="field-error">指标权重合计须为1，当前为{{ objectiveWeightTotal.toFixed(2) }}</p>
         </template>
-        <ScientificConditionsEditor :model-value="cal.scienceConditionsDraft" :science-version-id="cal.scienceVersionId" :state-policy="cal.statePolicy" :warmup-days="cal.warmupDays" :continuous="cal.calibrationMode==='continuous'" :disabled="cal.running || !editing" @update:model-value="changeConditions" />
-        <label v-if="cal.statePolicy==='continuous-origin'" class="field continuous-origin-field">连续演算开始时间<input id="continuous-origin" class="input" type="datetime-local" step="3600" :value="cal.continuousOrigin" :disabled="cal.running || !editing" @change="cal.setScienceField('continuousOrigin',$event.target.value)" /><small>{{ originDuration }}</small></label>
+        <ScientificConditionsEditor v-if="!legacyEventScheme" :model-value="cal.scienceConditionsDraft" :science-version-id="cal.scienceVersionId" :state-policy="cal.statePolicy" :warmup-days="cal.warmupDays" :continuous="cal.calibrationMode==='continuous'" :disabled="cal.running || !editing || legacyEventScheme" @update:model-value="changeConditions" />
+        <label v-if="cal.calibrationMode==='continuous' && cal.statePolicy==='continuous-origin'" class="field continuous-origin-field">连续演算开始时间<input id="continuous-origin" class="input" type="datetime-local" step="3600" :value="cal.continuousOrigin" :disabled="cal.running || !editing" @change="cal.setScienceField('continuousOrigin',$event.target.value)" /><small>{{ originDuration }}</small></label>
         <details class="advanced-settings"><summary>算法细项与资料准备</summary>
           <p class="settings-note">本站网与处理规则随方案保存。<button class="text-button" :disabled="cal.running || !editing || parameterLoading" @click="applyCurrentPreparation">采用当前站网与处理规则</button>（从“流域与站网”读取，保存新版本时确认重建全部选用输入）</p>
           <div class="settings-grid">
@@ -188,6 +191,7 @@ import SearchProgress from '@/components/params/SearchProgress.vue'
 import RoutingParameterFields from '@/components/params/RoutingParameterFields.vue'
 import ScientificConditionsEditor from '@/components/params/ScientificConditionsEditor.vue'
 import ResultSaveBar from '@/components/model/ResultSaveBar.vue'
+import { retentionChanged, trackTemporary, changeRetention } from '@/services/resultRetentionService'
 import CalculationEvaluation from '@/components/model/CalculationEvaluation.vue'
 import CalculationParameters from '@/components/model/CalculationParameters.vue'
 import CalculationConditions from '@/components/model/CalculationConditions.vue'
@@ -196,7 +200,7 @@ import NumericReadiness from '@/components/model/NumericReadiness.vue'
 import HydrologyDialog from '@/components/model/HydrologyDialog.vue'
 import FloodColumnHeader from '@/components/model/FloodColumnHeader.vue'
 import { sortFloodRows } from '@/services/floodTablePresentation'
-import { fixedTrialRequest, readTrialWorkspace, saveTrialWorkspace, processComparisonIdentity } from '@/services/manualTrialWorkspace'
+import { fixedTrialRequest, readTrialWorkspace, saveTrialWorkspace, processOverlayReason, preferredCalculationRecord } from '@/services/manualTrialWorkspace'
 import { routingIsStable } from '@/services/routingPresentation'
 import { useAppStore } from '@/stores/app'
 import { useCalibrationStore } from '@/stores/calibration'
@@ -217,13 +221,15 @@ const schemeBar = ref(null), schemeOpened = ref(false), trialMode = ref('automat
 const conditionsDialog = ref(null)
 const floodCollapsed=ref(false),dockTab=ref('evaluation'),dockOpen=ref(true),recordNames=reactive({})
 function selectDock(value){dockTab.value=value;dockOpen.value=true}
-watch(trialMode,value=>{dockTab.value=value==='manual'?'tune':'evaluation';dockOpen.value=true})
+watch(trialMode,async value=>{dockTab.value=value==='manual'?'tune':'evaluation';dockOpen.value=true;if(value==='manual'&&!manualEntryInitialized.value){manualEntryInitialized.value=true;const id=displayResult.value?.taskId;await loadTrialSource(id?'result:'+id:adoptedParameter.value?'parameter:'+adoptedParameter.value.parameter_id:'initial')}})
 const canonicalResultId=computed(()=>displayResult.value?.operationId||displayResult.value?.primaryTaskId||displayResult.value?.taskId)
 function recordName(record){const result=trialResults[record.taskId];return recordNames[result?.operationId||record.taskId] || record.name || `${cal.modelSchemeName} · ${record.manual?'人工试调':'自动率定'} · ${shortTime(record.completedAt)}`}
 const selectedRecordName=computed(()=>recordNames[canonicalResultId.value]||recordName(cal.trialRecords.find(row=>row.taskId===displayResult.value?.taskId)||{taskId:displayResult.value?.taskId,manual:displayResult.value?.evaluationMode==='manual'}))
 function recordRenamed(row){recordNames[canonicalResultId.value]=row.name}
+async function discardCurve(row){const id=trialResults[row.taskId]?.operationId||row.taskId;try{await ElMessageBox.confirm('将这次试调移入回收站，已保存参数保留。','丢弃试调',{confirmButtonText:'丢弃',cancelButtonText:'取消'});const state=await modelApi('result-retention/'+id);await changeRetention(id,'discard',state.revision)}catch(failure){if(failure instanceof Error)calculationError.value=failure.message}}
+watch(retentionChanged,async()=>{if(cal.modelSchemeId){cal.runResult=null;inspectedResult.value=null;await loadSchemeCalculations();sessionTrialIds.value=sessionTrialIds.value.filter(id=>Boolean(trialResults[id]))}})
 async function renameCalculation(record){try{const result=trialResults[record.taskId],id=result?.operationId||record.taskId;const old=await modelApi('result-metadata/'+id);const {value}=await ElMessageBox.prompt('修改计算记录名称，不改变参数或过程','修改名称',{inputValue:recordName(record),inputValidator:value=>Boolean(value?.trim())&&value.trim().length<=80});const saved=await modelApi('result-metadata/'+id,{method:'POST',body:{name:value.trim(),notes:old.notes||'',collection:old.collection||'',favorite:Boolean(old.favorite),revision:old.revision||0}});recordNames[id]=saved.name}catch(failure){if(failure instanceof Error)calculationError.value=failure.message}}
-async function useSelectedForTrial(){if(!displayResult.value)return;const id=displayResult.value.taskId;trialMode.value='manual';await loadTrialSource('result:'+id);dockTab.value='tune';dockOpen.value=true}
+async function useSelectedForTrial(){if(!displayResult.value)return;const id=displayResult.value.taskId;manualEntryInitialized.value=true;trialMode.value='manual';await loadTrialSource('result:'+id);dockTab.value='tune';dockOpen.value=true}
 const eventQuery = ref(''), eventYear = ref('all'), purposeFilter = ref('all'), eventPage = ref(1)
 const eventScope = ref('selected'), peakMin = ref(''), peakMax = ref(''), eventSort = ref('time')
 const autoSplitPreview = ref(null)
@@ -239,6 +245,11 @@ const routingRecord = ref(null), routingError = ref(''), selectedContinuousPerio
 const manualRouting = ref(null)
 const trialParams=ref({}), trialRouting=ref(null), trialSource=ref('方案初值'), trialScope=ref('current')
 const trialReady=ref(false), adoptedParameter=ref(null), loadPairedConditions=ref(false)
+const sessionTrialIds=ref([])
+const explicitHistoryId=ref(null)
+const manualEntryInitialized=ref(false)
+const legacyEventScheme=computed(()=>cal.calibrationMode==='event' && (cal.statePolicy==='continuous-origin' || Boolean(cal.continuousOrigin)))
+const selectedParametersAdopted=computed(()=>namedParameters.value.find(row=>row.id===adoptedParameter.value?.parameter_id)?.sourceTaskId===(displayResult.value?.primaryTaskId||displayResult.value?.taskId))
 const curveSelection=reactive({}), automaticReference=ref(''), showObserved=ref(true)
 const parameterSaveRequest=ref(null), eventSortKey=ref('start'), eventSortDirection=ref('asc')
 const clone=value=>JSON.parse(JSON.stringify(value))
@@ -251,7 +262,7 @@ async function loadTrialSource(value){
     if(value==='initial'){params=cal.params;const row=await modelApi('routing-versions');routing=cal.manualRoutingPayload||(row.versions||[]).find(row=>row.routingVersionId===cal.schemeRoutingVersionId)?.parameters;label='方案初值'}
     else if(value==='default'){params=app.backendCase.parameters;routing=(await modelApi('database/routing-defaults')).parameters;label='模型默认参数'}
     else if(value.startsWith('parameter:')){const row=await modelApi('parameter-schemes/'+encodeURIComponent(value.slice(10)));params=row.parameters;const routes=await modelApi('routing-versions');routing=row.routingParameters||row.routingSnapshot?.parameters||(routes.versions||[]).find(item=>item.routingVersionId===row.routing?.versionId)?.parameters;label='参数库 · '+row.name}
-    else if(value.startsWith('result:')){const result=trialResults[value.slice(7)];params=result.bestParameters;const version=result.routingCandidate?.routingVersionId||result.routing?.versionId||result.routingVersionId||result.lineage?.routingVersionId||result.frozenRequest?.routing?.versionId;const routes=await modelApi('routing-versions');routing=result.bestRoutingParameters||result.routingParameters||(routes.versions||[]).find(row=>row.routingVersionId===version)?.parameters;label='本方案自动率定 · '+shortTime(cal.trialRecords.find(row=>row.taskId===value.slice(7))?.completedAt)}
+    else if(value.startsWith('result:')){const result=trialResults[value.slice(7)];params=result.bestParameters;const version=result.routingCandidate?.routingVersionId||result.routing?.versionId||result.routingVersionId||result.lineage?.routingVersionId||result.frozenRequest?.routing?.versionId;const routes=await modelApi('routing-versions');routing=result.bestRoutingParameters||result.routingParameters||(routes.versions||[]).find(row=>row.routingVersionId===version)?.parameters;label=(result.evaluationMode==='manual'?'人工试调参数 · ':'自动率定参数 · ')+shortTime(cal.trialRecords.find(row=>row.taskId===value.slice(7))?.completedAt)}
     if(!params||!routing)throw new Error('该记录缺少完整产汇流参数，请选择其他记录')
     trialParams.value=clone(params);trialRouting.value=clone(routing);trialSource.value=label;trialBaseline.value={params:clone(params),routing:clone(routing)}
   }catch(failure){calculationError.value=failure.message}finally{parameterLoading.value=false}
@@ -284,13 +295,13 @@ const originDuration = computed(() => {
 })
 const slopeTunerDefinitions = ['RS','RI','RG'].map((key,i)=>({key,symbol:key+' K',label:['地表径流','壤中流','地下径流'][i],unit:'h',min:.05,max:720,step:.05}))
 const channelTunerDefinitions = [{key:'k_hours',symbol:'K',label:'河道传播时间',unit:'h',min:.5,max:720,step:.1},{key:'x',symbol:'X',label:'马斯京根权重',unit:'',min:0,max:.5,step:.01}]
-watch([trialParams,trialRouting,trialSource,trialScope],()=>{if(trialReady.value&&cal.modelSchemeId)saveTrialWorkspace(cal.contextKey,cal.modelSchemeId,{params:trialParams.value,routing:trialRouting.value,source:trialSource.value,scope:trialScope.value,baseline:trialBaseline.value})},{deep:true})
+watch([trialParams,trialRouting,trialSource,trialScope,sessionTrialIds],()=>{if(trialReady.value&&cal.modelSchemeId)saveTrialWorkspace(cal.contextKey,cal.modelSchemeId,{params:trialParams.value,routing:trialRouting.value,source:trialSource.value,scope:trialScope.value,baseline:trialBaseline.value,successIds:sessionTrialIds.value})},{deep:true})
 let previewSequence = 0
-const allEvents = computed(() => cal.schemeEvents)
-const eventYears = computed(() => [...new Set(allEvents.value.map(row => String(row.start).slice(0, 4)))].sort().reverse())
+const allEvents = computed(() => legacyEventScheme.value ? cal.schemeEvents : cal.publicEvents)
+const eventYears = computed(() => [...new Set(browserEvents.value.map(row => String(row.start).slice(0, 4)))].sort().reverse())
 const selectedEventRows = computed(() => allEvents.value.filter(row => row.purpose !== '未使用' && row.status !== 'inactive'))
 const browserEvents = computed(() => eventScope.value === 'selected' ? selectedEventRows.value : eventScope.value === 'delivery'
-  ? allEvents.value.filter(row => cal.deliverySelection.some(saved => saved.id === row.id)) : allEvents.value)
+  ? allEvents.value.filter(row => cal.deliverySelection.some(saved => saved.id === row.id)) : cal.publicEvents)
 const filteredEvents = computed(() => {
   const query = eventQuery.value.trim()
   const rows = browserEvents.value.filter(row => {
@@ -324,6 +335,8 @@ const periodFields = [
 const continuousError = computed(() => cal.calibrationMode === 'continuous' ? cal.validateCalibration({ manual: trialMode.value === 'manual' }).errors.find(value => !value.includes('次评价')) || '' : '')
 const originError = computed(() => continuousOriginError(cal.statePolicy, cal.continuousOrigin, cal.calibrationMode === 'continuous' ? cal.calibrationStart : selectedEventRows.value.map(row => row.start).sort()[0]))
 const algorithms = computed(() => app.backendCase?.algorithms || [])
+const sceComplexes=computed(()=>cal.optimizerSettings?.complexes??5)
+const sceDimension=computed(()=>Object.values(combinedSelection.value??{}).filter(row=>row&&row.minimum<row.maximum).length || combinedDefinitions.value.length)
 const jointProfiles = computed(() => app.backendCase?.jointSearchProfiles || [])
 const jointDefinitions = computed(() => jointProfiles.value.find(row => row.id === cal.jointProfile)?.definitions || {})
 const presentRoutingDefinition = row => ({...row, ...(row.key==='muskingum_k_scale'?{label:'河道传播时间整体调整',symbol:'K整体调整',initialReadOnly:true}:row.key==='muskingum_x'?{label:'马斯京根权重',symbol:'X'}:{})})
@@ -357,6 +370,7 @@ const objectives = [{ key: 'nse', label: 'NSE' }, { key: 'kge', label: 'KGE' }, 
 const objectiveWeightTotal = computed(() => Object.entries(cal.criteria.metrics).reduce((sum, [key, enabled]) => sum + (enabled ? Number(cal.criteria.weights[key] || 0) : 0), 0))
 const objectiveWeightValid = computed(() => Math.abs(objectiveWeightTotal.value - 1) < 0.001)
 const canRun = computed(() => {
+  if (legacyEventScheme.value) return false
   if (!cal.modelSchemeId || cal.running || cal.activeOperationId || !app.backendCase || parameterLoading.value || parameterConstraint.value || originError.value || routingValidityError.value) return false
   if(trialMode.value==='manual')return trialReady.value && (cal.calibrationMode==='continuous' ? Boolean(continuousPeriods.value.find(row=>row.id===currentPeriodId.value)) : (trialScope.value==='all'?selectedEventRows.value.length>0:Boolean(activeEvent.value&&activeEvent.value.purpose!=='未使用'&&activeEvent.value.status!=='inactive')))
   if (cal.calibrationMode === 'event' && (physicalConflict.value || physicalGrouping.value.errors.length)) return false
@@ -366,6 +380,7 @@ const canRun = computed(() => {
 })
 const calculationBlockReason = computed(() => {
   if (!cal.modelSchemeId || cal.running) return ''
+  if (legacyEventScheme.value) return '原方案保留连续演算条件；请从计算记录按原条件复算，或另建场次方案开展新的率定与试调。'
   if (!app.backendCase) return app.backendError || '模型服务尚未连接'
   if (parameterLoading.value) return '正在读取初始参数'
   if (cal.activeOperationId) return '请先查看当前计算'
@@ -396,14 +411,16 @@ const currentHydrograph = computed(() => {
 const emptyHydrograph = { times: [], forecast: [], obs: [], metrics: null }
 const displayHydrograph = computed(() => currentHydrograph.value || preview.value?.hydrograph || emptyHydrograph)
 const displayForcing = computed(() => currentHydrograph.value?.forcing || (!currentHydrograph.value ? preview.value?.forcing : null) || { precipitation: [], temperature: [], components: {} })
-const manualCurves=computed(()=>cal.trialRecords.filter(row=>row.manual&&trialResults[row.taskId]).slice(-2))
+const manualCurves=computed(()=>sessionTrialIds.value.map(id=>cal.trialRecords.find(row=>row.taskId===id&&row.manual)).filter(row=>row&&trialResults[row.taskId]).slice(-2))
 const automaticCurves=computed(()=>cal.trialRecords.filter(row=>!row.manual&&trialResults[row.taskId]))
-const curveOptions=computed(()=>[...(automaticReference.value?[{...automaticCurves.value.find(row=>row.taskId===automaticReference.value),label:'自动率定参考',color:'#187f84',lineType:'dashed'}]:[]),...manualCurves.value.map((row,index)=>({...row,label:'人工试调 '+(cal.trialRecords.filter(row=>row.manual).findIndex(item=>item.taskId===row.taskId)+1),color:['#bf6832','#7952a1'][index],lineType:index?'dotted':'solid'}))].filter(row=>row.taskId))
+const historicalCurve=computed(()=>cal.trialRecords.find(row=>row.taskId===explicitHistoryId.value&&row.manual&&!manualCurves.value.some(current=>current.taskId===row.taskId)))
+const curveOptions=computed(()=>[...(automaticReference.value?[{...automaticCurves.value.find(row=>row.taskId===automaticReference.value),label:'自动率定',color:'#187f84',lineType:'dashed'}]:[]),...manualCurves.value.map((row,index)=>({...row,label:'人工试调'+(sessionTrialIds.value.indexOf(row.taskId)+1),color:['#bf6832','#7952a1'][index],lineType:index?'dotted':'solid'})),...(historicalCurve.value?[{...historicalCurve.value,label:'历史人工试调',color:'#607685',lineType:'dotted'}]:[])].filter(row=>row.taskId))
 const comparisonLines = computed(() => {
   if(trialMode.value!=='manual')return []
   return curveOptions.value.filter(row=>curveSelection[row.taskId]!==false).flatMap(row=>{const result=trialResults[row.taskId],hydrograph=result?.hydrographs?.[currentPeriodId.value];return hydrograph&&sameProcessConditions(result)?[{...row,selected:row.taskId===displayResult.value?.taskId,hydrograph}]:[]})
 })
-function sameProcessConditions(result){const base=displayResult.value;if(!base)return true;return processComparisonIdentity(result.frozenRequest,result,currentPeriodId.value)===processComparisonIdentity(base.frozenRequest,base,currentPeriodId.value)}
+function curveOverlayReason(result){return processOverlayReason(result,{hydrographs:{[currentPeriodId.value]:displayHydrograph.value}},currentPeriodId.value)}
+function sameProcessConditions(result){return !curveOverlayReason(result)}
 function curveParameterChanges(row){const result=trialResults[row.taskId],reference=trialResults[automaticReference.value]||trialResults[manualCurves.value[0]?.taskId];const before=reference?.bestParameters||cal.params;const changes=Object.entries(result?.bestParameters||{}).filter(([key,value])=>value!==before[key]).map(([key,value])=>`${key}：${before[key]} → ${value}`);if(JSON.stringify(result?.bestRoutingParameters)!==JSON.stringify(reference?.bestRoutingParameters))changes.push('汇流参数有调整，可在原条件中查看');return changes.join('；')||'与参考产汇流参数相同'}
 const processMetrics = computed(() => {
   const metrics = currentHydrograph.value?.metrics || {}
@@ -470,18 +487,28 @@ function registerWindow() {
   windowDraft.id = ''; windowDraft.start = ''; windowDraft.end = ''
 }
 async function restoreSchemeView() {
+  const schemeId=cal.modelSchemeId
+  if(!schemeId)return
   cal.operationMode = 'calibration'; cal.fixedEventSimulation = false
   trialReady.value=false; trialMode.value = 'automatic'; preparationIssues.value = []; calculationError.value = ''; inspectedResult.value = null
   savedParameterId.value = null; savedParameterName.value = ''; referenceParameterId.value = ''
+  const temporary=readTrialWorkspace(cal.contextKey,cal.modelSchemeId)
+  sessionTrialIds.value=temporary?.successIds||[];automaticReference.value='';manualEntryInitialized.value=Boolean(temporary);explicitHistoryId.value=null
   eventScope.value = selectedEventRows.value.length ? 'selected' : cal.deliverySelection.length ? 'delivery' : 'all'
   autoSplitPreview.value = null
-  if (cal.activeOperationId) await cal.awaitOperation(cal.activeOperationId, cal.activeOperationRequest)
-  else if (cal.modelSchemeId) await loadSchemeCalculations()
-  const saved=await modelApi('model-schemes/'+cal.modelSchemeId)
+  if (cal.activeOperationId) {
+    const manual=cal.activeOperationRequest?.calibration?.evaluationMode==='manual'
+    const outcome=await cal.awaitOperation(cal.activeOperationId,cal.activeOperationRequest)
+    if(manual&&outcome.ok){const id=outcome.result.primaryTaskId||outcome.result.taskId;if(id&&!sessionTrialIds.value.includes(id))sessionTrialIds.value.push(id)}
+  }
+  if(cal.modelSchemeId!==schemeId)return
+  await loadSchemeCalculations()
+  if(cal.modelSchemeId!==schemeId)return
+  const saved=await modelApi('model-schemes/'+schemeId)
+  if(cal.modelSchemeId!==schemeId)return
   adoptedParameter.value=saved.adoptedParameter
-  const temporary=readTrialWorkspace(cal.contextKey,cal.modelSchemeId)
-  const comparable=automaticCurves.value.filter(row=>resultProcessMatches(cal,trialResults[row.taskId],currentPeriodId.value)).at(-1)
-  await loadTrialSource(adoptedParameter.value?'parameter:'+adoptedParameter.value.parameter_id:comparable?'result:'+comparable.taskId:'initial')
+  const selectedId=displayResult.value?.taskId
+  await loadTrialSource(selectedId?'result:'+selectedId:adoptedParameter.value?'parameter:'+adoptedParameter.value.parameter_id:'initial')
   if(temporary){trialParams.value=temporary.params;trialRouting.value=temporary.routing;trialSource.value=temporary.source;trialScope.value=temporary.scope||'current';trialBaseline.value=temporary.baseline||{params:clone(temporary.params),routing:clone(temporary.routing)}}
   trialReady.value=true
 }
@@ -489,10 +516,14 @@ async function loadSchemeCalculations() {
   const schemeId = cal.modelSchemeId
   try {
     const [payload,catalog] = await Promise.all([modelApi('operations'),modelApi('result-catalog')])
+    if(cal.modelSchemeId!==schemeId)return
     for(const row of catalog.results||[])recordNames[row.id]=row.name
-    const operations = (payload.operations || []).filter(row => row.operation!=='stateReplay' && row.status === 'completed' && (row.runConfig?.request?.scheme?.id === schemeId || row.runConfig?.request?.lineage?.schemeId===schemeId || row.runConfig?.frozenRequest?.lineage?.schemeId===schemeId || row.lineage?.schemeId === schemeId))
+    for(const row of catalog.results||[])if(row.schemeId===schemeId)trackTemporary(row)
+    const available = new Set((catalog.results||[]).map(row=>row.id))
+    const operations = (payload.operations || []).filter(row => available.has(row.taskId) && row.operation!=='stateReplay' && row.status === 'completed' && (row.runConfig?.request?.scheme?.id === schemeId || row.runConfig?.request?.lineage?.schemeId===schemeId || row.runConfig?.frozenRequest?.lineage?.schemeId===schemeId || row.lineage?.schemeId === schemeId))
       .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)))
     const records = []
+    for (const key of Object.keys(trialResults)) delete trialResults[key]
     for (const operation of operations) {
       const result = await modelApi('operations/' + (operation.operationId || operation.taskId) + '/result')
       if (cal.modelSchemeId !== schemeId) return
@@ -500,18 +531,21 @@ async function loadSchemeCalculations() {
       const request = result.frozenRequest || operation.runConfig.request || operation.runConfig.frozenRequest
       trialResults[taskId] = { ...result, taskId, operationId:operation.operationId || operation.taskId, frozenRequest: request }
       records.push({ taskId, conditions: trialConditions(request, result), parameters: result.bestParameters,
-        completedAt: operation.completedAt, manual: result.evaluationMode === 'manual' })
+        completedAt: operation.completedAt, manual: operation.operation === 'manualTrial' || (operation.operation === 'rerun' && result.evaluationMode === 'manual') })
     }
-    if (cal.modelSchemeId === schemeId) { cal.trialRecords = records; if(!automaticReference.value)automaticReference.value=records.filter(row=>!row.manual).at(-1)?.taskId||''; const last = records.at(-1); if (last) inspectedResult.value = trialResults[last.taskId]; cal.saveCurrentWorkspace() }
+    if (cal.modelSchemeId === schemeId) { cal.trialRecords = records; if(!automaticReference.value)automaticReference.value=records.filter(row=>!row.manual).at(-1)?.taskId||''; const selected=preferredCalculationRecord(records,inspectedResult.value?.taskId,sessionTrialIds.value); inspectedResult.value=selected?trialResults[selected.taskId]:null; cal.saveCurrentWorkspace() }
   } catch (failure) { calculationError.value = failure.message }
 }
 async function startCalculation() {
   if (!canRun.value) return
   calculationError.value = ''; preparationIssues.value = []; savedParameterName.value = ''; savedParameterId.value = null
   let request
+  const isManual=trialMode.value==='manual'
+  explicitHistoryId.value=null
   try {
     let options={}
     if(trialMode.value==='manual'){
+      await alignStartConditions()
       const rows=allEvents.value
       const source={...app, selectedRoutingVersionId:cal.schemeRoutingVersionId, selectedInputBundleVersionId:cal.schemeSourceBundleVersionId||app.selectedInputBundleVersionId}
       const editor={...cal,sourcePlan:null,sourcePlanRequestTemplate:null,params:trialParams.value,requiredInputBundleVersionId:null}
@@ -536,14 +570,21 @@ async function startCalculation() {
     if (!outcome.ok) { calculationError.value = outcome.errors?.join('；') || '计算未完成'; return }
     const primaryId = outcome.result.primaryTaskId || outcome.result.taskId
     if (primaryId) {trialResults[primaryId] = {...outcome.result,frozenRequest:outcome.result.frozenRequest||request};inspectedResult.value=trialResults[primaryId]}
+    if(isManual && primaryId)sessionTrialIds.value=[...sessionTrialIds.value,primaryId]
+    if(!isManual && primaryId)automaticReference.value=primaryId
     await loadSchemeCalculations()
   } catch (failure) { calculationError.value = failure.message }
   finally { cal.running = false; cal.saveCurrentWorkspace() }
 }
 async function reconnectOperation() {
   calculationError.value = ''
+  const manual=cal.activeOperationRequest?.calibration?.evaluationMode==='manual'
   const outcome = await cal.awaitOperation(cal.activeOperationId, cal.activeOperationRequest)
   if (!outcome.ok) calculationError.value = outcome.errors.join('；')
+  else {
+    if(manual){const id=outcome.result.primaryTaskId||outcome.result.taskId;if(id&&!sessionTrialIds.value.includes(id))sessionTrialIds.value.push(id)}
+    await loadSchemeCalculations()
+  }
 }
 async function prepareFromStations() {
   try {
@@ -655,6 +696,7 @@ async function renameParameter() {
 }
 async function commitScheme() {
   if (parameterLoading.value) throw new Error('正在读取初始参数，请稍候再保存')
+  await alignStartConditions()
   if (cal.scienceConditionsDraft) {
     const descriptor=await modelApi('science-conditions',{method:'POST',body:{...cal.scienceConditionsDraft,baseVersionId:cal.scienceVersionId||null}})
     cal.scienceVersionId=descriptor.scienceVersionId;cal.scienceDescriptor=descriptor;cal.evaporationMode='science-version';cal.scienceConditionsDraft=null
@@ -666,6 +708,27 @@ async function commitScheme() {
   }
   const request = buildCalibrationRequest({app,calibration:{...cal,requiredInputBundleVersionId:null},operationMode:'calibration',events:allEvents.value,eventAssignment:cal.eventAssignment})
   return saveModelScheme(cal,request)
+}
+async function alignStartConditions(){
+  if(legacyEventScheme.value)return
+  const strategy=cal.calibrationMode==='event'?'independent-warmup':cal.statePolicy
+  if(cal.calibrationMode==='event'){cal.statePolicy=strategy;cal.continuousOrigin=null}
+  if(cal.scienceConditionsDraft){cal.scienceConditionsDraft.statePolicy={strategy,warmupHours:cal.warmupDays*24};return}
+  if(cal.scienceVersionId){
+    const source=await modelApi('science-conditions?versionId='+encodeURIComponent(cal.scienceVersionId))
+    if(source.statePolicy.strategy!==strategy || source.statePolicy.warmupHours!==cal.warmupDays*24)
+      cal.scienceConditionsDraft={evaporation:source.evaporation,statePolicy:{strategy,warmupHours:cal.warmupDays*24}}
+  }
+}
+async function newEventSchemeFromSelected(){
+  try{
+    const result=displayResult.value
+    const version=result.routingCandidate?.routingVersionId||result.frozenRequest?.routing?.versionId||result.lineage?.routingVersionId
+    const routes=await modelApi('routing-versions')
+    const routing=result.bestRoutingParameters||result.routingParameters||routes.versions.find(row=>row.routingVersionId===version)?.parameters
+    if(!routing)throw new Error('所选计算缺少完整汇流参数，请先恢复该计算记录')
+    await schemeBar.value.createEventScheme(result.bestParameters,clone(routing))
+  }catch(failure){calculationError.value=failure.message}
 }
 async function openSaveParameters() { parameterName.value=cal.modelSchemeName+' · '+(displayResult.value?.evaluationMode==='manual'?'试调参数':'率定参数');parameterSaveError.value=''; const scheme=await modelApi('model-schemes/'+cal.modelSchemeId);adoptedParameter.value=scheme.adoptedParameter;parameterSaveRequest.value={requestId:uniqueRequestId('PARAM'),sourceTaskId:displayResult.value.primaryTaskId||displayResult.value.taskId,schemeId:cal.modelSchemeId,adoptionRevision:adoptedParameter.value?.revision||0};parameterDialog.value.showModal() }
 function simulateBest(){router.push({path:'/simulation',query:{parameterResult:canonicalResultId.value}})}
@@ -693,21 +756,19 @@ async function saveParameters() {
 function goSimulation() { router.push({ path: '/simulation', query: savedParameterId.value ? { parameter: savedParameterId.value } : {} }) }
 function openState() {
   const result = displayResult.value
+  if (!result?.hydrographs?.[currentPeriodId.value]) return
   const eventState = result.eventStates?.find(row => row.eventId === currentPeriodId.value)
   const sourceTaskId = eventState?.taskId || result.stateCalculationTaskId || result.primaryTaskId || result.taskId
   router.push({ path: '/state', query: result.operationId
     ? { operation: result.operationId, label: cal.modelSchemeName, event: currentPeriodId.value }
     : { source: result.primaryTaskId || result.taskId || sourceTaskId, event: currentPeriodId.value, label: cal.modelSchemeName } })
 }
-function openRiverFlow() {
-  const result = displayResult.value
-  router.push({ path: '/results/'+(result.operationId || result.primaryTaskId || result.taskId)+'/sections', query:{process:currentPeriodId.value} })
-}
 async function viewCalculation(record) {
   try {
     const result = trialResults[record.taskId] || await tasks.getResult(record.taskId)
     const task = tasks.taskById(record.taskId) || await modelApi('calibration-tasks/' + record.taskId)
     trialResults[record.taskId] = result
+    explicitHistoryId.value=record.taskId
     inspectedResult.value = { ...result, taskId: record.taskId, frozenRequest: result.frozenRequest || task.request || task.runConfig }
   } catch (failure) { calculationError.value = failure.message }
 }
@@ -822,8 +883,8 @@ onMounted(refreshNamedParameters)
 .process-heading div>span{display:block;color:#7f9389;margin-top:6px}
 .process-heading .period-select{max-width:180px}
 .process-panel :deep(.hydrology-figure){height:clamp(456px,calc(100dvh - 310px),680px);flex:none;min-height:456px;padding:4px 8px;grid-template-rows:auto minmax(420px,1fr)}
-.selected-calculation{display:flex;align-items:center;flex-wrap:wrap;gap:7px 18px;padding:8px 16px;color:#6d8376}.selected-calculation>b{width:100%;font-size:14px;color:#2a5e49}.selected-calculation strong{color:#2f614e;font-weight:600}.selected-calculation>span{white-space:nowrap}
-.peak-detail{padding:0 16px 8px;color:#6d8376;font-size:14px}.peak-detail summary{cursor:pointer}.peak-detail>span{display:block;margin:7px 0}
+.selected-calculation{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px 20px;padding:12px 16px;color:#6d8376;line-height:1.65;font-variant-numeric:tabular-nums}.selected-calculation strong{color:#2f614e;font-weight:600}.selected-calculation>span{max-width:100%;overflow-wrap:anywhere}
+.calculation-record-info,.parameter-unsaved{margin:0;padding:4px 16px;color:#718579;font-size:13px;overflow-wrap:anywhere;line-height:1.6}.parameter-unsaved{color:#9a6534}.legacy-condition{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:12px 16px;background:#fbf4e9;color:#885d2d;border:1px solid #ead9bf}
 .dock-tabs{display:flex;align-items:center;gap:4px;padding:8px;border-bottom:1px solid #dfe9e2;flex-wrap:wrap}.dock-tabs button{border:0;background:none;color:#647d70;cursor:pointer;padding:10px;font-size:14px}.dock-tabs button.active{background:#eaf3ed;color:#266948;font-weight:600;border-radius:4px}.dock-tabs .dock-collapse{margin-left:auto}.record-actions{padding:12px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.record-actions :deep(.result-save-bar){width:100%;border-top:1px solid #e5ede8;padding:10px 0 0}.record-actions :deep(.result-save-bar b){font-size:14px}.record-actions :deep(.result-save-bar>div){display:none}.more-actions summary{cursor:pointer;padding:9px;color:#627c6d}.more-actions[open]{display:flex;flex-wrap:wrap;gap:8px}.curve-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid #cddfd2;border-radius:4px}.curve-chip.selected{background:#e1efe5;border-color:#6c9b7e}.curve-chip button{display:flex;gap:6px;align-items:center;white-space:nowrap}.curve-chip small{font-size:12px}.curve-chip input{margin:0}.curve-controls select{width:170px;min-width:0;flex:0 1 170px}
 .process-empty{display:grid;place-content:center;flex:1;color:#7f9389}
 .process-status{padding:0 16px;color:#718578}

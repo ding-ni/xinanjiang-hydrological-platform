@@ -18,7 +18,7 @@ test('manual trial is blocked until a saved reference parameter set has been com
   const actions = new Function('computed', 'app', 'cal', 'parameterLoading', 'parameterConstraint', 'physicalConflict',
     'physicalGrouping', 'trialMode', 'searchError', 'routingSearchError', 'objectiveWeightValid', 'routingError',
     'referenceParameterId', 'calculationError', 'modelApi', 'originError', 'routingValidityError', 'ElMessageBox','loadPairedConditions','trialReady','trialScope','selectedEventRows','activeEvent',
-    selectionAction + '\n' + eligibility + '\nreturn { applyReference, canRun }')(
+    'const legacyEventScheme={value:false};\n'+selectionAction + '\n' + eligibility + '\nreturn { applyReference, canRun }')(
     fn => ({ get value() { return fn() } }), app, cal, parameterLoading, empty, empty,
     { value: { errors: [] } }, { value: 'manual' }, empty, empty, { value: true }, empty,
     referenceParameterId, calculationError, async () => { await verification; return {

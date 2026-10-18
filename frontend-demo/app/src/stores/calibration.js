@@ -297,6 +297,7 @@ function createWorkspace(context) {
     jointProfile: 'reference-16', statePolicy: 'independent-warmup',
     scienceVersionId: null, scienceDescriptor: null, evaporationMode: 'constant-zero', scienceConditionsDraft: null,
     continuousOrigin: null, requiredInputBundleVersionId: null,
+    modeStartSettings: {},
     candidateWarmupHours: null,
     searchSeed: 42,
     optimizerSettings: {}, sourcePlan: null, sourcePlanRequestTemplate: null, originalCalibrationPlan: null, originalPlanChanged: false,
@@ -362,7 +363,7 @@ const WORKSPACE_FIELDS = [
   'calibrationTarget',
   'routingSearchParameters',
   'jointProfile', 'statePolicy', 'scienceVersionId', 'scienceDescriptor', 'evaporationMode', 'scienceConditionsDraft',
-  'continuousOrigin', 'requiredInputBundleVersionId',
+  'continuousOrigin', 'requiredInputBundleVersionId', 'modeStartSettings',
   'candidateWarmupHours',
   'searchSeed',
   'optimizerSettings', 'sourcePlan', 'sourcePlanRequestTemplate', 'originalCalibrationPlan', 'originalPlanChanged', 'searchParameterOrder', 'eventSplitSeed', 'eventAssignment', 'deliverySelection', 'configurationPending', 'deliveryProcessing',
@@ -503,6 +504,9 @@ export const useCalibrationStore = defineStore('calibration', {
       return currentInputFloodEvents(state.events, { registeredOnly: Boolean(state.backendContractVersion),
         selectedBundleVersionId: useAppStore().selectedInputBundleVersionId, registeredBundleVersionId: state.backendInputBundleVersionId,
         schemeWindows: state.schemeWindows || [] })
+    },
+    publicEvents(state) {
+      return state.events.filter(row => row.status !== 'inactive' && row.runtimeRegistered !== false)
     },
     activeEventCount(state) {
       return state.events.filter((event) => event.status !== 'inactive').length
@@ -747,6 +751,7 @@ export const useCalibrationStore = defineStore('calibration', {
       this.scienceVersionId = null; this.scienceDescriptor = null; this.candidateWarmupHours = null
       this.scienceConditionsDraft = null
       this.statePolicy = 'independent-warmup'; this.continuousOrigin = null; this.initialStateVersionId = null
+      this.modeStartSettings = {}
       this.sourcePlan = null; this.sourcePlanRequestTemplate = null; this.originalCalibrationPlan = null
       this.originalPlanChanged = false
       this.deliverySelection = []; this.configurationPending = false; this.deliveryProcessing = null
@@ -1114,13 +1119,24 @@ export const useCalibrationStore = defineStore('calibration', {
     setCalibrationMode(mode) {
       const normalized = mode === 'continuous' ? 'continuous' : 'event'
       if (this.calibrationMode === normalized) return
+      this.modeStartSettings ||= {}
+      this.modeStartSettings[this.calibrationMode] = { statePolicy: this.statePolicy, continuousOrigin: this.continuousOrigin, warmupDays: this.warmupDays }
       this.calibrationMode = normalized
-      if (normalized === 'continuous' && this.operationMode !== 'simulation' && !this.scienceVersionId && !this.sourcePlan) {
-        this.statePolicy = 'continuous-origin'
+      this.initialStateVersionId = null
+      const saved = this.modeStartSettings[normalized]
+      this.warmupDays = saved?.warmupDays ?? 7
+      if (normalized === 'event' && !this.sourcePlan) {
+        this.statePolicy = 'independent-warmup'
+        this.continuousOrigin = null
+      }
+      if (normalized === 'continuous' && this.operationMode !== 'simulation' && !this.sourcePlan) {
+        this.statePolicy = saved?.statePolicy || 'continuous-origin'
+        this.continuousOrigin = saved?.continuousOrigin || null
         if (!this.continuousOrigin && this.calibrationStart) {
           this.continuousOrigin = new Date(Date.parse(`${this.calibrationStart.replace(' ', 'T')}Z`) - Number(this.warmupDays) * 86400000).toISOString().slice(0, 16)
         }
       }
+      if (this.scienceConditionsDraft) this.scienceConditionsDraft.statePolicy = { strategy: this.statePolicy, warmupHours: this.warmupDays * 24 }
       this.markNeedsRun('率定方式已调整，请重新率定。')
     },
     setEvent(id, start = null, end = null) {

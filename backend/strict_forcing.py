@@ -11,6 +11,25 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 
+EVENT_QUALITY_POLICY = 'runoff-rain-ratio-statistic-only-v1'
+
+
+def evaluate_event_quality(*, legacy=False, **kwargs):
+    """Keep runoff/rain statistics without using their ratio to reject events.
+
+    The registered vendor rules remain unchanged for exact historical replay.
+    Event runoff can include antecedent storage and baseflow, so this ratio is
+    not a hard bound on whether the observations can be used for calibration.
+    """
+    from runoff_platform.data.event_quality import evaluate_event_quality as original
+    result = original(**kwargs)
+    if not legacy:
+        result['exclusion_reasons'] = [reason for reason in result['exclusion_reasons']
+                                       if reason != 'RUNOFF_PRECIPITATION_RATIO_EXCEEDS_MAXIMUM']
+        result['accepted'] = not result['exclusion_reasons']
+    return result
+
+
 def _hour(value):
     value = datetime.fromisoformat(str(value)) if not isinstance(value, datetime) else value
     if value.tzinfo is not None or value.minute or value.second or value.microsecond:

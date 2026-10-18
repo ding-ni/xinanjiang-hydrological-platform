@@ -180,6 +180,10 @@ export function selectCalibrationCandidates(events = [], options = {}) {
 
 export function buildCalibrationRequest({ app, calibration, operationMode, events = [], eventAssignment = null, eventSelection = null }) {
   const runType = operationMode === 'simulation' ? 'simulation' : 'calibration'
+  const legacySourceReplay = Boolean(calibration.sourcePlan && !calibration.originalPlanChanged)
+  const eventStatePolicy = calibration.calibrationMode === 'event' && !legacySourceReplay
+    ? 'independent-warmup'
+    : (calibration.statePolicy || 'independent-warmup')
   if (calibration.requiredInputBundleVersionId && selectedInputBundleVersionId(app) !== calibration.requiredInputBundleVersionId) {
     throw new Error(`当前候选要求资料 ${calibration.requiredInputBundleVersionId}，请先选择已登记的对应输入版本`)
   }
@@ -282,9 +286,9 @@ export function buildCalibrationRequest({ app, calibration, operationMode, event
       parameterRelease: 'candidate-only',
       initialParameterVersionId: calibration.paramVersion,
       initialParameters: { ...calibration.params },
-      statePolicy: calibration.statePolicy || 'independent-warmup',
+      statePolicy: eventStatePolicy,
       ...(calibration.searchParameterOrder ? { searchParameterOrder: [...calibration.searchParameterOrder] } : {}),
-      ...(calibration.statePolicy === 'continuous-origin' && calibration.continuousOrigin ? { continuousOrigin: calibration.continuousOrigin } : {}),
+      ...(eventStatePolicy === 'continuous-origin' && calibration.continuousOrigin ? { continuousOrigin: calibration.continuousOrigin } : {}),
       ...(calibration.calibrationTarget === 'joint' ? { target: 'joint', jointProfile: calibration.jointProfile || 'reference-16',
         ...(calibration.searchParameters != null ? { searchParameters: JSON.parse(JSON.stringify(calibration.searchParameters)) } : {}),
         ...(calibration.routingSearchParameters != null ? { routingSearchParameters: JSON.parse(JSON.stringify(calibration.routingSearchParameters)) } : {}) } : {}),

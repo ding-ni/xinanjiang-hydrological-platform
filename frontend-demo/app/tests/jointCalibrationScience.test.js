@@ -63,7 +63,8 @@ test('joint submission freezes both search groups, scientific version, state pol
   assert.equal(request.calibration.target, 'joint')
   assert.equal(request.calibration.jointProfile, 'reference-16')
   assert.equal(request.calibration.optimizer.strategy, 'joint')
-  assert.equal(request.calibration.statePolicy, 'continuous-origin')
+  assert.equal(request.calibration.statePolicy, 'independent-warmup')
+  assert.equal(request.calibration.continuousOrigin, undefined)
   assert.equal(request.calibration.optimizer.maxEvaluations, 40)
   assert.equal(request.science.versionId, 'SCIENCE-registered')
   assert.equal(request.inputs.evaporation.mode, 'science-version')
@@ -73,7 +74,7 @@ test('joint submission freezes both search groups, scientific version, state pol
   assert.equal(request.calibration.routingSearchParameters.RS_k_hours.maximum, 3)
   const recovered = normalizeBackendTask({ taskId: 'JOB-joint', runConfig: request }).runConfig
   assert.equal(recovered.jointProfile, 'reference-16')
-  assert.equal(recovered.statePolicy, 'continuous-origin')
+  assert.equal(recovered.statePolicy, 'independent-warmup')
   assert.equal(recovered.scienceVersionId, 'SCIENCE-registered')
   assert.deepEqual(recovered.routingSearchParameters, request.calibration.routingSearchParameters)
 })
@@ -142,8 +143,8 @@ test('candidate store action adopts routing and science alongside runoff', async
   assert.equal(state.warmupDays, 7)
 })
 
-test('continuous origin and input requirements survive both calculation requests and task recovery', () => {
-  const settings = { ...calibration, continuousOrigin: '2020-12-25T00:00:00', requiredInputBundleVersionId: 'INPUT-17-MDB',
+test('continuous origin and input requirements survive continuous requests and task recovery', () => {
+  const settings = { ...calibration, calibrationMode: 'continuous', continuousOrigin: '2020-12-25T00:00:00', requiredInputBundleVersionId: 'INPUT-17-MDB',
     simulationStart: '2024-04-01T00:00', simulationEnd: '2024-04-02T00:00' }
   const selectedApp = { ...app, selectedInputBundleVersionId: 'INPUT-17-MDB', usesModelBackend: true }
   const request = buildCalibrationRequest({ app: selectedApp, calibration: settings, operationMode: 'calibration', events })

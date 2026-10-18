@@ -200,6 +200,18 @@ class PreparationTests(unittest.TestCase):
         missing = self.prepare({'startTime': '2018-01-01T00:00', 'endTime': '2018-01-01T03:00', 'warmupDays': 1})
         self.assertEqual(missing['issues'][0]['missingIntervals'][0]['hours'], 22)
 
+    def test_event_preparation_rejects_old_origin_and_reports_exact_unshortened_warmup_gap(self):
+        period = {'mode': 'event', 'warmupDays': 1, 'events': [
+            {'id': 'USER-FLOOD', 'start': '2018-01-01T00:00', 'end': '2018-01-01T03:00', 'purpose': '率定'}]}
+        with self.assertRaisesRegex(ValueError, '各场预热'):
+            self.prepare(period, statePolicy='continuous-origin', continuousOrigin='2017-01-01T00:00')
+        result = self.prepare(period, statePolicy='independent-warmup')
+        gap = result['issues'][0]['missingIntervals'][0]
+        self.assertEqual(gap['start'], '2017-12-31T00:00:00')
+        self.assertEqual(gap['end'], '2017-12-31T21:00:00')
+        self.assertEqual(gap['hours'], 22)
+        self.assertEqual(result['start'], '2017-12-31T00:00:00')
+
     def test_concurrent_identical_preparations_use_one_queue_record(self):
         from concurrent.futures import ThreadPoolExecutor
         from server import InputTaskManager
@@ -227,6 +239,53 @@ class PreparationTests(unittest.TestCase):
         missing = self.prepare(period)
         self.assertTrue(missing['issues'])
         self.assertEqual(missing['issues'][0]['missingIntervals'][0]['hours'], 2)
+
+    def test_high_runoff_ratio_is_accepted_in_preparation_and_preview(self):
+        from input_service import InputService
+        self.fixture.flows = [100000.] * 6
+        self.fixture.write_flow()
+        self.products = InputProducts(self.fixture.root, self.root / 'high-ratio-runtime')
+        period = {'mode': 'event', 'warmupDays': 2 / 24, 'events': [
+            {'id': 'USER-FLOOD', 'start': '2018-01-01T00:00', 'end': '2018-01-01T03:00', 'purpose': '率定'}]}
+        result = self.prepare(period)
+        self.assertEqual(result['issues'], [])
+        manifest = read_json(self.products.products_root / result['productVersionId'] / 'manifest.json')
+        record = read_json(self.products._path(manifest['paths']['events']))['packages'][0]
+        self.assertTrue(record['quality']['accepted'])
+        self.assertGreater(record['quality']['observed_runoff_to_precipitation_ratio'], 100)
+        preview = InputService(self.fixture.root).event('xf-31180101', warmup_hours=2)
+        self.assertTrue(preview['quality']['model_input_ready'])
+        self.assertGreater(preview['quality']['observed_runoff_to_precipitation_ratio'], 100)
+        period['events'][0]['end'] = '2018-01-01T05:00'
+        self.assertTrue(self.prepare(period)['issues'][0]['missingIntervals'])
+
+    def test_new_quality_policy_bypasses_old_preparation_cache_and_scheme_binding(self):
+        import threading
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from input_products import manifest_digest
+        from model_schemes import preparation_binding_key
+        from scheme_inputs import reuse_preparation
+        payload = {'requestId': 'PREP-UNCAPPED', 'operation': 'schemeInput',
+                   'projectId': 'nananxi-xufan', 'resolutionId': '1km',
+                   'period': {'mode': 'event', 'warmupDays': 0, 'events': [
+                       {'id': 'xf-31180101', 'start': '2018-01-01T00:00',
+                        'end': '2018-01-01T03:00', 'purpose': '率定'}]}}
+        current = normalize_preparation(payload, self.products)
+        # Frozen requests from before this policy have no policy field.
+        previous = normalize_preparation(payload, self.products, frozen_definition={})
+        self.assertNotEqual(current['preparationKey'], previous['preparationKey'])
+        self.assertEqual(previous, normalize_preparation(payload, self.products, frozen_definition=previous))
+        manager = SimpleNamespace(lock=threading.Lock(), products=self.products,
+            list=lambda: [{'status': 'completed', 'runConfig': previous, 'taskId': 'DATA-old'}],
+            submit=Mock(return_value={'taskId': 'DATA-new'}))
+        self.assertEqual(reuse_preparation(manager, payload)['taskId'], 'DATA-new')
+        manager.submit.assert_called_once_with(payload)
+        record = {'definitionSHA256': 'fixed-definition'}
+        request = {'runType': 'calibration', 'period': payload['period']}
+        old_key = manifest_digest({'definition': record['definitionSHA256'], 'science': {}, 'evaporation': {}})
+        self.assertNotEqual(preparation_binding_key(record, request), old_key)
+        self.assertEqual(preparation_binding_key(record, {**request, 'sourcePlan': {'planId': 'historical'}}), old_key)
 
     def test_multiyear_blocks_keep_missing_time_as_nan(self):
         from strict_forcing import load_hourly_forcing

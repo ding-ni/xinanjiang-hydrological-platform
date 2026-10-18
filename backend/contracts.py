@@ -174,6 +174,8 @@ def normalize_request(request, catalog, runtime_root=None):
         raise ValueError("模型配置与案例尺度不一致")
     request = clean(request)
     period = request.setdefault("period", {})
+    from event_start import validate_event_start
+    validate_event_start(request, runtime_root)
     warmup = finite_number(period.get("warmupDays", 7), "预热期")
     minimum_warmup = 0 if period.get('initialStateVersionId') else 1
     if not math.isfinite(warmup) or warmup < minimum_warmup or warmup > 365:
@@ -214,6 +216,11 @@ def normalize_request(request, catalog, runtime_root=None):
         if optimizer.get('initializationPolicy') not in {None, 'REEVALUATE_CURRENT', 'SOURCE_INITIAL_CANDIDATES'}:
             raise ValueError('搜索起始方式未登记')
         seed = optimizer.get("seed", 42)
+        if algorithm == 'SCE_UA':
+            from calibration_search import sce_population_size
+            sce_population_size(1, optimizer.get('complexes', 5))
+            if optimizer.get('initializationPolicy') == 'SOURCE_INITIAL_CANDIDATES':
+                raise ValueError('SCE-UA不适用于原方案原算法起始种群')
         if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 4294967295:
             raise ValueError("随机种子必须为 0 到 4294967295 的整数")
         strategy = optimizer.get("strategy", "joint")
@@ -320,6 +327,22 @@ def normalize_request(request, catalog, runtime_root=None):
             validate_joint(request['calibration'], runoff=base)
         else:
             validate_selection(request['calibration'], base)
+        if optimizer['algorithm'] == 'SCE_UA':
+            from calibration_search import sce_population_size
+            from calibration_space import resolve_space
+            from joint_calibration import resolve_space as joint_space
+            from routing_calibration import resolve_space as routing_space
+            settings = request['calibration']
+            specs = joint_space(settings) if settings.get('target') == 'joint' else routing_space(settings) if settings.get('target') == 'routing' else resolve_space(settings)
+            partitions = [specs]
+            if optimizer.get('strategy') == 'staged':
+                storage = {'WM', 'WUM', 'WLM', 'B', 'IM'}
+                partitions = [[s for s in specs if s['name'].split('.')[-1] in storage], [s for s in specs if s['name'].split('.')[-1] not in storage]]
+            budgets = [optimizer['maxEvaluations']] if len(partitions) == 1 else [optimizer['maxEvaluations']//2, optimizer['maxEvaluations']-optimizer['maxEvaluations']//2]
+            for selected, budget in zip(partitions, budgets):
+                required = sce_population_size(len(selected), optimizer.get('complexes', 5)) + 1
+                if budget < required:
+                    raise ValueError(f'SCE-UA当前{len(selected)}维搜索至少需要{required}次评价（每阶段含初值），当前{budget}次')
         state_policy = request['calibration'].get('statePolicy', 'independent-warmup')
         if state_policy not in {'independent-warmup', 'continuous-origin'}:
             raise ValueError('请选择按洪水组独立预热或从连续原点计算')

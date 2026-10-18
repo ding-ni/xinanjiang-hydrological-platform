@@ -102,7 +102,41 @@ Base `/api/model`, same origin as Vue. Loopback Host only. JSON bodies and mutat
 
 `/forecast-tasks` accepts registered manual rainfall scenarios (platform 1.8, below). Errors are `{"error":"..."}`: 400 invalid, 404 missing, 409 unavailable result, 500 unexpected failure. Submission returns 202 + task, not a numerical result.
 
-Minimal simulation:
+### Result retention and selected-grid export (2026-10-18)
+
+Retention is independent of job execution status and favorites. New successful
+computations start as `temporary`; explicit saving makes them `saved`;
+discarding makes them `trashed`. Numerical files and referenced inputs,
+parameters and states are retained for recovery and provenance. No physical
+delete endpoint is provided. Existing favorites appear as saved results;
+other pre-upgrade records remain accessible as legacy history and do not
+trigger the new-workspace leave prompt.
+
+| Method | Endpoint | Contract |
+| --- | --- | --- |
+| GET | `/result-catalog?retention=saved\|temporary\|trashed\|all` | Omission excludes trash. Rows include `retention`, `retentionRevision`, `legacy`; `saved` no longer aliases `favorite`. |
+| GET | `/result-retention/{id}` | Retention and revision of one canonical result. |
+| POST | `/result-retention/{id}/save`, `/discard`, `/restore` | `{revision}` optimistic check; running/queued/cancelling records reject mutation. |
+| GET | `/model-schemes?retention=trashed` | Default lists active schemes; this filter lists recoverable schemes. |
+| GET | `/model-schemes/{id}/deletion-preview` | Revision-bound preview of temporary records, protected results/parameters and active jobs, with `previewSHA256`. |
+| POST | `/model-schemes/{id}/discard`, `/restore` | `{previewSHA256, temporaryIds}`; selected temporary calculations and scheme retention change in one SQL transaction. |
+| GET | `/results/{id}/state-ranges?processId=...` | Verified process history ranges, available variable names/units and capacities. |
+| POST | `/results/{id}/state-excel` | `{processId, gridId, variables}`; XLSX bytes with exact hourly values, restricted to the server-resolved process period. |
+
+State export supports WU/WL/WD/S/FR/RS/RI/RG, precipitation, PET, actual ET,
+water-balance error when saved, and derived `W_WM=(WU+WL+WD)/WM`. Missing
+history or incomplete process coverage fails explicitly; no interpolation,
+zero-fill or checkpoint replication is used.
+
+`calibration.optimizer.algorithm="SCE_UA"` adds competitive complex evolution
+with `complexes` (integer 1–20, default 5). Each complex has `2*n+1` points
+and an `n+1` simplex. The minimum per-stage budget is
+`complexes*(2*n+1)+1`, including the reevaluated incumbent. Consumed settings,
+seed, attempts, infeasible candidates and termination are recorded in the
+optimizer history/stages. Original source-population replay remains restricted
+to the original algorithm.
+
+Minimal simulation request:
 
 ```json
 {

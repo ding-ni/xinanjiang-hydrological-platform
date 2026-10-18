@@ -41,7 +41,7 @@ def normalize_preparation(payload, products, *, frozen_definition=None):
     allowed = {'operation', 'requestId', 'name', 'projectId', 'resolutionId',
                'parentBundleVersionId', 'period', 'statePolicy', 'continuousOrigin',
                'rainfallMethod', 'idwPower', 'minimumStations', 'science', 'evaporation', 'stationSourceId',
-               'operationPurpose', 'stationNetwork'}
+               'operationPurpose', 'stationNetwork', 'sourcePlan'}
     if set(payload) - allowed:
         raise ValueError('自动资料准备字段无效')
     if payload.get('projectId') != 'nananxi-xufan' or payload.get('resolutionId') != '1km':
@@ -82,6 +82,22 @@ def normalize_preparation(payload, products, *, frozen_definition=None):
     policy = payload.get('statePolicy', 'independent-warmup')
     if policy not in {'independent-warmup', 'continuous-origin'}:
         raise ValueError('状态计算方式无效')
+    if period.get('mode') == 'event' and (policy != 'independent-warmup' or payload.get('continuousOrigin') or period.get('continuousOrigin') or period.get('initialStateVersionId')):
+        marker = payload.get('sourcePlan')
+        if not isinstance(marker, dict) or set(marker) != {'parameterVersionId', 'planId', 'planSHA256', 'operation'}:
+            raise ValueError('新场次资料须按各场预热准备，不能使用连续起点或父状态')
+        from original_calibration_plan import original_plan_payload, validate_original_request
+        original = original_plan_payload(marker.get('parameterVersionId'), products.runtime_root,
+                                         products=products, operation=marker.get('operation'))['request']
+        validate_original_request({**original, 'sourcePlan': marker}, products.runtime_root)
+        projection = lambda p: sorted((row['id'], row['start'][:16], row['end'][:16], row['purpose'])
+                                      for row in p.get('events', []) if row.get('purpose') != '未使用' and row.get('status') != 'inactive')
+        if (projection(period) != projection(original['period']) or warmup != original['period']['warmupDays']
+                or policy != original['calibration']['statePolicy']
+                or payload.get('continuousOrigin') != original['calibration'].get('continuousOrigin')
+                or parent['bundleVersionId'] != original['inputs']['bundleVersionId']
+                or payload.get('science') != original.get('science')):
+            raise ValueError('原方案资料准备条件与登记历史不符')
     if policy == 'continuous-origin' and not period.get('initialStateVersionId'):
         origin = payload.get('continuousOrigin') or start.isoformat()
         start = hourly_time(origin)
@@ -101,6 +117,10 @@ def normalize_preparation(payload, products, *, frozen_definition=None):
     # to the work being performed and must not reuse a calibration rejection.
     if 'operationPurpose' in payload:
         definition['operationPurpose'] = purpose
+    if period.get('mode') == 'event' and purpose != 'simulation' and not payload.get('sourcePlan'):
+        from strict_forcing import EVENT_QUALITY_POLICY
+        if frozen_definition is None or 'eventQualityPolicy' in frozen_definition:
+            definition['eventQualityPolicy'] = EVENT_QUALITY_POLICY
     if method == 'stationIdw':
         from station_network import station_network, observation_adapter
         selection = payload.get('stationSourceId')
@@ -254,15 +274,14 @@ def build_prepared(folder, products):
     import pandas as pd
     import xarray as xr
     from pyproj import Transformer
-    from strict_forcing import load_hourly_forcing, missing_intervals
+    from strict_forcing import load_hourly_forcing, missing_intervals, evaluate_event_quality
     sys.path.insert(0, str(MODEL / 'code'))
     from runoff_platform.data.precipitation_idw import idw_interpolate_hourly
-    from runoff_platform.data.event_quality import evaluate_event_quality
     from observation_quality import evaluate_observation_coverage
     from xaj_routing.control_area import contributing_grid_areas
     from xaj_routing.io import read_topology_json
     request = read_json(folder / 'request.json')
-    original_fields = {'operation', 'requestId', 'name', 'projectId', 'resolutionId', 'parentBundleVersionId', 'period', 'statePolicy', 'continuousOrigin', 'rainfallMethod', 'idwPower', 'minimumStations', 'science', 'evaporation', 'stationSourceId', 'operationPurpose', 'stationNetwork'}
+    original_fields = {'operation', 'requestId', 'name', 'projectId', 'resolutionId', 'parentBundleVersionId', 'period', 'statePolicy', 'continuousOrigin', 'rainfallMethod', 'idwPower', 'minimumStations', 'science', 'evaporation', 'stationSourceId', 'operationPurpose', 'stationNetwork', 'sourcePlan'}
     if normalize_preparation({key: value for key, value in request.items() if key in original_fields}, products) != request:
         raise ValueError('资料准备请求已偏离冻结条件，请重新准备')
     parent = products.resolve(request['parentBundleVersionId'])
@@ -388,7 +407,7 @@ def build_prepared(folder, products):
             reasons.append('评价期实测流量不足')
         event_quality = None
         if event_mode and not is_simulation:
-            event_quality = evaluate_event_quality(event_id=window['id'], start=first, end=last, times=times[mask], grid_precipitation_mm=values[mask][:, indexes], grid_areas_km2=areas[indexes], observed_flow_cms=flow, source_station_count=counts[mask], config=quality)
+            event_quality = evaluate_event_quality(event_id=window['id'], start=first, end=last, times=times[mask], grid_precipitation_mm=values[mask][:, indexes], grid_areas_km2=areas[indexes], observed_flow_cms=flow, source_station_count=counts[mask], config=quality, legacy=bool(request.get('sourcePlan')))
             if not event_quality['accepted']:
                 reasons.extend(event_quality['exclusion_reasons'])
         if reasons:

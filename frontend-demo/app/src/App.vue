@@ -1,6 +1,7 @@
 <template>
   <div class="app">
     <AppTopbar />
+    <TemporaryResultsDialog />
     <div class="shell">
       <AppSidebar />
       <main id="main-workspace" class="workspace">
@@ -21,6 +22,7 @@ import { onMounted } from 'vue'
 import AppTopbar from '@/components/layout/AppTopbar.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import ForecastReport from '@/components/report/ForecastReport.vue'
+import TemporaryResultsDialog from '@/components/model/TemporaryResultsDialog.vue'
 import { useAppStore } from '@/stores/app'
 
 const app = useAppStore()

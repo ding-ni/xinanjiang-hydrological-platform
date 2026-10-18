@@ -160,6 +160,8 @@ class TaskManager:
         return {'available': not reasons, 'reasons': reasons, 'verification': 'availability-only; content hashes checked before calculation'}
 
     def submit(self, request, operation_id=None, state_role=None):
+        if isinstance(request, dict):
+            self.results.lifecycle.assert_scheme_active(request)
         if isinstance(request, dict) and request.get('inputs', {}).get('sourceBundleVersionId'):
             source = request['inputs']['sourceBundleVersionId']
             preparation = safe_task(self.runtime_root / 'input-tasks', request['inputs'].get('preparationTaskId'))
@@ -187,7 +189,8 @@ class TaskManager:
                 **({'stationNetwork': request['inputs']['stationNetwork']} if request['inputs'].get('stationNetwork') else {}),
                 'statePolicy': (request.get('calibration') or {}).get('statePolicy', 'continuous-origin' if request['period'].get('continuousOrigin') else 'independent-warmup'),
                 'science': request.get('science', {}), 'evaporation': request.get('inputs', {}).get('evaporation', {}),
-                'continuousOrigin': (request.get('calibration') or {}).get('continuousOrigin') or request['period'].get('continuousOrigin')}, self.products, frozen_definition=frozen_definition)
+                'continuousOrigin': (request.get('calibration') or {}).get('continuousOrigin') or request['period'].get('continuousOrigin'),
+                **({'sourcePlan': request.get('sourcePlan')} if request.get('sourcePlan') else {})}, self.products, frozen_definition=frozen_definition)
             if status.get('status') not in {'completed', 'archived'} or prepared.get('issues') or status.get('registeredBundleVersionId') != request['inputs']['bundleVersionId'] or config.get('preparationKey') != check['preparationKey']:
                 raise ValueError('计算资料与本次方案时段不一致或仍有缺测问题，请重新准备')
             if request['inputs'].get('rainfallMethod') == 'stationIdw' and request['inputs'].get('stationNetwork') != config.get('stationNetwork'):
@@ -606,6 +609,13 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 self.send_json(200, {"status": "ok", "schemaVersion": "2.0", "service": "unified-xaj-platform"})
                 return
             if path == f'{prefix}/model-schemes' and self.command in {'GET', 'POST'}:
+                if self.command == 'GET':
+                    states = manager.results.lifecycle.scheme_records()
+                    payload = manager.schemes.list()
+                    payload['schemes'] = [{**row, **states.get(row['id'], {'trashed': False})} for row in payload['schemes']
+                                          if bool(states.get(row['id'], {}).get('trashed')) == (argument('retention') == 'trashed')]
+                    self.send_json(200, payload)
+                    return
                 payload = manager.schemes.list() if self.command == 'GET' else manager.schemes.save(self.read_body())
                 self.send_json(200, payload)
                 return
@@ -680,6 +690,18 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                     if selected.get('stationSourceId') not in {None, 'LOCAL_OBSERVATIONS'}:
                         products.source(selected['stationSourceId'])
                 self.send_json(200, manager.schemes.defaults(body))
+                return
+            if path.startswith(f'{prefix}/model-schemes/') and path.rsplit('/', 1)[-1] in {'deletion-preview', 'discard', 'restore'}:
+                pieces = path[len(f'{prefix}/model-schemes/'):].split('/')
+                if len(pieces) != 2:
+                    raise KeyError('方案不存在')
+                if self.command == 'GET' and pieces[1] == 'deletion-preview':
+                    payload = manager.results.lifecycle.scheme_preview(pieces[0])
+                elif self.command == 'POST' and pieces[1] in {'discard', 'restore'}:
+                    payload = manager.results.lifecycle.scheme_change(pieces[0], pieces[1], self.read_body())
+                else:
+                    raise KeyError('方案接口不存在')
+                self.send_json(200, payload)
                 return
             if path.startswith(f'{prefix}/model-schemes/') and self.command == 'GET':
                 self.send_json(200, manager.schemes.get(path.rsplit('/', 1)[-1], int(argument('revision')) if argument('revision') else None))
@@ -867,7 +889,20 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 self.send_json(200, import_checkpoint(manager, self.read_body()))
                 return
             if self.command == 'GET' and path == f'{prefix}/result-catalog':
-                self.send_json(200, manager.results.catalog())
+                payload = manager.results.catalog(include_trashed=argument('retention') in {'trashed', 'all'})
+                if argument('retention') in {'saved', 'temporary', 'trashed'}:
+                    payload['results'] = [row for row in payload['results'] if row['retention'] == argument('retention')]
+                self.send_json(200, payload)
+                return
+            if self.command == 'POST' and path.startswith(f'{prefix}/result-retention/'):
+                pieces = path[len(f'{prefix}/result-retention/'):].split('/')
+                if len(pieces) != 2:
+                    raise KeyError('成果操作不存在')
+                self.send_json(200, manager.results.lifecycle.change(pieces[0], pieces[1], self.read_body()))
+                return
+            if self.command == 'GET' and path.startswith(f'{prefix}/result-retention/'):
+                identifier = path[len(f'{prefix}/result-retention/'):]
+                self.send_json(200, manager.results.lifecycle.value(manager.results.status(identifier), manager.results.annotation(identifier)))
                 return
             if self.command == 'GET' and path.startswith(f'{prefix}/result-catalog/') and path.endswith('/processes'):
                 pieces = path[len(f'{prefix}/result-catalog/'):].split('/')
@@ -877,6 +912,24 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 return
             if self.command == 'GET' and path.startswith(f'{prefix}/results/') and path.endswith('/scheme-conditions'):
                 self.send_json(200, manager.results.scheme_request(path[len(f'{prefix}/results/'):-len('/scheme-conditions')]))
+                return
+            if path.startswith(f'{prefix}/results/') and path.rsplit('/', 1)[-1] in {'state-ranges', 'state-excel'}:
+                pieces = path[len(f'{prefix}/results/'):].split('/')
+                if len(pieces) != 2:
+                    raise KeyError('状态成果不存在')
+                from state_export import process_ranges, export_state
+                if self.command == 'GET' and pieces[1] == 'state-ranges':
+                    self.send_json(200, process_ranges(manager, pieces[0], argument('processId')))
+                elif self.command == 'POST' and pieces[1] == 'state-excel':
+                    payload = export_state(manager, pieces[0], self.read_body())
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                    self.send_header('Content-Disposition', 'attachment; filename="grid-state.xlsx"')
+                    self.send_header('Content-Length', str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                else:
+                    raise KeyError('状态导出接口不存在')
                 return
             if self.command == 'GET' and path.startswith(f'{prefix}/results/') and path.endswith('/parameter-snapshot'):
                 self.send_json(200, manager.parameter_schemes.from_result(path[len(f'{prefix}/results/'):-len('/parameter-snapshot')]))

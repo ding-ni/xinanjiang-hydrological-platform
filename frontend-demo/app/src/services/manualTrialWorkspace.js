@@ -1,7 +1,26 @@
 const clone=value=>JSON.parse(JSON.stringify(value))
-export function trialStorageKey(context,scheme){return `hydrology-manual-trial:${context}:${scheme}`}
+export function trialStorageKey(context,scheme,workspace=globalThis.localStorage?.getItem('xaj_browser_workspace')||'unbound'){return `hydrology-manual-trial:${workspace}:${context}:${scheme}`}
 export function readTrialWorkspace(context,scheme){try{return JSON.parse(sessionStorage.getItem(trialStorageKey(context,scheme))||'null')}catch{return null}}
 export function saveTrialWorkspace(context,scheme,value){sessionStorage.setItem(trialStorageKey(context,scheme),JSON.stringify(value))}
+export function preferredCalculationRecord(records,selectedTaskId,sessionIds=[]){
+  return records.find(row=>row.taskId===selectedTaskId)
+    || [...sessionIds].reverse().map(id=>records.find(row=>row.taskId===id&&row.manual)).find(Boolean)
+    || records.filter(row=>!row.manual).at(-1) || null
+}
+export function processOverlayReason(result,base,processId){
+  const graph=result?.hydrographs?.[processId],reference=base?.hydrographs?.[processId]
+  if(!graph)return '未计算当前洪水'
+  if(!reference)return ''
+  const hour=value=>String(value||'').replace(' ','T').slice(0,16)
+  const samples=g=>(g.times?.length?g.times:(g.forecast||[]).map(row=>row.time)).map(hour)
+  const times=samples(graph),other=samples(reference)
+  if(times.length!==other.length||times.some((time,index)=>time!==other[index]))return '评价时段不同，无法叠加'
+  const observations=g=>new Map((g.obs||[]).map(row=>[hour(row.time),row.value]))
+  const observed=observations(graph),expected=observations(reference)
+  if(!observed.size||!expected.size)return '缺少实测序列，无法核对叠加'
+  if(observed.size!==expected.size||[...observed].some(([time,value])=>!expected.has(time)||value!==expected.get(time)))return '实测流量序列不同，无法叠加'
+  return ''
+}
 export function fixedTrialRequest(request,{params,scope='current',processId,scheme,source,draftRevision}){
   const result=clone(request)
   result.requestId='TRIAL-'+crypto.randomUUID()

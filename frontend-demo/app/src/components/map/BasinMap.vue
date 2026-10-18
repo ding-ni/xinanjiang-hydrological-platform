@@ -44,7 +44,7 @@
     </div>
     <div class="map-legend" v-else-if="stateLegend">
       <p class="legend-title">{{ stateLegend.title }}</p>
-      <small class="legend-scale-note">连续插值色标 · 数值刻度</small>
+      <small class="legend-scale-note">{{ stateScale?.equal?'本场数值一致':stateScale?.label || '连续插值色标 · 数值刻度' }}</small>
       <div class="legend-row" v-for="item in stateLegend.items" :key="item.label">
         <span class="swatch" :style="{ background: item.color }" />
         <span>{{ item.label }}</span>
@@ -105,6 +105,7 @@ const props = defineProps({
   smoothRainSource: { type: String, default: 'station-idw' },
   /** 栅格填色字段：runoff | soil | wu | wl | wd | freeWater | surface | snowWater | snowDepth | snowLiquid | frozenIndex | glacierMelt */
   gridPaintField: { type: String, default: 'runoff' },
+  stateScale: {type:Object,default:null},
   center: { type: Array, default: () => [0, 0] },
   zoom: { type: Number, default: 5 },
   /** 过程回放时降低展示层插值频率，暂停后立即刷新当前时刻。 */
@@ -244,9 +245,9 @@ const stateLegend = computed(() => {
   const physical = physicalStateFields[props.gridPaintField] || physicalStateFields.runoff
   return {
     title: physical.title,
-    items: physical.stops.map((value, index) => ({
-      label: `${index === 0 ? '≤ ' : index === physical.stops.length - 1 ? '≥ ' : ''}${value}`,
-      color: (physical.colors || physicalStateColors)[index]
+    items: (props.stateScale?.stops || physical.stops).map((value, index) => ({
+      label: Number(value.toPrecision(5)).toString(),
+      color: (props.stateScale?.colors || physical.colors || physicalStateColors)[props.stateScale?.equal?2:index]
     }))
   }
 })
@@ -1032,9 +1033,10 @@ function bindEvents(map) {
 function gridColorExpr(field = 'runoff') {
   const property = physicalStateFields[field] ? field : 'runoff'
   const definition = physicalStateFields[property]
+  if(props.stateScale?.equal)return ['case',['==',['typeof',['get',property]],'number'],(props.stateScale.colors||definition.colors||physicalStateColors)[2],'rgba(0,0,0,0)']
   return ['case', ['==', ['typeof', ['get', property]], 'number'],
-    ['interpolate', ['linear'], ['get', property], ...definition.stops
-      .flatMap((value, index) => [value, (definition.colors || physicalStateColors)[index]])],
+    ['interpolate', ['linear'], ['get', property], ...(props.stateScale?.stops || definition.stops)
+      .flatMap((value, index) => [value, (props.stateScale?.colors || definition.colors || physicalStateColors)[index]])],
     'rgba(0,0,0,0)']
 }
 
@@ -1338,7 +1340,7 @@ watch(
 )
 
 watch(
-  () => [props.gridCells, props.gridPaintField],
+  () => [props.gridCells, props.gridPaintField, props.stateScale],
   () => updateGrid(),
   { deep: true }
 )

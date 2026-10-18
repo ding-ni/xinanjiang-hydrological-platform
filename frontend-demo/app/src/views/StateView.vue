@@ -3,7 +3,7 @@
     <header class="page-heading"><div><h2>过程与状态</h2><span>{{ sourceLabel }} / {{ entry?.name || entry?.label }}</span></div><RouterLink to="/archive" class="btn">计算成果</RouterLink></header>
     <nav class="state-tabs"><button class="btn" :class="{primary:pageTab==='process'}" @click="pageTab='process'">模拟过程</button><button class="btn" :class="{primary:pageTab==='library'}" @click="pageTab='library'">状态库</button></nav>
     <DailyStateLibrary v-if="pageTab==='library'" />
-    <div v-else><section class="panel panel-pad result-selector"><label>计算成果<select class="input" :value="canonicalResultId" @change="selectResult($event.target.value)"><option value="">选择计算成果</option><option v-for="row in availableResults" :key="row.id" :value="row.id">{{ row.name || '未命名计算 · '+row.createdAt }}</option></select></label></section>
+    <div v-else><section class="panel panel-pad result-selector"><label><input v-model="showHistory" type="checkbox" /> 显示其他历史记录</label><label>计算成果<select class="input" :value="canonicalResultId" @change="selectResult($event.target.value)"><option value="">选择计算成果</option><option v-for="row in visibleResults" :key="row.id" :value="row.id">{{ row.name || '未命名计算 · '+row.createdAt }}</option></select></label></section>
     <section v-if="!sourceId && !route.query.operation" class="panel empty"><p>从计算成果查看模拟状态</p><RouterLink to="/archive" class="btn primary">选择计算成果</RouterLink> <RouterLink to="/state?tab=library" class="btn">打开状态库</RouterLink></section>
     <template v-else>
       <section class="panel panel-pad time-toolbar">
@@ -17,19 +17,19 @@
       <p v-if="error || frameError" class="failure" role="alert">{{ error || frameError }}</p>
       <div v-if="cells.length" class="state-layout">
         <aside class="panel panel-pad variables">
-          <h3>当前时刻空间分布</h3>
+          <h3>当前时刻空间分布</h3><label>色标范围<select v-model="scaleMode" class="input"><option value="event">本场范围</option><option value="fixed">固定范围</option></select></label><p class="range-note">最小 {{ stateNumber(frameRange.min) }} · 最大 {{ stateNumber(frameRange.max) }} · 极差 {{ stateNumber(frameRange.span) }}<br />{{ frameRange.equal ? '当前值一致' : '当前时刻全部网格' }}</p>
           <template v-for="group in variableGroups" :key="group.name"><h4>{{ group.name }}</h4><button v-for="item in variables.filter(item=>item.group===group.id)" :key="item.key" type="button" :class="{active:variable===item.key}" @click="variable=item.key"><span>{{ item.name }}</span><small>{{ item.symbol }}{{ item.unit ? ` · ${item.unit}` : '' }}</small></button></template>
           <div class="mean"><span>网格平均</span><b>{{ number(mean,3) }} <small>{{ current.unit }}</small></b></div>
           <details><summary>计算条件</summary><div class="conditions"><span>时刻 {{ hourText(frame?.time || checkpoint?.time) }}</span><span>{{ cells.length }} 个网格</span><span v-if="checkpoint?.parentStateVersionId">承接前次末状态</span><span v-if="checkpoint?.sourceTaskId">计算 {{ checkpoint.sourceTaskId }}</span></div></details>
         </aside>
-        <article class="panel map-panel"><BasinMap :stations="stations" :layers="layers" :grid-cells="cells" :grid-paint-field="current.field" :selected-grid-id="selectedId" interactive-grid :legend-mode="current.legend" @select-grid="selectedId=$event" /></article>
+        <article class="panel map-panel"><BasinMap :stations="stations" :layers="layers" :grid-cells="cells" :grid-paint-field="current.field" :selected-grid-id="selectedId" interactive-grid :legend-mode="current.legend" :state-scale="colorScale" @select-grid="selectedId=$event" /></article>
         <aside class="panel panel-pad grid-detail">
           <h3>选中网格 · {{ hourText(frame?.time || checkpoint?.time) }}</h3>
           <template v-if="selected">
             <p class="grid-id">{{ selected.id }}</p>
-            <div class="values"><div v-for="item in variables" :key="item.key"><span>{{ item.symbol }}</span><b>{{ number(selected[item.field],3) }} {{ item.unit }}</b></div></div>
+            <div class="values"><div v-for="item in variables" :key="item.key"><span>{{ item.symbol }}</span><b>{{ stateNumber(selected[item.field]) }} {{ item.unit }}</b></div></div>
             <div v-if="series" class="trend"><BaseChart :option="trendOption" /></div>
-            <p v-else-if="seriesError" class="failure">{{ seriesError }}</p>
+            <p v-else-if="seriesError" class="failure">{{ seriesError }}</p><div class="export-state"><button class="btn" :disabled="!series || !rangeData" @click="openExport">导出 Excel</button><p v-if="exportError" class="failure">{{ exportError }}</p></div>
           </template><p v-else class="grid-empty">点击网格查看状态</p>
         </aside>
       </div>
@@ -37,6 +37,7 @@
       <p v-if="frameLoading" class="state-reading" role="status">正在读取 {{ hourText(time) }} 的空间分布…</p>
       <section v-if="!catalog && !loading && !error" class="panel empty"><p>{{ replayProgress || '这次计算未保存逐时分布；已保存的雨流过程仍可查看。' }}</p><p>生成范围：{{ replayRange }}。使用这次计算的参数与起算规则，恢复水分和汇流状态，不重新率定参数。</p><button class="btn primary" :disabled="replaying || !payload" @click="calculateStates">{{ replaying ? '正在生成状态分布' : '生成状态分布' }}</button></section>
     </template></div>
+    <HydrologyDialog ref="exportDialog" width="min(640px,94vw)"><h2>导出选中网格状态</h2><p>{{ entry?.name }} · {{ selectedId }}<br />{{ hourText(entry?.start) }} 至 {{ hourText(entry?.end) }}（不含预热）</p><button class="btn" @click="exportVariables=rangeData.variables.map(row=>row.key)">全选</button> <button class="btn" @click="exportVariables=[]">清空</button><div class="export-variables"><label v-for="row in rangeData?.variables||[]" :key="row.key"><input v-model="exportVariables" type="checkbox" :value="row.key" />{{ row.name }} {{ row.key }} · {{ row.unit }}</label></div><p v-if="exportError" class="failure">{{ exportError }}</p><button class="btn" @click="exportDialog.close()">取消</button> <button class="btn primary" :disabled="exportBusy || !exportVariables.length" @click="downloadExcel">下载 Excel</button></HydrologyDialog>
     <HydrologyDialog ref="continuationDialog"><header class="page-heading"><h2>用于继续模拟</h2><button class="btn" @click="continuationDialog.close()">关闭</button></header><p>来源：{{ sourceLabel }} · {{ entry?.name || entry?.label }}</p><p>可用续算状态时刻：<b>{{ hourText(checkpoint?.time) }}</b>。它包含该时刻的产流、坡面和河道汇流状态。</p><p v-if="entry?.end && hourText(entry.end)!==hourText(checkpoint?.time)">当前洪水结束于 {{ hourText(entry.end) }}；原连续轨迹保存的续算状态位于上面的时刻。</p><button class="btn" @click="saveFinalState">命名保存到状态库</button> <button class="btn primary" @click="continueFromResult">继续模拟</button></HydrologyDialog>
   </section>
 </template>
@@ -44,7 +45,7 @@
 import { computed, ref, watch, onBeforeUnmount,onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
-import { modelApi } from '@/services/modelBackendService'
+import { modelApi, modelDownload } from '@/services/modelBackendService'
 import { dailyClient, hourText, resultEntries } from '@/services/dailyOperationService'
 import { loadGridHistoryCatalog, loadGridStateFrame, loadGridStateSeries } from '@/services/taskDiagnosticService'
 import DailyStateLibrary from '@/components/model/DailyStateLibrary.vue'
@@ -52,12 +53,17 @@ import HydrologyDialog from '@/components/model/HydrologyDialog.vue'
 import BasinMap from '@/components/map/BasinMap.vue'
 import BaseChart from '@/components/charts/BaseChart.vue'
 import CalibrationProcessChart from '@/components/charts/CalibrationProcessChart.vue'
+import { stateScale, stateNumber } from '@/services/stateColorScale'
+import { retentionChanged } from '@/services/resultRetentionService'
 import { ElMessageBox, ElMessage } from 'element-plus'
 const route=useRoute(),router=useRouter(),app=useAppStore()
+const showHistory=ref(false),scaleMode=ref('event'),rangeData=ref(null),exportDialog=ref(null),exportVariables=ref([]),exportBusy=ref(false),exportError=ref('')
 const pageTab=ref(route.query.tab==='library'?'library':'process'),availableResults=ref([])
 watch(()=>route.query.tab,value=>pageTab.value=value==='library'?'library':'process')
 onMounted(async()=>{try{availableResults.value=((await modelApi('result-catalog',{timeoutMs:60000})).results||[]).filter(row=>!row.contextKey||row.contextKey===app.contextKey)}catch(failure){error.value=failure.message}})
 function selectResult(id){const row=availableResults.value.find(row=>row.id===id);if(row)router.push({path:'/state',query:row.id.startsWith('OP-')?{operation:row.id}:{source:row.id}})}
+const visibleResults=computed(()=>availableResults.value.filter(row=>showHistory.value||row.retention==='saved'||row.id===canonicalResultId.value))
+watch(retentionChanged,async()=>{availableResults.value=((await modelApi('result-catalog')).results||[]).filter(row=>!row.contextKey||row.contextKey===app.contextKey)})
 const sourceId=computed(()=>String(route.query.source||route.query.task||''))
 const canonicalResultId=computed(()=>String(route.query.operation||payload.value?.operationId||sourceId.value))
 const sourceLabel=ref(''),payload=ref(null),entryId=ref(''),catalog=ref(null),checkpoint=ref(null),frame=ref(null),series=ref(null),time=ref(''),loading=ref(false),error=ref(''),seriesError=ref(''),selectedId=ref(null),variable=ref('soil')
@@ -91,6 +97,11 @@ const variables=[
   {key:'ri',name:'壤中径流',symbol:'RI',unit:'mm',field:'RI',raw:'RI',legend:'runoff'},
   {key:'rg',name:'地下径流',symbol:'RG',unit:'mm',field:'RG',raw:'RG',legend:'runoff'}
 ].map(item=>({...item,group:['rs','ri','rg'].includes(item.key)?'runoff':item.key==='free'?'free':'soil'}))
+const colorScale=computed(()=>stateScale(current.value.field,scaleMode.value,rangeData.value?.ranges,rangeData.value?.parameters||catalog.value?.parameters))
+const frameRange=computed(()=>{const values=cells.value.map(row=>row[current.value.field]).filter(Number.isFinite);if(!values.length)return {};const min=Math.min(...values),max=Math.max(...values);return {min,max,span:max-min,equal:Math.abs(max-min)<=1e-10*Math.max(1,Math.abs(max))}})
+async function openExport(){exportVariables.value=[current.value.key==='soil'?'W_WM':current.value.raw];exportError.value='';exportDialog.value.showModal()}
+async function downloadExcel(){exportBusy.value=true;exportError.value='';try{await modelDownload('results/'+encodeURIComponent(canonicalResultId.value)+'/state-excel',{processId:entryId.value,gridId:selectedId.value,variables:exportVariables.value},entryId.value+'-'+selectedId.value+'-状态.xlsx');exportDialog.value.close()}catch(failure){exportError.value=failure.message}finally{exportBusy.value=false}}
+watch([canonicalResultId,entryId,replayTaskId],async([id,processId])=>{rangeData.value=null;if(!id||!processId)return;try{const data=await modelApi('results/'+encodeURIComponent(id)+'/state-ranges?'+new URLSearchParams({processId}));if(id===canonicalResultId.value&&processId===entryId.value)rangeData.value=data}catch(failure){if(id===canonicalResultId.value&&processId===entryId.value)exportError.value=failure.message}})
 const current=computed(()=>variables.find(row=>row.key===variable.value)||variables[0])
 const cells=computed(()=>{
   if(frame.value)return frame.value.cells||[]
@@ -183,6 +194,8 @@ watch([replayTaskId,entryId],async([id])=>{
       const first=bounds?.start || process.value?.forecast?.[0]?.time,last=bounds?.end || process.value?.forecast?.at(-1)?.time
       catalog.value={...catalogResult.value,times:catalogResult.value.times.filter(value=>(!first||value.slice(0,16)>=String(first).replace(' ','T').slice(0,16))&&(!last||value.slice(0,16)<=String(last).replace(' ','T').slice(0,16)))}
       time.value=catalog.value.times.at(-1)||''
+      const resultId=canonicalResultId.value,processId=entryId.value
+      modelApi('results/'+encodeURIComponent(resultId)+'/state-ranges?'+new URLSearchParams({processId})).then(data=>{if(token===replayRevision)rangeData.value=data}).catch(failure=>{if(token===replayRevision)exportError.value=failure.message})
     }else if(catalogResult.reason?.message!=='该成果尚未保存逐时状态')throw catalogResult.reason
   }catch(failure){if(token===replayRevision)error.value=failure.message}
   finally{if(token===replayRevision)loading.value=false}
@@ -204,6 +217,7 @@ watch([selectedId,catalog],async([id,source])=>{
 function continueFromResult(){router.push({path:'/simulation',query:{source:replayTaskId.value,continue:'1',label:sourceLabel.value}})}
 </script>
 <style scoped>
+.range-note{line-height:1.7;color:#6c8178;overflow-wrap:anywhere}.export-variables{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:20px 0}.export-state{margin-top:14px}.variables label{display:grid;gap:8px}.export-variables label{display:flex;align-items:center;gap:8px}
 .state-tabs{display:flex;gap:12px}.result-selector{margin-bottom:18px}.result-selector label{display:flex;align-items:center;gap:18px}.result-selector select{min-width:320px}
 .state-process{height:340px;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:12px}.state-slider{display:flex;align-items:center;gap:12px}.state-slider input{flex:1;accent-color:#287763}
 .routing-state summary{font-size:13px;color:#547460;cursor:pointer}.routing-tables{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:20px}.routing-tables h3{font-size:13px;color:#375d49}.routing-tables .table-wrap{max-height:300px;overflow:auto}.routing-tables td{font-size:12px}@media(max-width:700px){.routing-tables{grid-template-columns:1fr}}

@@ -5,14 +5,15 @@
       <label for="new-scheme-name">方案名称</label>
       <input id="new-scheme-name" ref="nameInput" v-model.trim="newName" class="input" required maxlength="80" placeholder="填写名称" :disabled="busy" />
       <button class="btn primary" :disabled="busy || !newName">建立方案</button>
-      <button type="button" class="btn" :disabled="busy" @click="creating = false">取消</button>
+      <label>计算方式<select v-model="newMode" class="input" aria-label="新方案计算方式"><option value="event">洪水场次 · 独立预热</option><option value="continuous">连续时段 · 连续演算</option></select></label><button type="button" class="btn" :disabled="busy" @click="creating = false">取消</button>
     </form>
     <p v-if="error" role="alert" class="scheme-error">{{ error }}</p>
+    <nav><button class="btn" @click="trashView=false;refresh()">我的方案</button> <button class="btn" @click="trashView=true;refresh()">回收站</button></nav>
     <div class="scheme-list-tools"><input v-model="query" type="search" class="input" placeholder="查找方案名称" aria-label="查找方案" /><select v-model="sort" class="input" aria-label="方案排序"><option value="recent">最近修改</option><option value="name">按名称</option></select><span>{{ filteredRows.length }} 个方案</span></div>
     <div v-if="rows.length" class="scheme-cards">
-      <button v-for="row in pagedRows" :key="row.id" class="scheme-choice" :data-scheme-id="row.id" :disabled="busy" @click="load(row.id)">
-        <div><b>{{ row.name }}</b><p><span class="scheme-origin">{{ row.origin || '自建方案' }}</span><template v-if="row.configurationPending"> · 待完善 · 已保留 {{ row.deliverySelectionCount }} 场选取</template><template v-else-if="row.summary?.mode !== 'continuous'"> · 已选 {{ row.summary?.selectedCount || 0 }} 场 · 率定 {{ row.summary?.calibration || 0 }} · 验证 {{ row.summary?.validation || 0 }}</template><template v-else> · 连续率定</template></p><p v-if="row.latestCalculation">最近计算：{{ operationStatuses[row.latestCalculation.status] || row.latestCalculation.status }} · {{ dateLabel(row.latestCalculation.completedAt || row.latestCalculation.createdAt) }}</p></div><span>{{ dateLabel(row.updated_at || row.updatedAt) }}</span><i aria-hidden="true">打开 →</i>
-      </button>
+      <div v-for="row in pagedRows" :key="row.id" class="scheme-choice" role="group" :data-scheme-id="row.id" :disabled="busy" @click="row.trashed?previewDelete(row):load(row.id)">
+        <div><b>{{ row.name }}</b><p><span class="scheme-origin">{{ row.origin || '自建方案' }}</span><template v-if="row.configurationPending"> · 待完善 · 已保留 {{ row.deliverySelectionCount }} 场选取</template><template v-else-if="row.summary?.mode !== 'continuous'"> · 已选 {{ row.summary?.selectedCount || 0 }} 场 · 率定 {{ row.summary?.calibration || 0 }} · 验证 {{ row.summary?.validation || 0 }}</template><template v-else> · 连续率定</template></p><p v-if="row.latestCalculation">最近计算：{{ operationStatuses[row.latestCalculation.status] || row.latestCalculation.status }} · {{ dateLabel(row.latestCalculation.completedAt || row.latestCalculation.createdAt) }}</p></div><span>{{ dateLabel(row.updated_at || row.updatedAt) }}</span><div class="scheme-row-actions"><button class="btn" @click.stop="load(row.id)" :disabled="row.trashed">打开</button><button class="btn" @click.stop="previewDelete(row)">{{ row.trashed?'恢复':'删除' }}</button></div>
+      </div>
     </div>
     <footer v-if="filteredRows.length" class="scheme-pagination"><span>第 {{ page }} / {{ pages }} 页</span><button class="btn" :disabled="page <= 1" @click="page--">上一页</button><button class="btn" :disabled="page >= pages" @click="page++">下一页</button></footer>
     <p v-else-if="!busy && !creating && !error" class="empty">暂无率定方案</p>
@@ -20,16 +21,18 @@
   <header v-else class="scheme-heading" aria-label="当前率定方案">
     <button class="btn" :disabled="busy" @click="back">← 方案列表</button><h1>{{ cal.modelSchemeName }}</h1><button class="btn icon-name" title="修改方案名称" aria-label="修改方案名称" :disabled="busy || cal.running" @click="rename">✎</button>
     <span class="revision-label">{{ editing ? hasChanges() ? (saving ? '正在暂存修改' : error ? '草稿暂存失败' : draftIdentity !== calibrationEditorIdentity(calibrationEditor(cal)) ? '正在暂存修改' : '修改已暂存') : '正在编辑' : '已保存 · 查看' }}<template v-if="cal.configurationPending"> · 待完善计算条件</template></span>
-    <button v-if="!editing" class="btn" :disabled="busy || cal.running" @click="beginEdit">编辑方案</button>
+    <span class="mode-label">{{ cal.calibrationMode==='continuous'?'连续时段 · 连续演算':legacyEventScheme?'旧场次连续轨迹':'洪水场次 · 独立预热' }}</span><button class="btn" :disabled="busy || cal.running" @click="previewDelete({id:cal.modelSchemeId})">删除方案</button>
+    <button v-if="!editing && !legacyEventScheme" class="btn" :disabled="busy || cal.running" @click="beginEdit">编辑方案</button>
     <button v-if="editing" class="btn primary" :disabled="busy || cal.running" @click="commit">保存修改</button>
     <button v-if="editing" class="btn" :disabled="busy || cal.running" @click="discard">放弃修改</button>
-    <button class="btn" :disabled="busy || cal.running" @click="saveAs">另存方案</button>
-    <button v-if="savedRow?.hasDraft && !editing" class="btn" :disabled="busy || cal.running" @click="resumeDraft">恢复上次草稿</button>
+    <button v-if="!legacyEventScheme" class="btn" :disabled="busy || cal.running" @click="saveAs">另存方案</button>
+    <button v-if="savedRow?.hasDraft && !editing && !legacyEventScheme" class="btn" :disabled="busy || cal.running" @click="resumeDraft">恢复上次草稿</button>
     <button v-if="savedRow?.revisions?.length" class="btn" :disabled="busy || editing || cal.running" @click="historyDialog.showModal()">设置历史</button>
     <span v-if="saving" class="save-status" role="status">保存中</span>
     <span v-else-if="error" class="scheme-error" role="alert">{{ error }} <button class="text-button" @click="flush">重试</button></span>
   </header>
   <HydrologyDialog ref="historyDialog" class="scheme-history"><header><h2>设置历史</h2><button class="btn" @click="historyDialog.close()">关闭</button></header><p>这里记录方案设置的保存点。名称可以自定义；展开说明可查看具体改动。恢复历史会形成新的当前保存，已有计算成果不受影响。</p><div v-for="item in savedRow?.revisions || []" :key="item.revision" class="history-item"><div><b>{{ item.name || item.summary || '保存方案' }}</b><small>{{ dateLabel(item.created_at) }}</small><details><summary>查看改动说明</summary><p>{{ item.summary || '保存方案' }}<template v-if="item.note"> · {{ item.note }}</template></p></details></div><button class="btn" @click="annotateHistory(item)">命名</button><button class="btn" :disabled="busy" @click="viewHistory(item)">查看条件</button><button class="btn" :disabled="busy || item.revision === cal.modelSchemeLatestRevision" @click="restoreHistory(item)">恢复此保存</button></div></HydrologyDialog>
+  <HydrologyDialog ref="deleteDialog" width="min(720px,94vw)"><h2>{{ deletePreview?.trashed?'恢复方案':'删除方案' }} · {{ deletePreview?.name }}</h2><p>方案与选中的临时计算移入可恢复的回收站，数值文件与被引用资料保留。</p><p v-if="deletePreview?.running?.length" class="scheme-error">该方案仍有运行中的计算，请先完成或停止。</p><label v-for="row in deletePreview?.temporary || []" :key="row.id" class="delete-row"><input v-model="deleteIds" type="checkbox" :value="row.id" />同时丢弃 {{ row.name }}</label><p>独立保留的正式成果：{{ deletePreview?.protectedResults?.join('、') || '无' }}</p><p>独立保留的参数：{{ deletePreview?.protectedParameters?.join('、') || '无' }}</p><p v-if="error" class="scheme-error">{{ error }}</p><button class="btn" @click="deleteDialog.close()">取消</button> <button class="btn primary" :disabled="busy || deletePreview?.running?.length>0" @click="confirmDelete">{{ deletePreview?.trashed?'恢复方案':'确认移入回收站' }}</button></HydrologyDialog>
 </template>
 
 <script setup>
@@ -39,6 +42,7 @@ import { ElMessageBox } from 'element-plus'
 import HydrologyDialog from './HydrologyDialog.vue'
 import { modelApi } from '@/services/modelBackendService'
 import { calibrationEditor, calibrationEditorIdentity, restoreModelScheme, saveCalibrationEditor, schemeDefinition, recoverActiveCalibrationOperation } from '@/services/modelSchemeService'
+import { settleTemporary, retentionChanged, forgetTemporary } from '@/services/resultRetentionService'
 import { operationStatuses } from '@/services/dailyOperationService'
 import { useAppStore } from '@/stores/app'
 import { useCalibrationStore } from '@/stores/calibration'
@@ -48,6 +52,7 @@ const draftIdentity=ref('')
 const editing = ref(false), savedRow = ref(null), cleanIdentity = ref('')
 const app = useAppStore(), cal = useCalibrationStore()
 const route = useRoute()
+const legacyEventScheme=computed(()=>cal.calibrationMode==='event' && (cal.statePolicy==='continuous-origin'||Boolean(cal.continuousOrigin)))
 const rows = ref([]), opened = ref(false), busy = ref(false), saving = ref(false), creating = ref(false)
 const query = ref(''), sort = ref('recent'), page = ref(1), historyDialog = ref(null)
 const filteredRows = computed(() => rows.value.filter(row => row.name.toLowerCase().includes(query.value.trim().toLowerCase())).sort((a,b) => sort.value === 'name' ? a.name.localeCompare(b.name, 'zh-CN') : String(b.updated_at || '').localeCompare(String(a.updated_at || ''))))
@@ -55,6 +60,7 @@ const pages = computed(() => Math.max(1, Math.ceil(filteredRows.value.length / 1
 const pagedRows = computed(() => filteredRows.value.slice((page.value - 1) * 10, page.value * 10))
 watch([query, sort], () => { page.value = 1 })
 watch(pages, value => { page.value = Math.min(page.value, value) })
+const trashView=ref(false),deletePreview=ref(null),deleteDialog=ref(null),deleteIds=ref([]),newMode=ref('event')
 const newName = ref(''), nameInput = ref(null), error = ref('')
 const emit = defineEmits(['loaded', 'opened', 'editing'])
 let timer, loading = false, pendingSave = Promise.resolve(), restoringUnnamed = false
@@ -62,7 +68,7 @@ let timer, loading = false, pendingSave = Promise.resolve(), restoringUnnamed = 
 function dateLabel(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }).slice(0, 19) : '' }
 async function refresh() {
   try {
-    const schemes = await modelApi('model-schemes')
+    const schemes = await modelApi('model-schemes'+(trashView.value?'?retention=trashed':''))
     rows.value = (schemes.schemes || []).filter(row => !row.context?.contextKey || row.context.contextKey === app.contextKey)
   }
   catch (failure) { error.value = failure.message }
@@ -72,6 +78,7 @@ async function refreshCatalog() {
   cal.loadFullFloodCatalog(payload.events || [])
 }
 async function load(id, revision = null) {
+  if (cal.modelSchemeId && cal.modelSchemeId!==id && !await settleTemporary({schemeId:cal.modelSchemeId})) return
   if (cal.activeOperationId) await recoverActiveCalibrationOperation(cal)
   if ((cal.running || cal.activeOperationId) && cal.modelSchemeId !== id) { error.value = '请先完成或停止当前计算'; return }
   busy.value = true; loading = true; error.value = ''
@@ -94,6 +101,7 @@ async function create() {
       const defaults = {...await modelApi('database/preparation-defaults'),...(await modelApi('database/routing-defaults'))}
       await refreshCatalog()
       cal.resetCalibrationScheme(defaults, app.backendCase)
+      cal.setCalibrationMode(newMode.value)
       if (route.query.event) {cal.setEventPurpose(String(route.query.event),'率定');cal.setEvent(String(route.query.event))}
     }
     cal.modelSchemeName = newName.value.trim()
@@ -148,7 +156,7 @@ async function flush() {
   })
   try { await pendingSave } catch { /* The failed save remains visible beside the scheme name. */ }
 }
-async function back() { if (!await settleChanges()) return; opened.value = false; emit('opened', false); await refresh() }
+async function back() { if (!await settleChanges() || !await settleTemporary({schemeId:cal.modelSchemeId})) return; opened.value = false; emit('opened', false); await refresh() }
 watch(() => calibrationEditorIdentity(calibrationEditor(cal)), queueSave)
 watch(() => app.contextKey, () => { opened.value = false; emit('opened', false); error.value = ''; refresh() })
 watch(creating, async value => { if (value) { await nextTick(); nameInput.value?.focus() } })
@@ -168,7 +176,25 @@ onMounted(async () => {
 function setEditing(value) { editing.value = value; emit('editing', value) }
 function warnBeforeUnload(event) { if(hasChanges() && (saving.value || error.value || draftIdentity.value!==calibrationEditorIdentity(calibrationEditor(cal)))){event.preventDefault();event.returnValue=''} }
 function hasChanges() { return editing.value && calibrationEditorIdentity(calibrationEditor(cal)) !== cleanIdentity.value }
-function beginEdit() { setEditing(true) }
+function beginEdit() { if(!legacyEventScheme.value)setEditing(true) }
+async function createEventScheme(parameters = null, routingParameters = null) {
+  try {
+    const {value}=await ElMessageBox.prompt('重新从公共洪水目录选择场次，默认各场预热7天。'+(parameters?'沿用所选计算的参数数值。':''),'另建场次方案',{
+      inputValue:cal.modelSchemeName+' · 场次',inputValidator:value=>Boolean(value?.trim())&&value.trim().length<=80,
+      confirmButtonText:'建立方案',cancelButtonText:'取消'})
+    loading=true;busy.value=true
+    const defaults={...await modelApi('database/preparation-defaults'),...(await modelApi('database/routing-defaults'))}
+    await refreshCatalog()
+    cal.resetCalibrationScheme(defaults,app.backendCase)
+    if(parameters){cal.params={...parameters};cal.baseline={...parameters};cal.manualRoutingPayload=routingParameters||null}
+    cal.modelSchemeName=value.trim()
+    const editor=calibrationEditor(cal)
+    const row=await modelApi('model-schemes',{method:'POST',body:{name:cal.modelSchemeName,context:editor.context,editor}})
+    cal.modelSchemeId=row.id;cal.modelSchemeRevision=row.revision;cal.modelSchemeLatestRevision=row.latestRevision;cal.modelSchemeDraftRevision=row.draftRevision
+    savedRow.value=row;cleanIdentity.value='';setEditing(true);cal.saveCurrentWorkspace();emit('loaded')
+  }catch(failure){if(failure instanceof Error)error.value=failure.message}
+  finally{busy.value=false;await nextTick();loading=false}
+}
 async function resumeDraft() {
   const row = await modelApi('model-schemes/' + cal.modelSchemeId)
   loading = true
@@ -225,10 +251,12 @@ async function restoreHistory(item) {
   historyDialog.value.close()
   await load(cal.modelSchemeId, item.revision)
   if (error.value) return
+  if (legacyEventScheme.value) return
   setEditing(true)
   await commit()
 }
 async function saveAs() {
+  if (!await settleTemporary({schemeId:cal.modelSchemeId})) return
   try {
     const { value } = await ElMessageBox.prompt('填写新方案名称', '另存方案', { inputValue: cal.modelSchemeName + ' · 副本', inputValidator: value => Boolean(value?.trim()) && value.trim().length <= 80, confirmButtonText: '另存', cancelButtonText: '取消' })
     clearTimeout(timer); await pendingSave.catch(() => {})
@@ -241,9 +269,11 @@ async function saveAs() {
     emit('loaded')
   } catch (failure) { if (failure instanceof Error) error.value = failure.message }
 }
+async function previewDelete(row){try{deletePreview.value=await modelApi('model-schemes/'+row.id+'/deletion-preview');deleteIds.value=deletePreview.value.temporary.map(item=>item.id);error.value='';deleteDialog.value.showModal()}catch(failure){error.value=failure.message}}
+async function confirmDelete(){busy.value=true;try{const p=deletePreview.value;await modelApi('model-schemes/'+p.id+'/'+(p.trashed?'restore':'discard'),{method:'POST',body:{previewSHA256:p.previewSHA256,temporaryIds:p.trashed?[]:deleteIds.value}});for(const id of deleteIds.value)forgetTemporary(id);deleteDialog.value.close();if(cal.modelSchemeId===p.id&&!p.trashed){opened.value=false;emit('opened',false);cal.modelSchemeId=null;cal.modelSchemeRevision=0;cal.trialRecords=[];cal.saveCurrentWorkspace()}retentionChanged.value++;await refresh()}catch(failure){error.value=failure.message}finally{busy.value=false}}
 onBeforeRouteLeave(settleChanges)
 onBeforeUnmount(() => { window.removeEventListener('beforeunload',warnBeforeUnload); clearTimeout(timer) })
-defineExpose({ refresh, flush, load, ensureSaved, hasChanges })
+defineExpose({ refresh, flush, load, ensureSaved, hasChanges, createEventScheme })
 </script>
 
 <style scoped>

@@ -155,7 +155,7 @@ class JointRealModelTests(unittest.TestCase):
             self.assertEqual(reproduced['hydrographs'], result['hydrographs'])
             self.assertEqual(reproduced['overlapGroupMetrics'], result['overlapGroupMetrics'])
 
-    def test_overlap_uses_union_trajectory_and_cut_window_matches_exactly(self):
+    def test_overlapping_events_each_keep_their_own_warmup_and_match_single_runs(self):
         import worker
         from worker import ModelJob
         import pandas as pd
@@ -179,13 +179,19 @@ class JointRealModelTests(unittest.TestCase):
             # fixture tests trajectory sharing, leaving gate tests independent.
             with patch('worker.evaluate_event_quality', return_value={'accepted': True, 'warning_reasons': [], 'exclusion_reasons': []}):
                 result = job.calibrate()
-            series = {}
-            for key, hydrograph in result['hydrographs'].items():
-                series[key] = pd.Series({pd.Timestamp(p['time']): p['value'] for p in hydrograph['forecast']})
-            np.testing.assert_array_equal(series['A'].loc['2017-06-19T12:00':], series['B'].loc[:'2017-06-19T18:00'])
-            self.assertEqual(len(result['overlapGroupMetrics']), 2)
-            self.assertEqual(result['overlapGroupMetrics'][0]['uniqueHours'], 24)
-            self.assertEqual(result['calibrationMetrics']['event_count'], 1)
+            self.assertEqual(result['evaluationPolicy'], 'EQUAL_INDEPENDENT_EVENTS')
+            for selected in normalized['period']['events'][:2]:
+                single = copy.deepcopy(normalized)
+                single['period']['events'] = [selected]
+                folder = Path(temp) / 'tasks' / ('JOB-single-' + selected['id'])
+                write_json(folder / 'request.json', single)
+                write_json(folder / 'status.json', {'taskId': folder.name})
+                with patch('worker.evaluate_event_quality', return_value={'accepted': True, 'warning_reasons': [], 'exclusion_reasons': []}):
+                    independent = ModelJob(folder, publish_parameters=False).calibrate()
+                self.assertEqual(independent['hydrographs'][selected['id']], result['hydrographs'][selected['id']])
+                self.assertEqual(independent['eventMetrics'][0], next(row for row in result['eventMetrics'] if row['eventId'] == selected['id']))
+            self.assertEqual(result['overlapGroupMetrics'], [])
+            self.assertEqual(result['calibrationMetrics']['event_count'], 2)
             self.assertEqual(result['windowSummary']['CALIBRATION']['event_count'], 2)
 
 

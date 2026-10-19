@@ -14,6 +14,14 @@ export const operationStatuses = {
 export const activeOperation = row => ['queued', 'preparing', 'running', 'cancelling'].includes(row?.status)
 export const completedOperation = row => ['completed', 'archived'].includes(row?.status)
 export const operationId = row => row?.id || row?.operationId || row?.taskId || ''
+export function comparableOperations(operations, results, trashedSchemeIds = new Set(), nameOf = row => row.name || operationId(row)) {
+  const retained = new Map((results || []).filter(row => row.retention !== 'trashed').map(row => [row.id, row]))
+  const trashedSchemes = trashedSchemeIds instanceof Set ? trashedSchemeIds : new Set(trashedSchemeIds || [])
+  return (operations || []).filter(row => {
+    const id = operationId(row), record = retained.get(id)
+    return completedOperation(row) && record && (!record.schemeId || !trashedSchemes.has(record.schemeId))
+  }).map(row => ({ id: operationId(row), name: nameOf(row) }))
+}
 export const hourInput = value => String(value || '').replace(' ', 'T').slice(0, 16)
 export const hourText = value => hourInput(value).replace('T', ' ')
 

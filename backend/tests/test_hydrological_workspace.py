@@ -105,7 +105,9 @@ class HydrologicalWorkspaceTests(unittest.TestCase):
         from concurrent.futures import ThreadPoolExecutor
         self.result_fixture()
         source=self.manager.root/'JOB-one'
-        write_json(source/'request.json',{'period':{},'inputs':{},'routing':{},'context':{},'lineage':{}})
+        write_json(source/'request.json',{'period':{},'inputs':{},'routing':{},'context':{},
+            'lineage':{'schemeId':'SCHEME-source','schemeName':'原率定方案','schemeRevision':3,
+                       'modelImplementationSHA256':'a'*64}})
         (source/'routing-runoff.npz').write_bytes(b'array-content')
         section={'id':'SECTION-'+'a'*32,'name':'上游断面','definition':{'spatialSHA256':'a'*64,'queried':[119.5,30.1]}}
         tasks=[]
@@ -117,6 +119,10 @@ class HydrologicalWorkspaceTests(unittest.TestCase):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 pair=list(pool.map(self.manager.river_sections.query,[body,body]))
             self.assertEqual(pair[0]['taskId'],pair[1]['taskId']);self.assertEqual(submit.call_count,1)
+            section_request=submit.call_args.args[0]
+            self.assertEqual(section_request['runType'],'pointQuery')
+            self.assertNotIn('lineage',section_request)
+            self.assertNotIn('schemeId',section_request)
             section['name']='只改名称'
             self.assertEqual(self.manager.river_sections.query(body)['taskId'],pair[0]['taskId'])
             original=read_json(source/'request.json');original['parameters']={'WM':151}

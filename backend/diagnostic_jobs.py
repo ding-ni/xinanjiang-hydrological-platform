@@ -259,6 +259,12 @@ def spatial_payload(bundle):
             "productionEligible": False}
 
 
+def query_worker_implementation(request):
+    """Use the worker's implementation identity, not a stale queue-time hash."""
+    from section_cache import query_implementation
+    return query_implementation()
+
+
 def run_point(folder, request):
     import numpy as np
     import time
@@ -290,8 +296,10 @@ def run_point(folder, request):
             'remainingSeconds':round(remaining) if remaining is not None else None,
             'completedSteps':completed,'totalSteps':total,**extra})
     phase('verify','检查来源过程与计算条件')
-    if request.get('queryImplementationSHA256') and request['queryImplementationSHA256']!=query_implementation():
-        raise ValueError('断面查询程序在排队期间更新，请重新发起查询')
+    # The job freezes basin inputs and source-process evidence at submission.
+    # A code deploy while it waits must not strand the query; execute and cache
+    # using the implementation that is actually running this worker.
+    execution_implementation=query_worker_implementation(request)
     class Source:
         root = RUNTIME / 'tasks'
         def result(self, task_id):
@@ -321,7 +329,7 @@ def run_point(folder, request):
         raise ValueError('完整产流数组无效')
     key=manifest_digest({'sourceTaskId':request['sourceTaskId'],'runoff':result['routingEvidence']['arraySHA256'],
         'inputs':request['inputs'],'routing':parameters['parametersSHA256'],'initialState':original.get('period',{}).get('initialStateVersionId'),
-        'spatial':request['spatialEvidence'],'program':request.get('queryImplementationSHA256') or sha(Path(__file__))})
+        'spatial':request['spatialEvidence'],'program':execution_implementation})
     prepared=RUNTIME/'section-cache/processes'/key
     prepared.mkdir(parents=True,exist_ok=True)
     manifest_path=prepared/'manifest.json'
@@ -382,7 +390,8 @@ def run_point(folder, request):
     write_json(profile_path,profiles[-100:])
     return {'pointQuery':answer,'sourceTaskId':request['sourceTaskId'],'warnings':[answer['quality']['warning'],'诊断计算，不能用于生产预报。'],
         'timings':{'querySeconds':round(time.perf_counter()-started,3),'phases':timings},
-        'preparationCacheHit':cache_hit,'queryImplementationSHA256':request.get('queryImplementationSHA256'),
+        'preparationCacheHit':cache_hit,'queryImplementationSHA256':execution_implementation,
+        'submittedQueryImplementationSHA256':request.get('queryImplementationSHA256'),
         'calculationRange':{'start':times[0],'end':times[-1]}}
 
 

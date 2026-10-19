@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createDailyClient, rememberedParameter, historicalParameterId, resultEntries, belongsToOperationContext, operationContext, preparationIssueText, dailyOperationSelection } from '../src/services/dailyOperationService.js'
+import { createDailyClient, rememberedParameter, historicalParameterId, resultEntries, belongsToOperationContext, operationContext, preparationIssueText, dailyOperationSelection, comparableOperations } from '../src/services/dailyOperationService.js'
 
 const contextKey='nananxi-xufan:distributed-xinanjiang:nananxi-xufan-1km'
 test('new saved parameters never replace the staff selection',()=>{
@@ -31,6 +31,25 @@ test('daily context contains the basin and model without current input or calibr
   assert.deepEqual(operationContext({basinId:'nananxi-xufan',modelScale:'1km',configId:'nananxi-xufan-1km',contextKey,selectedInputBundleVersionId:'private',selectedRoutingVersionId:'edited'}),{projectId:'nananxi-xufan',resolutionId:'1km',modelConfigId:'nananxi-xufan-1km',contextKey})
   assert.equal(belongsToOperationContext({runConfig:{context:{contextKey}}},contextKey),true)
   assert.equal(belongsToOperationContext({contextKey:'other'},contextKey),false)
+})
+test('comparison choices exclude trashed results and deleted-scheme runs, retaining saved independent results',()=>{
+  const operations=[
+    {taskId:'OP-current',status:'completed',name:'当前方案计算'},
+    {taskId:'OP-deleted',status:'completed',name:'已删除方案计算'},
+    {taskId:'OP-trashed',status:'completed',name:'已丢弃试算'},
+    {taskId:'OP-history',status:'archived',name:'独立历史计算'},
+    {taskId:'OP-running',status:'running',name:'运行中'}
+  ]
+  const results=[
+    {id:'OP-current',retention:'temporary',schemeId:'SCHEME-current'},
+    {id:'OP-deleted',retention:'saved',schemeId:'SCHEME-deleted'},
+    {id:'OP-trashed',retention:'trashed',schemeId:'SCHEME-current'},
+    {id:'OP-history',retention:'saved'}
+  ]
+  assert.deepEqual(comparableOperations(operations,results,new Set(['SCHEME-deleted']),row=>row.name),[
+    {id:'OP-current',name:'当前方案计算'},
+    {id:'OP-history',name:'独立历史计算'}
+  ])
 })
 test('event state view opens the corresponding saved simulation, not the calibration parent',()=>{
   const first={forecast:[{time:'2024-07-01T01:00:00',value:10}]},second={forecast:[{time:'2024-07-03T01:00:00',value:20}]}

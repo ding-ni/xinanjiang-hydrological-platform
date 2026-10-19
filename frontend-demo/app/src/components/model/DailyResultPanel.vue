@@ -38,6 +38,7 @@ const chartMode = computed(()=>['hindcast','rollingHindcast'].includes(props.ope
 const compareId=ref(''),compareResult=ref(null),comparisonLoading=ref(false),comparisonError=ref('')
 const availableComparisons=computed(()=>props.comparisonOptions.filter(row=>row.id!==operationId(props.operation)))
 const comparisonName=computed(()=>availableComparisons.value.find(row=>row.id===compareId.value)?.name||'对比计算')
+watch(availableComparisons,rows=>{if(compareId.value&&!rows.some(row=>row.id===compareId.value)){compareId.value='';compareResult.value=null;comparisonError.value='';comparisonLoading.value=false}})
 const overlay=computed(()=>{
   const times=(hydrograph.value?.forecast||[]).map(row=>String(row.time).replace(' ','T'))
   const rows=resultEntries(compareResult.value||{}),exact=rows.find(row=>row.id===entry.value?.id)

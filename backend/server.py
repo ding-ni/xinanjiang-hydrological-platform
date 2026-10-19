@@ -50,6 +50,13 @@ RUN_TYPES = {"calibration": "eventCalibration", "simulation": "continuousSimulat
 ACTIVE = {"queued", "running", "cancelling"}
 
 
+def uses_frozen_model_worker(request):
+    # Point queries are post-processing over an already-frozen source result.
+    # They must run the current diagnostic implementation rather than inherit
+    # the source simulation's historical worker snapshot.
+    return isinstance(request, dict) and request.get('runType') != 'pointQuery'
+
+
 class PlatformHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = os.name != "nt"
 
@@ -228,7 +235,7 @@ class TaskManager:
         return self._enqueue(request, operation_id=operation_id, state_role=state_role)
 
     def _enqueue(self, request, task_prefix="JOB", run_type=None, label=None, source="model-backend", operation_id=None, state_role=None):
-        if self.worker_script.name=='worker.py' and (request.get('lineage') or {}).get('modelImplementationSHA256'):
+        if self.worker_script.name=='worker.py' and uses_frozen_model_worker(request) and (request.get('lineage') or {}).get('modelImplementationSHA256'):
             from implementation_versions import snapshot_current, frozen_worker
             actual=snapshot_current(self.runtime_root)
             if request['lineage']['modelImplementationSHA256']!=actual:
@@ -297,7 +304,9 @@ class TaskManager:
                 if worker_script.name=='worker.py':
                     from science_context import model_implementation_identity
                     from implementation_versions import frozen_worker, execution_environment
-                    expected=(read_json(folder/'request.json').get('lineage') or {}).get('modelImplementationSHA256')
+                    task_request=read_json(folder/'request.json')
+                    expected=((task_request.get('lineage') or {}).get('modelImplementationSHA256')
+                              if uses_frozen_model_worker(task_request) else None)
                     if expected and expected!=model_implementation_identity()['modelImplementationSHA256']:
                         worker_script=frozen_worker(expected,self.runtime_root)
                         environment.update(execution_environment(worker_script,self.runtime_root))

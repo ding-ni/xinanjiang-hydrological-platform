@@ -160,7 +160,10 @@ class RiverSections:
         lon, lat = section['definition']['queried']
         original=read_json(source/'request.json')
         result=read_json(source/'result.json')
-        payload={**{key:copy.deepcopy(original[key]) for key in ('inputs','routing','context','lineage')},
+        # A section query is an on-demand diagnostic over an existing result,
+        # not another calibration/scheme calculation. Preserve the numerical
+        # sources below, but never copy the source task's scheme lineage.
+        payload={**{key:copy.deepcopy(original[key]) for key in ('inputs','routing','context')},
             'runType': 'pointQuery', 'requestId': body.get('requestId') or 'SECTION-' + uuid.uuid4().hex,
             'sourceTaskId': selected['sourceTaskId'], 'riverOnly': True,
             'point': {'lon': lon, 'lat': lat, 'channelWidthM': 20}, 'resultSelection': context,

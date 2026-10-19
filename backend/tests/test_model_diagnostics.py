@@ -19,7 +19,7 @@ from contracts import freeze_input_selection, freeze_routing_selection
 from diagnostic_jobs import diagnostic_pet_note, normalize_diagnostic, spatial_payload
 from input_products import InputProducts
 from routing_versions import RoutingVersions
-from server import TaskManager, ThreadingHTTPServer, handler
+from server import TaskManager, ThreadingHTTPServer, handler, uses_frozen_model_worker
 from test_unified_backend import calibration, simulation
 
 
@@ -136,6 +136,16 @@ class DiagnosticContracts(unittest.TestCase):
         self.assertNotIn('零', diagnostic_pet_note({'petMode': 'MONTHLY_CLIMATOLOGY_ASSUMPTION'}))
         self.assertIn('设为零', diagnostic_pet_note({'petMode': 'CONSTANT_ZERO_EXPLICIT_REQUEST'}))
         self.assertIn('逐小时', diagnostic_pet_note({'petMode': 'HOURLY_CSV'}))
+
+    def test_section_query_worker_uses_current_program_after_queue_wait(self):
+        from diagnostic_jobs import query_worker_implementation
+        with patch('section_cache.query_implementation', return_value='current-program'):
+            frozen = query_worker_implementation({'queryImplementationSHA256': 'submitted-program'})
+        self.assertEqual(frozen, 'current-program')
+
+    def test_section_queries_do_not_inherit_source_simulation_worker_snapshot(self):
+        self.assertFalse(uses_frozen_model_worker({'runType':'pointQuery','lineage':{'modelImplementationSHA256':'old'}}))
+        self.assertTrue(uses_frozen_model_worker({'runType':'simulation','lineage':{'modelImplementationSHA256':'old'}}))
 
     def test_reject_bad_experiment_values_and_absent_point_evidence(self):
         for mode, values in [('multiSeed', [1, 1, 2]), ('multiSeed', [True, 2, 3]), ('multiSeed', [1, 2]), ('wlmBoundary', [80, 80.0]), ('wlmBoundary', [80, float('nan')]), ('wlmBoundary', [59, 120])]:

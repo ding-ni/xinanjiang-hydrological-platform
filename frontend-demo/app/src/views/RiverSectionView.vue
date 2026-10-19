@@ -39,6 +39,11 @@ async function query(resumeId){
   try{
     let task=typeof resumeId==='string'?await modelApi('tasks/'+resumeId):await modelApi('result-section-queries',{method:'POST',body:{resultId:resultId.value,processId:processId.value,sectionId:sectionId.value},timeoutMs:60000})
     if(disposed||token!==querySequence)return
+    if(typeof resumeId==='string'&&task.status==='failed'&&String(task.errorMessage||'').includes('断面查询程序在排队期间更新')){
+      clearPending(key,task.taskId)
+      task=await modelApi('result-section-queries',{method:'POST',body:{resultId:resultId.value,processId:processId.value,sectionId:sectionId.value},timeoutMs:60000})
+      if(disposed||token!==querySequence)return
+    }
     cacheHit.value=Boolean(task.cacheHit)
     if(task.taskId)try{localStorage.setItem(key,task.taskId)}catch{}
     while(['queued','running','cancelling'].includes(task.status)){
@@ -48,13 +53,17 @@ async function query(resumeId){
     }
     if(disposed||token!==querySequence)return
     queryTask.value=task
-    if(!['completed','archived'].includes(task.status))throw new Error(task.errorMessage||'断面查询已停止')
+    if(!['completed','archived'].includes(task.status)){
+      if(task.status==='failed'||task.status==='cancelled')clearPending(key,task.taskId)
+      throw new Error(task.errorMessage||'断面查询已停止')
+    }
     const value=task.result || await modelApi('result-section-queries/'+task.taskId,{timeoutMs:60000})
     if(token===querySequence){answer.value=value;stage.value=''}
-  }catch(failure){if(token===querySequence)error.value=failure.message}
+  }catch(failure){if(token===querySequence){if(queryTask.value?.status==='failed'||queryTask.value?.status==='cancelled')clearPending(key,queryTask.value.taskId);error.value=failure.message}}
   finally{if(token===querySequence)busy.value=false}
 }
 async function stopQuery(){if(!queryTask.value?.taskId)return;try{await modelApi('tasks/'+queryTask.value.taskId+'/cancel',{method:'POST',body:{}});stage.value='正在停止断面计算'}catch(failure){error.value=failure.message}}
+function clearPending(key,taskId){try{if(!taskId||localStorage.getItem(key)===taskId)localStorage.removeItem(key)}catch{}}
 watch(sectionId,()=>{if(!sectionId.value)return;let id;try{id=localStorage.getItem(pendingKey())}catch{};if(id)query(id)},{flush:'post'})
 const chart=computed(()=>{const series=answer.value?.pointQuery?.series||{time:[],flow_cms:[]};return{animation:false,tooltip:{trigger:'axis'},grid:{left:65,right:25,top:28,bottom:45},xAxis:{type:'category',data:series.time,axisLabel:{formatter:value=>value.slice(5,16).replace('T','\n')}},yAxis:{type:'value',name:'流量 m³/s',min:0},dataZoom:[{type:'inside'},{type:'slider',height:13,bottom:0}],series:[{type:'line',showSymbol:false,connectNulls:false,data:series.flow_cms,lineStyle:{color:'#197e83',width:2}}]}})
 function exportFlow(){const values=answer.value.pointQuery.series;downloadText(section.value.name+' · '+process.value.name+'.csv',csv([['时间','流量（m³/s）'],...values.time.map((time,i)=>[time,values.flow_cms[i]])]))}

@@ -268,10 +268,11 @@ import ContextStatusMetric from '@/components/common/ContextStatusMetric.vue'
 import ResultWorkbench from '@/components/model/ResultWorkbench.vue'
 import { modelApi, modelBackendEnabled, normalizeBackendTask } from '@/services/modelBackendService'
 import { csv, downloadText, summaryRows, SUMMARY_HEADER } from '@/services/resultPresentation'
-import { dailyClient, operationId, operationLabels, operationStatuses, completedOperation } from '@/services/dailyOperationService'
+import { dailyClient, operationId, operationLabels, operationStatuses, completedOperation, comparableOperations } from '@/services/dailyOperationService'
 import { useDailyOperation } from '@/composables/useDailyOperation'
 import DailyResultPanel from '@/components/model/DailyResultPanel.vue'
 import DailyOperationProgress from '@/components/model/DailyOperationProgress.vue'
+import { retentionChanged } from '@/services/resultRetentionService'
 
 const archive = useArchiveStore()
 const forecast = useForecastStore()
@@ -280,11 +281,12 @@ const tasks = useTasksStore()
 const router = useRouter()
 const route = useRoute()
 const operationRows=ref([]), operationSearch=ref(''), operationType=ref(''), dailySchemeFilter=ref(''), operationLoading=ref(false), operationError=ref(''), savedParameters=ref([])
+const comparisonResults=ref([]),trashedSchemeIds=ref(new Set())
 const dailyTypes={eventSimulation:'洪水模拟',continuousSimulation:'连续模拟',continuation:'续算',hindcast:'单次回算',rollingHindcast:'滚动回算',calibration:'参数率定',manualTrial:'人工试调'}
 const {operation:activeDailyOperation,result:dailyResult,error:dailyResultError,inspect:inspectDailyOperation,cancel:cancelDailyOperation,clear:clearDailyOperation}=useDailyOperation({contextKey:()=>app.contextKey,onChange:row=>{const id=operationId(row);operationRows.value=operationRows.value.map(item=>operationId(item)===id?row:item)}})
 const operationName=row=>resultMetadata.value[row?.primaryTaskId]?.name||[row?.lineage?.schemeName || row?.name || operationLabels[row?.operation||row?.runType]||row?.runTypeLabel||'计算',row?.createdAt?.replace('T',' ').slice(0,16)].filter(Boolean).join(' · ')
 const visibleOperations=computed(()=>operationRows.value.filter(row=>(!dailySchemeFilter.value||(dailySchemeFilter.value==='daily'?!row.lineage?.schemeId:row.lineage?.schemeId===dailySchemeFilter.value))&&(!operationType.value||(row.operation||row.runType)===operationType.value)&&(!operationSearch.value||`${operationName(row)} ${row.createdAt} ${row.parameterSchemeName||''}`.includes(operationSearch.value))))
-const dailyComparisonOptions=computed(()=>operationRows.value.filter(completedOperation).map(row=>({id:operationId(row),name:operationName(row)})))
+const dailyComparisonOptions=computed(()=>comparableOperations(operationRows.value,comparisonResults.value,trashedSchemeIds.value,operationName))
 let operationRevision=0
 async function refreshOperations(){
   const token=++operationRevision,key=app.contextKey;operationLoading.value=true;operationError.value=''
@@ -332,9 +334,9 @@ async function refreshMetadata() {
   catalogError.value = ''
   const key=app.contextKey
   try {
-    const [catalog, named, legacy] = await Promise.all([modelApi('result-catalog'), modelApi('model-schemes'), modelApi('database/schemes')])
+    const [catalog, named, legacy, discarded] = await Promise.all([modelApi('result-catalog'), modelApi('model-schemes'), modelApi('database/schemes'), modelApi('model-schemes?retention=trashed')])
     if(key!==app.contextKey)return
-    resultMetadata.value = catalog.metadata; schemes.value = named.schemes; legacyConditions.value = legacy.schemes
+    resultMetadata.value = catalog.metadata; comparisonResults.value = catalog.results || []; trashedSchemeIds.value = new Set((discarded.schemes || []).map(row=>row.id)); schemes.value = named.schemes; legacyConditions.value = legacy.schemes
   }
   catch (failure) { catalogError.value = failure.message }
 }
@@ -352,6 +354,7 @@ async function exportFiltered() {
   finally { exporting.value = false }
 }
 onMounted(refreshMetadata)
+watch(retentionChanged,refreshMetadata)
 let resultRequest = 0
 watch([selectedTaskId, () => tasks.taskById(selectedTaskId.value)?.status, () => app.contextKey], async () => {
   const revision = ++resultRequest

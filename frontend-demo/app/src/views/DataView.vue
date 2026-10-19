@@ -13,7 +13,7 @@
       <div v-if="message" role="status" class="success-message">{{ message }}</div>
       <div class="data-totals" v-if="summary && tab !== 'processing'" aria-label="实测资料库总量">
         <div v-for="item in summary.coverage" :key="item.variable"><span>{{ item.label }}记录</span><b>{{ number(item.records) }}<small>条</small></b><p>{{ item.stations }} 站 · {{ item.start?.slice(0, 10) }} 至 {{ item.end?.slice(0, 10) }}</p></div>
-        <div><span>历史洪水目录</span><b>{{ summary.events }}<small>场</small></b><p>{{ summary.sourceFiles }} 份年资料 · {{ summary.stations }} 个登记站点</p></div>
+        <div class="catalog-total"><span>历史洪水目录</span><b>{{ summary.events }}<small>场</small></b><p>雨量站网 {{ rainStationCount }} 站 · {{ rainCoverageText }}</p><p>徐畈出口控制断面（水位/流量）· {{ flowCoverageText }}</p><small class="coverage-note">按记录起止年份统计，期间可能缺测</small></div>
       </div>
       <nav class="data-tabs" aria-label="资料分类">
         <button v-for="item in tabs" :key="item.id" :class="{ active: tab === item.id }" @click="tab = item.id">{{ item.label }}</button>
@@ -106,6 +106,12 @@ onBeforeUnmount(() => { disposed = true; revision++ })
 const number = (v) => Number(v || 0).toLocaleString('zh-CN')
 const value = (v) => v == null ? '—' : Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 3 })
 const timeLabel = v => String(v || '').replace('T', ' ')
+const coverageYears = item => item?.start && item?.end ? `${String(item.start).slice(0, 4)}–${String(item.end).slice(0, 4)}` : '年份未登记'
+const coverageByVariable = variableKey => computed(() => summary.value?.coverage?.find(item => item.variable === variableKey) || {})
+const rainCoverage = coverageByVariable('rain'), flowCoverage = coverageByVariable('flow')
+const rainStationCount = computed(() => rainCoverage.value.stations || 0)
+const rainCoverageText = computed(() => `雨量 ${coverageYears(rainCoverage.value)}`)
+const flowCoverageText = computed(() => coverageYears(flowCoverage.value))
 const queryKey = computed(() => [stationId.value, variable.value, start.value, end.value, sourceId.value].join('|'))
 const queryChanged = computed(() => resultQuery.value !== queryKey.value)
 const filteredStations = computed(() => stations.value.filter(s => s.variable === variable.value && `${s.name}${s.id}`.includes(stationSearch.value.trim())))
@@ -197,7 +203,7 @@ watch(() => route.query.tab, value => {
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; text-decoration: none; } .btn svg,.search-box svg { width: 16px; height: 16px; flex-shrink: 0; } .icon-action { width: 34px; height: 34px; padding: 7px; flex: 0 0 34px; }
 .database-state { color: #44786a; font-size: 12px; }.database-state i { display: inline-block; width: 6px; height: 6px; background: #448e6d; border-radius: 50%; margin-right: 5px; }
 .data-totals { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border-top: 1px solid #dde4e7; border-bottom: 1px solid #dde4e7; margin-top: 6px; }
-.data-totals>div { padding: 18px 18px 16px 0; } .data-totals>div+div { padding-left: 20px; border-left: 1px solid #e5ebed; }.data-totals span { color: #687c85; font-size: 12px; }.data-totals b { display: block; font-size: 25px; font-variant-numeric: tabular-nums; margin: 5px 0; }.data-totals small { font-size: 12px; margin-left: 8px; }.data-totals p { font-size: 11px; color: #697c81; margin: 0; line-height: 1.7; }
+.data-totals>div { padding: 18px 18px 16px 0; } .data-totals>div+div { padding-left: 20px; border-left: 1px solid #e5ebed; }.data-totals span { color: #687c85; font-size: 12px; }.data-totals b { display: block; font-size: 25px; font-variant-numeric: tabular-nums; margin: 5px 0; }.data-totals small { font-size: 12px; margin-left: 8px; }.data-totals p { font-size: 11px; color: #697c81; margin: 0; line-height: 1.7; }.data-totals .coverage-note { display: block; margin: 3px 0 0; color: #8a969b; font-size: 10px; }
 .data-tabs { display: flex; gap: 26px; border-bottom: 1px solid #dde4e7; margin-bottom: 20px; overflow-x: auto; }.data-tabs button { border: 0; background: transparent; padding: 16px 0 12px; font-size: 14px; color: #687b82; border-bottom: 3px solid transparent; white-space: nowrap; cursor: pointer; }.data-tabs .active { color: #146858; border-bottom-color: #146858; font-weight: 700; }
 .observation-workspace { display: grid; grid-template-columns: 220px minmax(0,1fr); gap: 24px; }.station-browser { border-right: 1px solid #e0e7e9; padding-right: 18px; min-width: 0; }.segmented { display: flex; background: #f0f4f4; padding: 3px; border-radius: 4px; margin-bottom: 12px; }.segmented button { flex: 1; border: 0; border-radius: 3px; background: transparent; padding: 7px 3px; cursor: pointer; font-size: 12px; }.segmented .active { background: #fff; color: #146858; box-shadow: 0 1px 3px #0001; }
 .search-box { display: flex; align-items: center; gap: 6px; border: 1px solid #dce4e6; padding: 7px 8px; border-radius: 4px; color: #71848a; }.search-box input { width: 100%; min-width: 0; border: 0; outline: 0; font-size: 12px; }.station-list { margin-top: 10px; }.station-list button { width: 100%; border: 0; border-left: 3px solid transparent; padding: 12px 7px; display: flex; align-items: center; justify-content: space-between; gap: 6px; background: #fff; text-align: left; cursor: pointer; font-size: 12px; }.station-list .selected { background: #eaf3ee; border-left-color: #2e806c; }.station-list button:hover { background: #f2f6f4; }.station-list small { display: block; color: #7b8a90; font-size: 10px; margin-top: 4px; }.station-list button>span:last-child { text-align: right; font-variant-numeric: tabular-nums; }

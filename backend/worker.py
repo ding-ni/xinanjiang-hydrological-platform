@@ -491,7 +491,7 @@ class ModelJob:
         validate_land_state_arrays(land, self.params, len(self.grids))
         lead = self.request['issue']['leadHours']
         times = pd.DatetimeIndex(self.forecast_rain['times'][:lead])
-        precip = np.repeat(np.asarray(self.forecast_rain['hourlyRainfallMm'][:lead], dtype=float)[:, None], len(self.grids), axis=1)
+        precip = ForecastProducts.precipitation(self.forecast_rain, self.grid_ids)
         event = SimpleNamespace(event_id=self.task_id, start=times[0], end=times[-1], times=times,
                                 precip=precip, observed=pd.Series(dtype=float))
         event.pet_mm_h = self.pet_provider.values(times)
@@ -510,11 +510,14 @@ class ModelJob:
                 'metrics': hydrograph['metrics'], 'parameters': self.request['parameters'],
                 'parentStateVersionId': parent, 'stateVersionId': None, 'endStateVersionId': None,
                 'forecastRain': {'versionId': self.forecast_rain['versionId'], 'name': self.forecast_rain['name'],
-                                 'sourceLabel': self.forecast_rain['sourceLabel'], 'totalMm': float(precip[:, 0].sum())},
+                                 'sourceLabel': self.forecast_rain['sourceLabel'],
+                                 'productIssueTime': self.forecast_rain.get('productIssueTime'),
+                                 'spatialMethod': self.forecast_rain['spatialMethod'],
+                                 'totalMm': float(np.average(precip, axis=1, weights=[float(g['area_km2']) for g in self.grids]).sum())},
                 'petMode': self.science['petMode'], 'gridCount': len(self.grids),
                 'gridHistory': self.grid_history, 'routingEvidence': self.routing_evidence,
                 'science': self.request['science'],
-                'warnings': [*self.warnings, '降雨采用人工给定情景，逐小时均匀分配至有效网格。',
+                'warnings': [*self.warnings, '预报降雨来源：' + self.forecast_rain['sourceLabel'],
                              '蒸散发采用冻结科学配置：' + self.science['petMode']]}
 
     def calibrate(self):

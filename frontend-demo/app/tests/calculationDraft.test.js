@@ -217,6 +217,8 @@ test('a named new scheme uses the configured local source and clears selections 
   assert.equal(app.selectedInputBundleVersionId, 'INPUT-display')
   assert.deepEqual(oldResult, { taskId: 'JOB-history' })
   assert.equal(saved.length, 1)
+  state.resetCalibrationScheme(defaults)
+  assert.equal(state.warmupDays, 14)
 })
 
 test('a calculation cannot create an anonymous scheme', async () => {

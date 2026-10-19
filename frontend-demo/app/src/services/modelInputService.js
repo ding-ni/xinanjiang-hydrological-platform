@@ -38,7 +38,7 @@ function inputQuery(source, resolution, values = {}) {
   return new URLSearchParams({ projectId: selection.basinId, resolutionId: selection.resolution, bundleVersionId: selection.bundleVersionId, ...values })
 }
 
-export function modelInputWarmupHours(value = 168) {
+export function modelInputWarmupHours(value = 336) {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 8760) {
     throw new Error('洪水场次预热期须为 0 到 8760 小时（最多 365 天）的整数')
   }
@@ -168,7 +168,7 @@ export async function loadModelInputWindow(start = '', end = '', { source = null
   return input
 }
 
-export async function loadModelInputEvent(eventId, { source = null, resolution = null, warmupHours = 168 } = {}) {
+export async function loadModelInputEvent(eventId, { source = null, resolution = null, warmupHours = 336 } = {}) {
   if (!eventId) throw new Error('请选择已登记洪水场次')
   const query = inputQuery(source, resolution, { warmupHours: modelInputWarmupHours(warmupHours) })
   const input = normalizeModelInputWindow(await modelApi(`inputs/events/${encodeURIComponent(eventId)}?${query}`, { timeoutMs: 30000 }))

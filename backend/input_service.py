@@ -411,7 +411,7 @@ class InputService:
             arrays = self._read_arrays(start_time, end_time, MAX_WINDOW_HOURS)
             return self._window_payload(arrays)
 
-    def event(self, event_id, warmup_hours=168, project_id=PROJECT_ID, resolution_id=RESOLUTION_ID):
+    def event(self, event_id, warmup_hours=336, project_id=PROJECT_ID, resolution_id=RESOLUTION_ID):
         self._case(project_id, resolution_id)
         if not isinstance(event_id, str) or not EVENT_ID.fullmatch(event_id):
             raise ValueError("无效场次编号")

@@ -160,6 +160,25 @@ class OriginalPlanTests(unittest.TestCase):
         legacy = {'metrics': {'volume': True}, 'weights': {'volume': 1}}
         self.assertEqual(objective_terms(legacy)[0]['metric'], 'VOLUME_ERROR')
 
+    def test_four_term_objective_penalizes_water_bias_without_cross_event_cancellation(self):
+        sys.path.insert(0, str(MODEL / 'scripts'))
+        import run_formal_multievent_calibration as kernels
+        import pandas as pd
+        criteria = {'metrics': {'nse': True, 'kge': False, 'peak': True, 'time': True, 'volume': True},
+                    'weights': {'nse': .4, 'peak': .2, 'time': .1, 'volume': .3},
+                    'waterBalanceMetric': 'VOLUME_ERROR'}
+        terms = objective_terms(criteria)
+        frame = pd.DataFrame([
+            {'NSE': .8, 'volume_error_percent': bias, 'peak_error_percent': 20, 'peak_time_error_hours': 6}
+            for bias in (-40, 40)])
+        original = kernels.objective_loss(frame, terms)
+        self.assertAlmostEqual(original, -(.4 * .8 - .3 * .4 - .2 * .2 - .1 * 6 / 24))
+        improved = frame.copy()
+        improved['volume_error_percent'] = [-10, 10]
+        self.assertAlmostEqual(kernels.objective_loss(improved, terms) - original, -.09)
+        improved['NSE'] = .7
+        self.assertLess(kernels.objective_loss(improved, terms), original)
+
     def test_unregistered_initialization_flag_cannot_bypass_routing_guard(self):
         request = continuous_request(False)
         request['calibration']['optimizer'].update(initializationPolicy='SOURCE_INITIAL_CANDIDATES', initialCandidates=[])

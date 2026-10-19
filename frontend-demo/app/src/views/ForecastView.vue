@@ -1,7 +1,9 @@
 <template>
   <section class="forecast-view">
-    <header class="page-heading"><div><h2>洪水预报</h2><span class="history-label">历史回算</span></div><RouterLink to="/archive" class="btn">计算成果</RouterLink></header>
-    <div class="forecast-layout">
+    <header class="page-heading"><div><h2>洪水预报</h2></div><RouterLink to="/archive" class="btn">计算成果</RouterLink></header>
+    <div class="forecast-tabs" role="tablist" aria-label="预报方式"><button type="button" role="tab" :aria-selected="viewMode==='manual'" :class="{active:viewMode==='manual'}" @click="viewMode='manual'">手动预报</button><button type="button" role="tab" :aria-selected="viewMode==='automatic'" :class="{active:viewMode==='automatic'}" @click="viewMode='automatic'">自动预报</button><button type="button" role="tab" :aria-selected="viewMode==='history'" :class="{active:viewMode==='history'}" @click="viewMode='history'">历史回算</button></div>
+    <AutomaticForecastPanel v-if="viewMode!=='history'" :mode="viewMode" />
+    <div v-else class="forecast-layout">
       <section class="panel panel-pad conditions">
         <form @submit.prevent="run">
           <label for="forecast-parameter">参数<select id="forecast-parameter" v-model="parameterSchemeId" class="input" :disabled="loading || running" @change="rememberParameter"><option value="" disabled>选择已保存参数</option><option v-for="row in parameters" :key="row.id" :value="row.id">{{ row.name }}</option></select></label>
@@ -30,7 +32,10 @@ import { activeOperation, belongsToOperationContext, dailyClient, dailyOperation
 import { useDailyOperation } from '@/composables/useDailyOperation'
 import DailyOperationProgress from '@/components/model/DailyOperationProgress.vue'
 import DailyResultPanel from '@/components/model/DailyResultPanel.vue'
+import AutomaticForecastPanel from '@/components/model/AutomaticForecastPanel.vue'
 const app=useAppStore(),route=useRoute(),parameters=ref([]),parameterSchemeId=ref(''),loading=ref(false),pageError=ref('')
+const viewMode=ref(route.query.task||route.query.operation?'history':'automatic')
+watch(()=>[route.query.task,route.query.operation],([task,operation])=>{if(task||operation)viewMode.value='history'})
 const mode=ref('single'),issueTime=ref(''),endTime=ref(''),lastIssueTime=ref(''),leadHours=ref(24)
 const historicalTask=ref(null),historicalResult=ref(null)
 const {operation,result,error,submitting,inspect,submit,cancel,clear}=useDailyOperation({contextKey:()=>app.contextKey,onChange:row=>saveDailySelection(app.contextKey,'forecast',{...readDailySelection(app.contextKey,'forecast'),operationId:operationId(row)})})
@@ -85,5 +90,6 @@ async function run(){
 function rememberParameter(){saveDailySelection(app.contextKey,'parameter',{id:parameterSchemeId.value})}
 </script>
 <style scoped>
+.forecast-tabs{display:flex;gap:24px;border-bottom:1px solid #dae3da}.forecast-tabs button{border:0;border-bottom:2px solid transparent;padding:0 4px 12px;background:none;color:#78877d;cursor:pointer;font-size:13px}.forecast-tabs button.active{border-color:#357454;color:#285d45;font-weight:700}
 .forecast-view{display:grid;gap:20px}.page-heading,.page-heading>div{display:flex;align-items:center;gap:16px}.page-heading{justify-content:space-between}.page-heading h2{margin:0;font-size:23px;color:#2a4b40;font-family:'Noto Serif CJK SC','SimSun',serif}.history-label{border:1px solid #d8e4dc;border-radius:3px;padding:4px 8px;font-size:11px;color:#62806d}.forecast-layout{display:grid;grid-template-columns:280px minmax(0,1fr);gap:20px;align-items:start}.conditions form{display:grid;gap:20px}.conditions label{display:grid;gap:8px;font-size:12px;color:#536c60}.conditions .input{width:100%;min-width:0}.mode-switch{display:flex;border:1px solid #dce5de;border-radius:5px;overflow:hidden}.mode-switch button{flex:1;padding:11px 5px;border:0;background:#f7faf7;color:#667d70;cursor:pointer}.mode-switch button.active{background:#e5efe8;color:#25634c;font-weight:700}.run-button{width:100%;min-height:40px}.failure,.issues{color:#a14735;font-size:12px;line-height:1.8;margin:0}.issues{padding-left:17px}.rolling-count{margin:0;color:#73887a;font-size:12px}.empty-link{color:#35785b;font-size:12px}@media(max-width:1000px){.forecast-layout{grid-template-columns:1fr}.conditions form{grid-template-columns:1fr 1fr;align-items:end}.conditions .mode-switch,.conditions .failure,.conditions .issues{grid-column:1/-1}}@media(max-width:600px){.conditions form{grid-template-columns:1fr}.page-heading h2{font-size:20px}}
 </style>

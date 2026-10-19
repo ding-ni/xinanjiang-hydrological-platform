@@ -75,6 +75,7 @@ class TaskManager:
         self.schemes = ModelSchemes(self.database)
         self.parameter_schemes = ParameterSchemes(self)
         self.operations = None
+        self.automatic_forecasts = None
         self.states = StateRepository(self)
         self.results = ResultRepository(self)
         from river_sections import RiverSections
@@ -402,6 +403,8 @@ class TaskManager:
         return self.submit(request)
 
     def close(self):
+        if self.automatic_forecasts is not None:
+            self.automatic_forecasts.close()
         if self.operations is not None:
             self.operations.close()
         if self.input_tasks is not None:
@@ -440,6 +443,9 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
         input_manager = manager.input_tasks
     if manager.operations is None:
         manager.operations = HydrologicalOperations(manager, input_manager)
+    if manager.automatic_forecasts is None:
+        from automatic_forecasts import AutomaticForecasts
+        manager.automatic_forecasts = AutomaticForecasts(manager)
     input_readers = {}
     input_reader_lock = threading.RLock()
     diagnostics = TaskDiagnostics(manager)
@@ -480,6 +486,25 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 raise ValueError("查询字段不能重复")
             argument = lambda key, default=None: query.get(key, [default])[0]
             prefix = "/api/model"
+            if path == f'{prefix}/automatic-forecasts' and self.command in {'GET', 'POST'}:
+                self.send_json(200 if self.command == 'GET' else 202,
+                    {**manager.automatic_forecasts.list(), 'currentTime': manager.automatic_forecasts.clock().isoformat()}
+                    if self.command == 'GET' else manager.automatic_forecasts.create(self.read_body()))
+                return
+            if path.startswith(f'{prefix}/automatic-forecasts/'):
+                parts = path[len(f'{prefix}/automatic-forecasts/'):].split('/')
+                if self.command == 'GET' and len(parts) == 1:
+                    payload = manager.automatic_forecasts.get(parts[0])
+                elif self.command == 'GET' and len(parts) == 2 and parts[1] == 'issues':
+                    payload = manager.automatic_forecasts.issues(parts[0])
+                elif self.command == 'POST' and len(parts) == 2 and parts[1] in {'start', 'stop', 'catch-up'}:
+                    if self.read_body() != {}:
+                        raise ValueError('开始、关闭或补做无需附加设置')
+                    payload = manager.automatic_forecasts.control(parts[0], parts[1])
+                else:
+                    raise KeyError('自动预报接口不存在')
+                self.send_json(200, payload)
+                return
             if path == f'{prefix}/forecast-rain':
                 if self.command == 'GET':
                     self.send_json(200, {'products': manager.forecast_products.list()})
@@ -509,7 +534,7 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                     self.send_json(200, {'backups': sorted(rows, key=lambda r: r['createdAt'], reverse=True)})
                 elif self.command == 'POST':
                     if self.read_body() != {}: raise ValueError('备份请求无需目录参数')
-                    with manager.operations.lock, manager.parameter_schemes.lock, manager.lock, input_manager.lock, products._lock, manager.forecast_products.lock:
+                    with manager.automatic_forecasts.lock, manager.operations.lock, manager.parameter_schemes.lock, manager.lock, input_manager.lock, products._lock, manager.forecast_products.lock:
                         self.send_json(200, create_backup(manager.runtime_root))
                 else:
                     raise KeyError('接口不存在')
@@ -792,7 +817,7 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 elif operation == "window":
                     payload = selected_inputs.window(argument("start"), argument("end"), **context)
                 elif operation.startswith("events/") and operation.count("/") == 1:
-                    payload = selected_inputs.event(operation.split("/")[1], warmup_hours=int(argument("warmupHours", 168)), **context)
+                    payload = selected_inputs.event(operation.split("/")[1], warmup_hours=int(argument("warmupHours", 336)), **context)
                 else:
                     raise KeyError("输入查询接口不存在")
                 self.send_json(200, payload)

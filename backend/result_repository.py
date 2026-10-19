@@ -27,7 +27,7 @@ class ResultRepository:
         label = {'calibration':'自动率定','manualTrial':'人工试调','eventCalibration':'自动率定',
                  'continuousCalibration':'连续率定','eventSimulation':'洪水模拟','continuousSimulation':'连续模拟',
                  'simulation':'模拟','continuation':'继续模拟','rerun':'再次计算','hindcast':'历史回算',
-                 'rollingHindcast':'滚动回算','forecast':'洪水预报'}.get(kind, status.get('runTypeLabel') or '水文计算')
+                 'rollingHindcast':'滚动回算','automaticForecast':'自动预报','manualForecast':'手动预报','forecast':'洪水预报'}.get(kind, status.get('runTypeLabel') or '水文计算')
         instant = status.get('createdAt') or status.get('completedAt') or ''
         try:
             date = datetime.fromisoformat(instant.replace('Z','+00:00'))
@@ -44,7 +44,7 @@ class ResultRepository:
     def ensure_name(self, status):
         if status.get('internal') or status.get('operation') == 'stateReplay':
             return
-        if (status.get('operation') or status.get('runType')) not in {'calibration','manualTrial','eventCalibration','continuousCalibration','eventSimulation','continuousSimulation','simulation','continuation','rerun','hindcast','rollingHindcast','forecast','stateInitialization','stateContinuation'}:
+        if (status.get('operation') or status.get('runType')) not in {'calibration','manualTrial','eventCalibration','continuousCalibration','eventSimulation','continuousSimulation','simulation','continuation','rerun','hindcast','rollingHindcast','automaticForecast','manualForecast','forecast','stateInitialization','stateContinuation'}:
             return
         with self.manager.database.connect() as db:
             db.execute('INSERT OR IGNORE INTO result_metadata VALUES (?,?,?,?,?,?,?)',

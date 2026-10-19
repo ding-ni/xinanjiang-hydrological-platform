@@ -3,7 +3,7 @@ import { hydrologyText } from './hydrologyPresentation.js'
 
 export const operationLabels = {
   eventSimulation: '洪水模拟', continuousSimulation: '连续模拟', continuation: '续算',
-  hindcast: '单次回算', rollingHindcast: '滚动回算',
+  hindcast: '单次回算', rollingHindcast: '滚动回算', automaticForecast: '自动预报', manualForecast: '手动预报',
   eventCalibration: '洪水率定', continuousCalibration: '连续率定'
   , calibration: '参数率定', manualTrial: '人工试调', rerun: '按原条件复算', stateReplay: '计算状态'
 }
@@ -93,7 +93,7 @@ export function resultEntries(result = {}, taskId = '') {
       taskId: row.stateCalculationTaskId || state?.taskId || state?.stateCalculationTaskId || row.taskId || result.stateCalculationTaskId || result.primaryTaskId || taskId,
       endStateVersionId: row.endStateVersionId || state?.endStateVersionId }
   })
-  if (result.hydrograph) return [{ id: 'process', label: '流量过程', taskId: result.stateCalculationTaskId || result.primaryTaskId || result.sourceTaskId || taskId,
+  if (result.hydrograph) return [{ id: 'process', label: '流量过程', issueTime:result.issue?.issueTime, taskId: result.stateCalculationTaskId || result.primaryTaskId || result.sourceTaskId || taskId,
     hydrograph: result.hydrograph, endStateVersionId: result.endStateVersionId }]
   return []
 }

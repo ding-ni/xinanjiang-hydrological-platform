@@ -13,18 +13,19 @@ import threading
 from common import ROOT, MODEL, RUNTIME, read_json, write_json
 from platform_config import SETTINGS
 
-PLATFORM_FILES = ('worker.py', 'routing_adapter.py', 'state_initialization_adapter.py', 'science_context.py',
+LEGACY_PLATFORM_FILES = ('worker.py', 'routing_adapter.py', 'state_initialization_adapter.py', 'science_context.py',
                   'strict_forcing.py', 'calibration_groups.py', 'calibration_objectives.py', 'calibration_search.py',
                   'joint_calibration.py', 'routing_calibration.py', 'original_calibration_plan.py')
+PLATFORM_FILES = LEGACY_PLATFORM_FILES + ('forecast_products.py',)
 SNAPSHOT_LOCK=threading.RLock()
 
 def digest(records):
     return hashlib.sha256(json.dumps(records,sort_keys=True,ensure_ascii=False,allow_nan=False,separators=(',',':')).encode()).hexdigest()
 
-def implementation_records(platform_root=ROOT, model=MODEL):
+def implementation_records(platform_root=ROOT, model=MODEL, platform_files=PLATFORM_FILES):
     paths = sorted((model/'code').rglob('*.py')) + [model/'scripts/run_formal_multievent_calibration.py']
     return ([{'path':path.relative_to(model).as_posix(),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()} for path in paths]
-            + [{'path':'platform/'+name,'sha256':hashlib.sha256((platform_root/name).read_bytes()).hexdigest()} for name in PLATFORM_FILES])
+            + [{'path':'platform/'+name,'sha256':hashlib.sha256((platform_root/name).read_bytes()).hexdigest()} for name in platform_files])
 
 def frozen_worker(expected, runtime=RUNTIME):
     if not isinstance(expected,str) or not re.fullmatch('[0-9a-f]{64}',expected):
@@ -40,7 +41,10 @@ def frozen_worker(expected, runtime=RUNTIME):
         path=backend/name
         if path.is_symlink() or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=row['sha256']:
             raise ValueError('历史计算程序文件缺失或摘要改变：'+name)
-    actual=digest(implementation_records(backend))
+    identity_files = manifest.get('identityPlatformFiles', LEGACY_PLATFORM_FILES)
+    if not isinstance(identity_files, (list, tuple)) or any(Path(name).name != name or not name.endswith('.py') for name in identity_files):
+        raise ValueError('历史程序身份文件清单无效')
+    actual=digest(implementation_records(backend, platform_files=identity_files))
     if manifest.get('modelImplementationSHA256')!=expected or actual!=expected:
         raise ValueError('历史计算程序或原模型文件已改变，不能按原程序复算')
     return backend/'worker.py'
@@ -51,7 +55,8 @@ def register_git_implementation(runtime, ref):
     commit=git('rev-parse','--verify',ref+'^{commit}').decode().strip()
     files=git('ls-tree','-r','--name-only',commit,'--','backend').decode().splitlines()
     blobs={Path(name).name:git('show',commit+':'+name) for name in files if name.startswith('backend/') and name.count('/')==1 and name.endswith('.py')}
-    records=implementation_records()
+    identity_files = PLATFORM_FILES if b'identityPlatformFiles' in blobs.get('implementation_versions.py', b'') else LEGACY_PLATFORM_FILES
+    records=implementation_records(platform_files=identity_files)
     for row in records:
         if row['path'].startswith('platform/'):
             row['sha256']=hashlib.sha256(blobs[row['path'].split('/')[-1]]).hexdigest()
@@ -69,7 +74,7 @@ def register_git_implementation(runtime, ref):
     config={key:str(SETTINGS[key]) for key in ('model','projects','frontend')}
     config.update(schemaVersion=1,workspace=str(Path(runtime).resolve()),port=8878)
     write_json(folder/'config/platform.json',config)
-    write_json(folder/'manifest.json',{'modelImplementationSHA256':identity,'gitCommit':commit,
+    write_json(folder/'manifest.json',{'modelImplementationSHA256':identity,'gitCommit':commit,'identityPlatformFiles':list(identity_files),
         'platformFiles':[{'path':name,'sha256':hashlib.sha256(data).hexdigest()} for name,data in sorted(blobs.items())],
         'vendorFiles':[row for row in records if not row['path'].startswith('platform/')],
         'purpose':'exact historical executable replay; vendor data and source files remain at their registered paths'})
@@ -90,7 +95,7 @@ def snapshot_current(runtime):
         config={key:str(SETTINGS[key]) for key in ('model','projects','frontend')}
         config.update(schemaVersion=1,workspace=str(Path(runtime).resolve()),port=8878)
         write_json(folder/'config/platform.json',config)
-        write_json(folder/'manifest.json',{'modelImplementationSHA256':identity,
+        write_json(folder/'manifest.json',{'modelImplementationSHA256':identity,'identityPlatformFiles':list(PLATFORM_FILES),
             'platformFiles':[{'path':name,'sha256':hashlib.sha256(data).hexdigest()} for name,data in sorted(blobs.items())],
             'vendorFiles':[row for row in records if not row['path'].startswith('platform/')],
             'purpose':'frozen executable platform snapshot for future replay'})

@@ -15,7 +15,8 @@ from input_products import manifest_digest, hourly_time
 
 LABELS = {'calibration': '参数率定', 'manualTrial': '人工试调', 'eventSimulation': '洪水模拟',
           'continuousSimulation': '连续模拟', 'hindcast': '历史回算',
-          'rollingHindcast': '滚动回算', 'continuation': '继续模拟', 'stateReplay': '计算状态', 'rerun': '按原条件复算'}
+          'rollingHindcast': '滚动回算', 'automaticForecast': '自动预报', 'manualForecast': '手动预报',
+          'continuation': '继续模拟', 'stateReplay': '计算状态', 'rerun': '按原条件复算'}
 ACTIVE = {'queued', 'running', 'cancelling'}
 CONTEXT = {'contextKey': 'nananxi-xufan:distributed-xinanjiang:nananxi-xufan-1km',
            'projectId': 'nananxi-xufan', 'resolutionId': '1km', 'modelConfigId': 'nananxi-xufan-1km'}
@@ -97,9 +98,10 @@ class HydrologicalOperations:
             raise RuntimeError('计算尚未完成')
         return read_json(safe_task(self.root, identifier) / 'result.json')
 
-    def submit(self, body):
+    def submit(self, body, *, preparation_defaults=None, parameter_snapshot=None):
         allowed = {'operation', 'requestId', 'request', 'rainfallMethod', 'context', 'parameterSchemeId',
-                   'events', 'period', 'sourceTaskId', 'issueTime', 'endTime', 'lastIssueTime', 'leadHours', 'name', 'trialContext', 'routingParameters', 'parameterSourceResultId'}
+                   'events', 'period', 'sourceTaskId', 'issueTime', 'endTime', 'lastIssueTime', 'leadHours', 'name', 'trialContext', 'routingParameters', 'parameterSourceResultId',
+                   'forecastRainVersionId', 'observationStateVersionId'}
         if not isinstance(body, dict) or set(body) - allowed or body.get('operation') not in LABELS:
             raise ValueError('请选择计算方式')
         request = copy.deepcopy(body)
@@ -201,7 +203,7 @@ class HydrologicalOperations:
                         'parentVersionId':parameter['routing']['versionId'],'parameters':parameter['routingParameters']})
                     parameter['routing'] = {'versionId':actual['routingVersionId']}
             else:
-                parameter = self.manager.parameter_schemes.get(request.get('parameterSchemeId'))
+                parameter = copy.deepcopy(parameter_snapshot) if parameter_snapshot else self.manager.parameter_schemes.get(request.get('parameterSchemeId'))
             if any(parameter['context'].get(key) != context.get(key) for key in CONTEXT):
                 raise ValueError('参数与当前流域不一致')
             request['parameterSnapshot'] = parameter
@@ -225,6 +227,19 @@ class HydrologicalOperations:
             end = hourly_time(period.get('endTime'))
             if kind == 'continuousSimulation' and hourly_time(period.get('startTime')) > end:
                 raise ValueError('结束时间不能早于开始时间')
+        if kind in {'automaticForecast', 'manualForecast'}:
+            hourly_time(request.get('issueTime'))
+            if type(request.get('leadHours')) is not int or not 1 <= request['leadHours'] <= 72:
+                raise ValueError('预见期须为1–72小时整数')
+            rain = self.manager.forecast_products.resolve(request.get('forecastRainVersionId'))
+            self.manager.forecast_products.window(rain, request['issueTime'], request['leadHours'])
+            if request.get('observationStateVersionId'):
+                checkpoint = self.manager.states.checkpoint(request['observationStateVersionId'])
+                source = self.manager.get(checkpoint['sourceTaskId'])
+                if source.get('stateRole') == 'forecastBranch' or source.get('runType') == 'forecast':
+                    raise ValueError('预报分支末状态不能用于推进实测状态')
+                if hourly_time(checkpoint['time']) > hourly_time(request['issueTime']):
+                    raise ValueError('起报不能使用未来状态')
         if kind in {'hindcast', 'rollingHindcast'}:
             first = hourly_time(request.get('issueTime'))
             if kind == 'hindcast':
@@ -236,8 +251,8 @@ class HydrologicalOperations:
                 if type(request.get('leadHours')) is not int or request['leadHours'] < 1:
                     raise ValueError('预见期须为正整数小时')
         if kind not in {'stateReplay', 'rerun'}:
-            request['preparationDefaults'] = self.manager.schemes.history_defaults()
-            if kind not in {'calibration', 'manualTrial'}:
+            request['preparationDefaults'] = copy.deepcopy(preparation_defaults) if preparation_defaults else self.manager.schemes.history_defaults()
+            if kind not in {'calibration', 'manualTrial'} and not preparation_defaults:
                 from station_network import local_station_network
                 request['preparationDefaults']['stationNetwork'] = local_station_network(self.manager.database)
         key = request.get('requestId')
@@ -821,6 +836,47 @@ class HydrologicalOperations:
         return {'endStateVersionId': selected['stateVersionId'], 'stateTime': selected['time'],
                 'taskId': selected['sourceTaskId']}
 
+    def automatic_forecast(self, identifier, request):
+        """Observe up to issue time, then fork a QPF-only branch. Never re-calibrate."""
+        issue = hourly_time(request['issueTime'])
+        parent = request.get('observationStateVersionId')
+        checkpoint = self.manager.states.checkpoint(parent) if parent else None
+        start = hourly_time(checkpoint['time']) + timedelta(hours=1) if checkpoint else issue
+        model = self.daily_request(request, {'startTime': min(start, issue).isoformat(), 'endTime': issue.isoformat()})
+        origin = None
+        if checkpoint:
+            origin = (checkpoint.get('drivingIdentity') or {}).get('start')
+            if not origin:
+                raise ValueError('起报状态缺少实测驱动来源，请重新启动初始化')
+            if checkpoint['parameters'] != {'runoff.'+k: v for k, v in model['parameters'].items()}:
+                raise ValueError('参数已改变，请重新启动初始化')
+            model['period'] = {'startTime': min(start, issue).isoformat(), 'endTime': issue.isoformat(),
+                               'warmupDays': 0, 'initialStateVersionId': parent}
+        prepared = self.prepare(identifier, model, request['preparationDefaults']['rainfallMethod'],
+                                'simulation', origin=origin)
+        if checkpoint and hourly_time(checkpoint['time']) == issue:
+            state = {'taskId': checkpoint['sourceTaskId'], 'endStateVersionId': parent, 'stateTime': checkpoint['time']}
+        elif checkpoint:
+            state = self.child(identifier, prepared, '正在用新实测资料推进状态', 'observationBase')
+        else:
+            state = self.initialize_saved_rule(identifier, prepared, request['parameterSnapshot'], issue, 'observationBase')
+            if state is None:
+                state = self.child(identifier, prepared, '正在预热并形成起报状态', 'observationBase')
+        self.update(identifier, observationStateVersionId=state['endStateVersionId'])
+        end = issue + timedelta(hours=request['leadHours'])
+        forecast = copy.deepcopy(prepared)
+        forecast.update(runType='forecast', issue={'mode': 'manual' if request['operation'] == 'manualForecast' else 'automatic', 'sectionId': '70115800',
+            'issueTime': issue.isoformat(), 'leadHours': request['leadHours'], 'forecastEndTime': end.isoformat()})
+        forecast['period'] = {'startTime': (issue+timedelta(hours=1)).isoformat(), 'endTime': end.isoformat(),
+                              'warmupDays': 0, 'initialStateVersionId': state['endStateVersionId']}
+        forecast['inputs'].update(parameterVersionId=request['parameterSnapshot']['id'],
+            forecastPrecipitation={'versionId': request['forecastRainVersionId']})
+        result = self.child(identifier, forecast, '正在计算降雨产品预报', 'forecastBranch')
+        return {**result, 'primaryTaskId': result['taskId'], 'sourceTaskId': result['taskId'],
+                'stateCalculationTaskId': result['taskId'], 'observationStateVersionId': state['endStateVersionId'],
+                'observationTaskId': state['taskId'], 'parameterSchemeId': request['parameterSnapshot']['id'],
+                'parameterName': request['parameterSnapshot']['name'], 'rainfallMode': 'forecast-product'}
+
     def execute(self, identifier):
         folder = safe_task(self.root, identifier)
         try:
@@ -852,6 +908,8 @@ class HydrologicalOperations:
                 result = self.continuation(identifier, request)
             elif kind in {'hindcast', 'rollingHindcast'}:
                 result = self.hindcast(identifier, request)
+            elif kind in {'automaticForecast', 'manualForecast'}:
+                result = self.automatic_forecast(identifier, request)
             else:
                 model = self.daily_request(request, request['period'])
                 anchored = (request['parameterSnapshot'].get('initialization') or {}).get('strategy') == 'OBSERVED_FLOW_ANCHORED'

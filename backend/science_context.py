@@ -51,7 +51,7 @@ def model_implementation_identity(model_root=None):
         raise ValueError("模型实现目录为空")
     for name in ("worker.py", "routing_adapter.py", "state_initialization_adapter.py", "science_context.py", "strict_forcing.py",
                  "calibration_groups.py", "calibration_objectives.py", "calibration_search.py", "joint_calibration.py",
-                 "routing_calibration.py", "original_calibration_plan.py"):
+                 "routing_calibration.py", "original_calibration_plan.py", "forecast_products.py"):
         records.append({"path": "platform/" + name, "sha256": digest_file(ROOT / name)})
     return {"modelImplementationSHA256": digest_json(records), "files": records}
 
@@ -231,7 +231,7 @@ class ScienceVersions:
         evaporation = ({'mode': 'constant-assumption', 'valueMmPerHour': config['value_mm_h']} if mode == 'CONSTANT_ASSUMPTION' else
             {'mode': 'monthly-climatology-assumption', 'monthlyValuesMmPerDay': config['monthly_values_mm_day']} if mode == 'MONTHLY_CLIMATOLOGY' else
             {'mode': 'inherited-hourly', 'label': '原逐时输入（沿用）'})
-        return {'evaporation': evaporation, 'statePolicy': descriptor['statePolicy'] if descriptor else {'strategy': 'independent-warmup', 'warmupHours': 168}, 'baseVersionId': version}
+        return {'evaporation': evaporation, 'statePolicy': descriptor['statePolicy'] if descriptor else {'strategy': 'independent-warmup', 'warmupHours': 336}, 'baseVersionId': version}
 
     def register_conditions(self, body):
         if not isinstance(body, dict) or set(body) - {'name', 'baseVersionId', 'evaporation', 'statePolicy'}:
@@ -353,11 +353,17 @@ class ScienceVersions:
         default_strategy = 'continuous-origin' if (request.get('initialization') or {}).get('strategy') == 'CONTINUOUS' or request.get('period', {}).get('continuousOrigin') else 'independent-warmup'
         policy = {'strategy': (request.get('calibration') or {}).get('statePolicy', default_strategy),
                   'warmupHours': int(read_json(state_path).get('fixed_warmup_hours', 168))}
+        state_config = state_path
+        if request.get('period', {}).get('mode') == 'event' and policy['strategy'] == 'independent-warmup':
+            default_days = 7 if request.get('sourcePlan') or request.get('lineage', {}).get('replayOfTaskId') else 14
+            policy['warmupHours'] = round(float(request['period'].get('warmupDays', default_days)) * 24)
+            state_config = read_json(state_path)
+            state_config['fixed_warmup_hours'] = policy['warmupHours']
         if policy['strategy'] == 'continuous-origin':
             # A task's explicit origin/hour range remains in its frozen request;
             # it must not make otherwise identical scientific states incompatible.
             policy['continuousOrigin'] = 'FIRST_DATABASE_EVENT_YEAR_JAN1_MINUS_FIXED_WARMUP'
-        return self.register(name="场次零蒸散发" if event_zero else "逐月给定蒸散发与固定预热", state_config=self.model / "config/state_initialization_config.json",
+        return self.register(name="场次零蒸散发" if event_zero else "逐月给定蒸散发与固定预热", state_config=state_config,
                              initial_land_state=self.model / "config/initial_state_land.json", pet_config=pet,
                              state_policy=policy)
 

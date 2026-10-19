@@ -191,6 +191,29 @@ class PreparationTests(unittest.TestCase):
         write_json(folder / 'request.json', request)
         return build_prepared(folder, self.products)
 
+    def test_event_default_prepares_fourteen_days_and_frozen_preparation_keeps_original(self):
+        from scheme_inputs import required_drive_intervals
+        from science_context import ScienceVersions
+        payload = {'requestId': 'PREP-DEFAULT', 'operation': 'schemeInput',
+                   'projectId': 'nananxi-xufan', 'resolutionId': '1km',
+                   'period': {'mode': 'event', 'events': [{'id': 'xf-31180101',
+                       'start': '2018-01-01T00:00', 'end': '2018-01-01T03:00', 'purpose': '率定'}]}}
+        current = normalize_preparation(payload, self.products)
+        self.assertEqual(current['warmupHours'], 336)
+        self.assertEqual(required_drive_intervals(current)[0]['start'], '2017-12-18T00:00:00')
+        explicit = copy.deepcopy(payload)
+        explicit['period']['warmupDays'] = 7
+        previous = normalize_preparation(explicit, self.products)
+        restored = normalize_preparation(payload, self.products, frozen_definition=previous)
+        self.assertEqual(restored['warmupHours'], 168)
+        self.assertEqual(restored['preparationKey'], previous['preparationKey'])
+        registry = ScienceVersions(self.products.runtime_root)
+        for preparation in (current, restored):
+            science = registry.resolve(preparation['science']['versionId'])
+            self.assertEqual(science['statePolicy']['warmupHours'], preparation['warmupHours'])
+        legacy = normalize_preparation(payload, self.products, frozen_definition={})
+        self.assertEqual(legacy['warmupHours'], 168)
+
     def test_cross_year_reuses_exact_grids_and_reports_warmup_gaps(self):
         original = self.fixture.hashes()
         result = self.prepare({'startTime': '2018-01-01T00:00', 'endTime': '2018-01-01T03:00', 'warmupDays': 2 / 24})

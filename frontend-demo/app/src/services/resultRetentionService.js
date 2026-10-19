@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { modelApi } from './modelBackendService'
+import { modelApi } from './modelBackendService.js'
 
 export const retentionChanged = ref(0)
 export const leaveRequest = ref(null)
@@ -33,9 +33,9 @@ export async function settleTemporary({ schemeId, contextKey } = {}) {
 export function completeLeave(value) { const request=leaveRequest.value; leaveRequest.value=null; request?.resolve(value) }
 export function hasPendingResults() { return readPending().length > 0 }
 export function sameResultWorkspace(to, from) {
-  const related = route => ['/calibration','/simulation','/state'].includes(route.path) || route.name === 'result-sections'
+  const related = route => ['/calibration','/simulation','/forecast','/state'].includes(route.path) || route.name === 'result-sections'
   if (!related(to) || !related(from)) return false
-  if (['/calibration','/simulation'].includes(to.path) && ['/calibration','/simulation'].includes(from.path)) return to.path === from.path
+  if (['/calibration','/simulation','/forecast'].includes(to.path) && ['/calibration','/simulation','/forecast'].includes(from.path)) return to.path === from.path
   const id = route => route.query.operation || route.query.result || route.params.id || route.query.source || route.query.task
   const relatedIds=readPending().flatMap(row=>[row.id,...(row.sourceTaskIds||[])])
   return !id(to) || !id(from) || id(to) === id(from) || (relatedIds.includes(id(to)) && relatedIds.includes(id(from)))

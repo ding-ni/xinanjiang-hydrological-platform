@@ -53,7 +53,9 @@ def normalize_preparation(payload, products, *, frozen_definition=None):
     if purpose not in {'calibration', 'simulation'}:
         raise ValueError('资料准备用途无效')
     period = copy.deepcopy(payload.get('period', {}))
-    warmup = period.get('warmupDays', 7)
+    default_warmup = (frozen_definition.get('warmupHours', 168) / 24 if frozen_definition is not None
+                      else 14 if period.get('mode') == 'event' and not payload.get('sourcePlan') else 7)
+    warmup = period.get('warmupDays', default_warmup)
     if isinstance(warmup, bool) or not isinstance(warmup, (int, float)) or not 0 <= warmup <= 365:
         raise ValueError('预热天数须为0至365')
     if period.get('mode') == 'continuous':
@@ -141,7 +143,7 @@ def normalize_preparation(payload, products, *, frozen_definition=None):
     from science_context import ScienceVersions
     is_calibration = period.get('mode') in {'event', 'continuous'} and purpose != 'simulation'
     science_request = {'runType': 'calibration' if is_calibration else 'simulation',
-                       'period': period,
+                       'period': {**period, 'warmupDays': warmup},
                        **({'calibration': {'statePolicy': policy}} if is_calibration else {}),
                        'science': payload.get('science', {}), 'inputs': {'evaporation': payload.get('evaporation', {})}}
     scientific = ScienceVersions(products.runtime_root).for_request(science_request)

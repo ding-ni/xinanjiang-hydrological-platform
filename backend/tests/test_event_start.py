@@ -13,6 +13,20 @@ from test_unified_backend import calibration
 
 
 class EventStartTests(unittest.TestCase):
+    def test_new_event_defaults_to_fourteen_days_and_preserves_explicit_warmup(self):
+        catalog = case_catalog()
+        self.assertEqual(catalog['cases']['nananxi-xufan:1km']['defaultWarmupDays'], 14)
+        for mode in ('automatic', 'manual'):
+            for days in (None, 7, 21):
+                with self.subTest(mode=mode, days=days):
+                    request = calibration()
+                    request['calibration']['evaluationMode'] = mode
+                    request['period'].pop('warmupDays')
+                    if days is not None:
+                        request['period']['warmupDays'] = days
+                    normalized = normalize_request(request, catalog)
+                    self.assertEqual(normalized['period']['warmupDays'], days if days is not None else 14)
+
     def test_new_event_request_rejects_continuous_origin_in_either_location_and_parent_state(self):
         request = calibration()
         for target, values in [('calibration', {'statePolicy': 'continuous-origin'}),

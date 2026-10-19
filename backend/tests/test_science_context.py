@@ -115,6 +115,26 @@ class ScienceContextTests(unittest.TestCase):
         self.assertTrue(all(key in frozen_sim["lineage"] for key in IDENTITY_KEYS))
         self.assertNotIn("science", event)
 
+    def test_event_warmup_defaults_and_frozen_conditions_preserve_explicit_values(self):
+        self.assertEqual(self.registry.conditions()['statePolicy']['warmupHours'], 336)
+        legacy = self.register()
+        self.assertEqual(self.registry.conditions(legacy['scienceVersionId'])['statePolicy']['warmupHours'], 168)
+        original_config = read_json(MODEL / 'config/state_initialization_config.json')
+        for days, hours in ((None, 336), (7, 168), (21, 504), ('14', 336)):
+            with self.subTest(days=days):
+                period = {'mode': 'event'}
+                if days is not None:
+                    period['warmupDays'] = days
+                descriptor = self.registry.for_request({'runType': 'calibration', 'period': period})
+                self.assertEqual(descriptor['statePolicy']['warmupHours'], hours)
+                self.assertEqual(descriptor['configs']['state_config']['fixed_warmup_hours'], hours)
+        frozen = self.registry.for_request({'runType': 'calibration', 'period': {'mode': 'event'},
+                                           'science': {'versionId': legacy['scienceVersionId']},
+                                           'inputs': {'evaporation': {'mode': 'science-version'}}})
+        self.assertEqual(frozen['scienceVersionId'], legacy['scienceVersionId'])
+        self.assertEqual(frozen['configs']['state_config']['fixed_warmup_hours'], 168)
+        self.assertEqual(read_json(MODEL / 'config/state_initialization_config.json'), original_config)
+
     def test_event_monthly_choice_and_explicit_science_labels_are_checked(self):
         request, monthly = freeze_science_selection({'runType': 'calibration', 'period': {'mode': 'event'},
             'inputs': {'evaporation': {'mode': 'monthly-climatology-assumption'}},

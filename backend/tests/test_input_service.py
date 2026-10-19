@@ -348,7 +348,7 @@ class RealInputTests(unittest.TestCase):
         self.assertEqual(latest["summary"]["rainfallCompleteness"], 1)
         self.assertEqual(latest["summary"]["flowCompleteness"], 1)
         event = service.event("xf-31170619")
-        self.assertEqual(event["warmupPeriod"]["hours"], 168)
+        self.assertEqual(event["warmupPeriod"]["hours"], 336)
         self.assertEqual(event["summary"]["controlAreaKm2"], result["summary"]["controlAreaKm2"])
         for path, digest in before.items():
             self.assertEqual(hashlib.sha256((MODEL / path).read_bytes()).hexdigest(), digest)

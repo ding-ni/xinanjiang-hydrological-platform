@@ -101,7 +101,7 @@ class ForecastContractTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 normalize_request(bad, case_catalog())
 
-    def test_parameters_follow_state_and_automatic_requires_release(self):
+    def test_parameters_follow_state_and_automatic_requires_saved_parameters(self):
         parameters = case_catalog()['cases']['nananxi-xufan:1km']['parameters']
         checkpoint = dict(time=ISSUE, stateVersionId='STATE-JOB-test',
                           parameters={'runoff.' + key: value for key, value in parameters.items()})

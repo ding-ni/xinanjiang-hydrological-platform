@@ -158,7 +158,9 @@
           </div>
           <p v-if="cal.algorithm==='SCE_UA'" class="settings-note">SCE-UA：{{ sceDimension }} 个活动参数 × {{ sceComplexes }} 个复合体，实际种群 {{ sceComplexes*(2*sceDimension+1) }}，至少 {{ sceComplexes*(2*sceDimension+1)+1 }} 次评价（含初值；分阶段分别计算）。<label>复合体数<input class="input" type="number" min="1" max="20" :value="sceComplexes" :disabled="cal.running||!editing" @change="cal.optimizerSettings={...cal.optimizerSettings,complexes:Number($event.target.value)}" /></label></p>
           <h3 class="settings-section-title">评价指标</h3>
+          <button class="btn" :disabled="cal.running || !editing" @click="cal.resetObjectiveCriteria()">采用默认目标</button>
           <div class="objective-list"><label v-for="objective in objectives" :key="objective.key"><span><input type="checkbox" :checked="cal.criteria.metrics[objective.key]" :disabled="cal.running || !editing" @change="cal.setObjectiveMetric(objective.key, $event.target.checked)" /> {{ objective.label }}</span><input type="number" min="0" max="1" step="0.05" :value="cal.criteria.weights[objective.key]" :aria-label="objective.label + ' 权重'" :disabled="cal.running || !editing" @change="cal.setObjectiveWeight(objective.key, $event.target.value)" /></label></div>
+          <p class="settings-note">综合得分越高越好。NSE/KGE直接加权；洪峰、水量误差取绝对值后除以100%，峰现误差除以24小时，作为扣分项。</p>
           <p v-if="!objectiveWeightValid" class="field-error">指标权重合计须为1，当前为{{ objectiveWeightTotal.toFixed(2) }}</p>
         </template>
         <ScientificConditionsEditor v-if="!legacyEventScheme" :model-value="cal.scienceConditionsDraft" :science-version-id="cal.scienceVersionId" :state-policy="cal.statePolicy" :warmup-days="cal.warmupDays" :continuous="cal.calibrationMode==='continuous'" :disabled="cal.running || !editing || legacyEventScheme" @update:model-value="changeConditions" />

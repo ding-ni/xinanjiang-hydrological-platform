@@ -179,7 +179,7 @@ function hasChanges() { return editing.value && calibrationEditorIdentity(calibr
 function beginEdit() { if(!legacyEventScheme.value)setEditing(true) }
 async function createEventScheme(parameters = null, routingParameters = null) {
   try {
-    const {value}=await ElMessageBox.prompt('重新从公共洪水目录选择场次，默认各场预热7天。'+(parameters?'沿用所选计算的参数数值。':''),'另建场次方案',{
+    const {value}=await ElMessageBox.prompt(`重新从公共洪水目录选择场次，默认各场预热${app.backendCase?.defaultWarmupDays ?? 14}天。`+(parameters?'沿用所选计算的参数数值。':''),'另建场次方案',{
       inputValue:cal.modelSchemeName+' · 场次',inputValidator:value=>Boolean(value?.trim())&&value.trim().length<=80,
       confirmButtonText:'建立方案',cancelButtonText:'取消'})
     loading=true;busy.value=true

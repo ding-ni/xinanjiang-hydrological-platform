@@ -48,7 +48,7 @@ import CalculationParameters from '@/components/model/CalculationParameters.vue'
 import CalculationConditions from '@/components/model/CalculationConditions.vue'
 const app=useAppStore(),route=useRoute(),router=useRouter()
 const rows=ref([]),selectedId=ref(''),selected=ref(null),result=ref(null),status=ref(null),tab=ref('saved'),search=ref(''),type=ref(''),page=ref(1),loading=ref(false),loadingResult=ref(false),error=ref(''),runningAction=ref(false),actionMessage=ref(''),schemeFilter=ref(''),detailTab=ref('evaluation'),activeProcess=ref('')
-const operationLabels={calibration:'自动率定',manualTrial:'人工试调',eventSimulation:'洪水模拟',continuousSimulation:'连续模拟',simulation:'模拟',continuation:'继续模拟',rerun:'再次计算',eventCalibration:'场次率定',continuousCalibration:'连续率定',hindcast:'历史回算',rollingHindcast:'滚动回算',forecast:'洪水预报'}
+const operationLabels={calibration:'自动率定',manualTrial:'人工试调',eventSimulation:'洪水模拟',continuousSimulation:'连续模拟',simulation:'模拟',continuation:'继续模拟',rerun:'再次计算',eventCalibration:'场次率定',continuousCalibration:'连续率定',hindcast:'历史回算',rollingHindcast:'滚动回算',forecast:'洪水预报',manualForecast:'手动预报',automaticForecast:'自动预报'}
 const statusLabels={completed:'已完成',archived:'已完成',running:'计算中',queued:'排队中',cancelling:'正在停止',cancelled:'已停止',failed:'未完成'}
 const timingLabels={operationSeconds:'总耗时',queueSeconds:'排队',inputPreparationSeconds:'资料准备',preparationSeconds:'读取与检查',searchSeconds:'参数搜索',finalEvaluationSeconds:'最终评价',stateSavingSeconds:'状态生成与保存',simulationSeconds:'模型计算',statePersistenceSeconds:'状态文件保存',warmupSeconds:'预热产流',loadingSeconds:'读取资料',runoffSeconds:'评价期产流',routingSeconds:'全程汇流',checkpointSeconds:'末状态保存'}
 const detailTabs=[{id:'evaluation',name:'全场评价'},{id:'parameters',name:'本组参数'},{id:'settings',name:'本次计算设置'},{id:'timings',name:'计算耗时'}]

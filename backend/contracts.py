@@ -176,6 +176,9 @@ def normalize_request(request, catalog, runtime_root=None):
     period = request.setdefault("period", {})
     from event_start import validate_event_start
     validate_event_start(request, runtime_root)
+    if (run_type == 'calibration' and period.get('mode') == 'event'
+            and not request.get('sourcePlan') and not request.get('lineage', {}).get('replayOfTaskId')):
+        period.setdefault('warmupDays', 14)
     warmup = finite_number(period.get("warmupDays", 7), "预热期")
     minimum_warmup = 0 if period.get('initialStateVersionId') else 1
     if not math.isfinite(warmup) or warmup < minimum_warmup or warmup > 365:

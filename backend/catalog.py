@@ -86,7 +86,7 @@ def case_catalog(bundle=None, database=None):
         "missingInputs": missing, "reason": "真实产汇流计算服务已接入" if ready else "模型输入或运行依赖缺失",
         "parameterVersionId": "NANANXI_XAJ_REFERENCE_V1", "parameters": {k: base[k] for k in PARAMETERS},
         "parameterDefinitions": [{"key": k, "name": k, "symbol": k, "label": v[0], "desc": PARAMETER_NOTES[k], "min": v[1], "max": v[2], "step": 0.0001 if k in ("KI", "KG") else 0.001 if k == 'IM' else 0.01, "unit": v[3], "default": base[k]} for k, v in PARAMETERS.items()],
-        "algorithms": ALGORITHMS, "events": events, "defaultWarmupDays": 7, "defaultMaxEvaluations": 120,
+        "algorithms": ALGORITHMS, "events": events, "defaultWarmupDays": 14, "defaultMaxEvaluations": 120,
         "forcingVersion": bundle["forcingVersion"] if bundle else "precipitation_qc_20260819",
         "observationVersion": bundle["observationVersion"] if bundle else "xufan_outlet_hourly_qc_20260819",
         "inputBundleVersionId": bundle["bundleVersionId"] if bundle else DEFAULT_INPUT_BUNDLE,

@@ -45,3 +45,20 @@ test('mode switching isolates warmup/origin settings without carrying a continuo
   assert.equal(cal.warmupDays,20)
   assert.equal(cal.continuousOrigin,'2024-01-01T00:00')
 })
+
+test('first entry into event mode defaults to fourteen days and keeps a saved seven-day setting',()=>{
+  const store=readFileSync(new URL('../src/stores/calibration.js',import.meta.url),'utf8')
+  const method=store.slice(store.indexOf('    setCalibrationMode('),store.indexOf('    setEvent(')).trim().replace(/,$/,'')
+  const actions=new Function('return {'+method+'}')()
+  const cal={...actions,calibrationMode:'continuous',operationMode:'calibration',statePolicy:'continuous-origin',
+    warmupDays:7,continuousOrigin:'2024-01-01T00:00',scienceConditionsDraft:{statePolicy:{}},markNeedsRun(){}}
+  cal.setCalibrationMode('event')
+  assert.equal(cal.warmupDays,14)
+  assert.equal(cal.scienceConditionsDraft.statePolicy.warmupHours,336)
+  assert.equal(cal.continuousOrigin,null)
+  cal.warmupDays=7
+  cal.setCalibrationMode('continuous')
+  cal.setCalibrationMode('event')
+  assert.equal(cal.warmupDays,7)
+  assert.equal(cal.scienceConditionsDraft.statePolicy.warmupHours,168)
+})

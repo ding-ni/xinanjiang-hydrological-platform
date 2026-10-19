@@ -3,12 +3,14 @@ import argparse
 import os
 import sys
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--workspace', required=True)
 parser.add_argument('--port', type=int, default=18894)
 parser.add_argument('--existing', action='store_true', help='Open saved work without reseeding its records')
+parser.add_argument('--forecast-clock', help='Fixed Beijing scheduler hour for isolated forecast acceptance only')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 workspace = Path(args.workspace).resolve()
@@ -49,7 +51,11 @@ with WorkspaceLock(workspace):
     manager = TaskManager(workspace / 'tasks')
     if not args.existing:
         manager.schemes.defaults({'rainfallMethod': 'reuse', 'stationSourceId': None})
-    server = PlatformHTTPServer(('127.0.0.1', args.port), handler(manager, SETTINGS['frontend']))
+    application = handler(manager, SETTINGS['frontend'])
+    if args.forecast_clock:
+        instant = datetime.fromisoformat(args.forecast_clock)
+        manager.automatic_forecasts.clock = lambda: instant
+    server = PlatformHTTPServer(('127.0.0.1', args.port), application)
     print('Acceptance server ready http://127.0.0.1:' + str(args.port), flush=True)
     try:
         server.serve_forever()

@@ -85,15 +85,16 @@ function criteriaTemplate() {
       kge: false,
       peak: true,
       time: true,
-      volume: false
+      volume: true
     },
     weights: {
-      nse: 0.5,
+      nse: 0.4,
       kge: 0.2,
-      peak: 0.25,
-      time: 0.25,
-      volume: 0.1
+      peak: 0.2,
+      time: 0.1,
+      volume: 0.3
     },
+    waterBalanceMetric: 'VOLUME_ERROR',
     tolerances: {
       peakPercent: 10,
       peakTimeHours: 2
@@ -103,7 +104,12 @@ function criteriaTemplate() {
 
 function normalizedCriteria(value = {}) {
   const defaults = criteriaTemplate()
-  return { ...defaults, ...clonePlain(value), metrics: { ...defaults.metrics, ...value.metrics },
+  // A stored selection is authoritative: newly enabled defaults must not add
+  // another objective when an older scheme omitted its disabled metric keys.
+  const metrics = value.metrics
+    ? Object.fromEntries(Object.keys(defaults.metrics).map(key => [key, false]))
+    : defaults.metrics
+  return { ...defaults, ...clonePlain(value), metrics: { ...metrics, ...value.metrics },
     weights: { ...defaults.weights, ...value.weights }, tolerances: { ...defaults.tolerances, ...value.tolerances } }
 }
 
@@ -311,7 +317,7 @@ function createWorkspace(context) {
     activeOperationId: null, activeOperationRequest: null, operationProgress: null,
     simulationStart: isSelinco ? '2026-06-01T00:00' : isNananxi ? '2024-01-01T00:00' : '',
     simulationEnd: isSelinco ? '2026-06-06T00:00' : isNananxi ? '2024-12-31T23:00' : '',
-    warmupDays: isSelinco ? 30 : 90,
+    warmupDays: isSelinco ? 30 : isNananxi ? 14 : 90,
     // 资料范围由项目目录加载后写入。
     observationRange: null,
     initialStateVersionId: isSelinco ? context.modelConfig.statePrefix : null,
@@ -755,7 +761,7 @@ export const useCalibrationStore = defineStore('calibration', {
       this.sourcePlan = null; this.sourcePlanRequestTemplate = null; this.originalCalibrationPlan = null
       this.originalPlanChanged = false
       this.deliverySelection = []; this.configurationPending = false; this.deliveryProcessing = null
-      this.evaporationMode = 'monthly-climatology-assumption'; this.warmupDays = backend?.defaultWarmupDays ?? 7
+      this.evaporationMode = 'monthly-climatology-assumption'; this.warmupDays = backend?.defaultWarmupDays ?? 14
       this.rainfallMethod = defaults.rainfallMethod || 'stationIdw'; this.stationSourceId = Object.hasOwn(defaults,'stationSourceId') ? defaults.stationSourceId : 'LOCAL_OBSERVATIONS'
       this.schemeSourceBundleVersionId = defaults.sourceBundleVersionId || 'HISTORICAL_SPATIAL_V1'
       this.schemeDataMode = 'historical-database'; this.schemeStationNetwork = null
@@ -1124,7 +1130,7 @@ export const useCalibrationStore = defineStore('calibration', {
       this.calibrationMode = normalized
       this.initialStateVersionId = null
       const saved = this.modeStartSettings[normalized]
-      this.warmupDays = saved?.warmupDays ?? 7
+      this.warmupDays = saved?.warmupDays ?? (normalized === 'event' ? 14 : 7)
       if (normalized === 'event' && !this.sourcePlan) {
         this.statePolicy = 'independent-warmup'
         this.continuousOrigin = null
@@ -1354,6 +1360,13 @@ export const useCalibrationStore = defineStore('calibration', {
       })
       this.syncEventCatalog()
       return { ok: true, event: this.events[createdIndex], sources }
+    },
+    resetObjectiveCriteria() {
+      if (this.running || this.activeOperationId) return
+      this.detachOriginalPlan()
+      this.criteria = criteriaTemplate()
+      this.markNeedsRun('已采用默认率定目标，请重新率定。')
+      this.saveCurrentWorkspace()
     },
     setObjectiveMetric(key, enabled) {
       if (!(key in this.criteria.metrics)) return

@@ -41,7 +41,7 @@ class InputHttpTests(unittest.TestCase):
             return {"sourceType": "model-qc", "start": start, "end": end,
                     "observationPreview": {"rain": {}, "river": {"flows": [1, None], "levels": [None, None]}}}
 
-        def event(event_id, warmup_hours=168, **context):
+        def event(event_id, warmup_hours=336, **context):
             checked_context(context)
             if not EVENT_ID.fullmatch(event_id):
                 raise ValueError("无效场次编号")
@@ -151,9 +151,12 @@ class InputHttpTests(unittest.TestCase):
         self.assertEqual(self.request("inputs/window?start=2017-06-19T11%3A00&end=2017-06-19T12%3A00")[0], 200)
         code, event, _ = self.request("inputs/events/xf-31170619")
         self.assertEqual(code, 200)
-        self.assertEqual(event["warmupPeriod"]["hours"], 168)
-        self.inputs.event.assert_called_with("xf-31170619", warmup_hours=168,
+        self.assertEqual(event["warmupPeriod"]["hours"], 336)
+        self.inputs.event.assert_called_with("xf-31170619", warmup_hours=336,
                                              project_id="nananxi-xufan", resolution_id="1km")
+        code, event, _ = self.request("inputs/events/xf-31170619?warmupHours=168")
+        self.assertEqual(code, 200)
+        self.assertEqual(event["warmupPeriod"]["hours"], 168)
 
     def test_verified_state_cache_invalidates_after_file_changes(self):
         from task_diagnostics import TaskDiagnostics

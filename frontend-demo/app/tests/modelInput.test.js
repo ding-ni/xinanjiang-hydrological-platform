@@ -97,7 +97,8 @@ describe('fixed model input boundary', () => {
     assert.deepEqual(slice.summary.arealRainfallMm, [0])
   })
   it('validates the diagnostic warmup limit without truncating user input', () => {
-    assert.equal(modelInputWarmupHours(), 168)
+    assert.equal(modelInputWarmupHours(), 336)
+    assert.equal(modelInputWarmupHours(168), 168)
     assert.equal(modelInputWarmupHours(0), 0)
     assert.equal(modelInputWarmupHours(744), 744)
     assert.equal(modelInputWarmupHours(8760), 8760)

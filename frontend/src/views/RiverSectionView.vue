@@ -26,7 +26,7 @@ let sequence=0,locationSequence=0,querySequence=0,disposed=false
 watch(resultId,async id=>{const token=++sequence;loading.value=true;error.value='';answer.value=null;processes.value=[];processId.value='';try{const [payload,catalog]=await Promise.all([modelApi('result-catalog/'+encodeURIComponent(id)+'/processes',{timeoutMs:60000}),modelApi('result-catalog')]);if(token!==sequence)return;processes.value=payload.processes;resultName.value=catalog.results.find(row=>row.id===id)?.name||'计算成果';processId.value=payload.processes.find(row=>row.id===route.query.process)?.id||(payload.processes.length===1?payload.processes[0].id:'')}catch(failure){if(token===sequence)error.value=failure.message}finally{if(token===sequence)loading.value=false}},{immediate:true})
 watch(processId,async()=>{const token=++sequence;++querySequence;++locationSequence;answer.value=null;error.value='';stage.value='';busy.value=false;locating.value=false;location.value=null;clicked.value=null;sections.value=[];sectionId.value='';spatial.value=null;if(!process.value?.canQuery)return;try{const payload=await modelApi('river-sections?'+new URLSearchParams({resultId:resultId.value,processId:processId.value}),{timeoutMs:60000});if(token!==sequence)return;sections.value=payload.sections;sectionId.value=(payload.sections.find(row=>row.id===route.query.section)||payload.sections.find(row=>row.id==='SECTION-XUFAN'))?.id||''}catch(failure){if(token===sequence)error.value=failure.message}loadSpatial()})
 watch(sectionId,()=>{++querySequence;busy.value=false;answer.value=null;stage.value='';location.value=null;clicked.value=null})
-async function loadSpatial(){const token=sequence;mapError.value='';try{const task=await modelApi('tasks/'+process.value.sourceTaskId);const row=await modelApi('spatial-products?'+new URLSearchParams({bundleVersionId:task.runConfig.inputs.bundleVersionId}),{timeoutMs:60000});if(token===sequence)spatial.value=row}catch(failure){if(token===sequence)mapError.value=failure.message}}
+async function loadSpatial(){const token=sequence;mapError.value='';try{const task=await modelApi('tasks/'+process.value.sourceTaskId,{timeoutMs:60000});const row=await modelApi('spatial-products?'+new URLSearchParams({bundleVersionId:task.runConfig.inputs.bundleVersionId}),{timeoutMs:60000});if(token===sequence)spatial.value=row}catch(failure){if(token===sequence)mapError.value=failure.message}}
 async function choosePoint(coordinates){const token=++locationSequence;location.value=null;clicked.value={lon:coordinates[0],lat:coordinates[1]};locating.value=true;error.value='';try{const row=await modelApi('river-sections/locate',{method:'POST',body:{resultId:resultId.value,processId:processId.value,point:clicked.value},timeoutMs:60000});if(token===locationSequence)location.value=row}catch(failure){if(token===locationSequence)error.value=failure.message}finally{if(token===locationSequence)locating.value=false}}
 async function saveSection(){busy.value=true;error.value='';try{const row=await modelApi('river-sections',{method:'POST',body:{name:sectionName.value,resultId:resultId.value,processId:processId.value,point:clicked.value},timeoutMs:60000});sections.value=[...sections.value,row];sectionId.value=row.id;sectionName.value='';location.value=null}catch(failure){error.value=failure.message}finally{busy.value=false}}
 async function rename(){try{const row=section.value;const {value}=await ElMessageBox.prompt('填写断面名称','修改断面名称',{inputValue:row.name,inputValidator:value=>Boolean(value?.trim())&&value.trim().length<=80});const saved=await modelApi('river-sections/'+row.id+'/rename',{method:'POST',body:{name:value.trim(),revision:row.revision}});sections.value=sections.value.map(item=>item.id===saved.id?{...saved,compatible:row.compatible}:item)}catch(failure){if(failure instanceof Error)error.value=failure.message}}
@@ -37,7 +37,7 @@ const pendingKey=()=>['hydrology.section',resultId.value,processId.value,section
 async function query(resumeId){
   const token=++querySequence,key=pendingKey();busy.value=true;error.value='';answer.value=null;stage.value='准备读取断面过程';queryStarted.value=Date.now();queryTask.value=null
   try{
-    let task=typeof resumeId==='string'?await modelApi('tasks/'+resumeId):await modelApi('result-section-queries',{method:'POST',body:{resultId:resultId.value,processId:processId.value,sectionId:sectionId.value},timeoutMs:60000})
+    let task=typeof resumeId==='string'?await modelApi('tasks/'+resumeId,{timeoutMs:60000}):await modelApi('result-section-queries',{method:'POST',body:{resultId:resultId.value,processId:processId.value,sectionId:sectionId.value},timeoutMs:60000})
     if(disposed||token!==querySequence)return
     if(typeof resumeId==='string'&&task.status==='failed'&&String(task.errorMessage||'').includes('断面查询程序在排队期间更新')){
       clearPending(key,task.taskId)
@@ -49,7 +49,7 @@ async function query(resumeId){
     while(['queued','running','cancelling'].includes(task.status)){
       if(disposed||token!==querySequence)return
       queryTask.value=task;stage.value=task.stageLabel||'正在计算断面汇流'
-      await new Promise(resolve=>setTimeout(resolve,1000));task=await modelApi('tasks/'+task.taskId)
+      await new Promise(resolve=>setTimeout(resolve,1000));task=await modelApi('tasks/'+task.taskId,{timeoutMs:60000})
     }
     if(disposed||token!==querySequence)return
     queryTask.value=task

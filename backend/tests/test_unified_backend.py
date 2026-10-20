@@ -154,6 +154,10 @@ class TaskTests(unittest.TestCase):
                 code, task = request('tasks', simulation())
                 self.assertEqual(code, 202)
                 self.assertEqual(request(f'tasks/{task["taskId"]}/result')[0], 409)
+                with patch.object(manager, 'replayability', side_effect=AssertionError('polling must not audit replayability')):
+                    listed = request('tasks?includeReplayability=false')
+                self.assertEqual(listed[0], 200)
+                self.assertEqual(listed[1]['tasks'][0]['taskId'], task['taskId'])
                 from concurrent.futures import ThreadPoolExecutor
                 def update(index):
                     manager.update(task['taskId'], progress=index)

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 import sys
@@ -56,6 +57,55 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(self.manager.schemes.get(scheme['id'])['id'],scheme['id'])
         self.result('JOB-running',status='running')
         with self.assertRaises(RuntimeError):life.change('JOB-running','discard',{'revision':0})
+
+    def test_purge_trashed_result_removes_only_its_task_artifacts(self):
+        self.result()
+        life = self.manager.results.lifecycle
+        life.change('JOB-test', 'discard', {'revision': 0})
+        self.assertTrue((self.manager.root / 'JOB-test' / 'result.json').is_file())
+        with patch.object(life, '_move_to_recycle_bin', side_effect=shutil.rmtree) as move:
+            purged = life.purge_result('JOB-test', {'revision': 1})
+        move.assert_called_once()
+        self.assertIn('JOB-test', purged['purgedIds'])
+        self.assertFalse((self.manager.root / 'JOB-test').exists())
+        self.assertEqual(self.manager.results.catalog(include_trashed=True)['results'], [])
+
+    def test_explicitly_trashed_legacy_result_can_be_removed(self):
+        self.result(createdAt='2020-01-01T00:00:00Z')
+        life = self.manager.results.lifecycle
+        life.change('JOB-test', 'discard', {'revision': 0})
+        with patch.object(life, '_move_to_recycle_bin', side_effect=shutil.rmtree):
+            life.purge_result('JOB-test', {'revision': 1})
+        self.assertFalse((self.manager.root / 'JOB-test').exists())
+
+    def test_purge_operation_discovers_children_from_operation_id(self):
+        self.result('JOB-child', runConfig={'runType': 'simulation', 'lineage': {'operationId': 'OP-parent'}})
+        child_status = read_json(self.manager.root / 'JOB-child' / 'status.json')
+        child_status['operationId'] = 'OP-parent'
+        write_json(self.manager.root / 'JOB-child' / 'status.json', child_status)
+        (self.manager.runtime_root / 'operations' / 'OP-parent').mkdir(parents=True)
+        write_json(self.manager.runtime_root / 'operations' / 'OP-parent' / 'status.json', {
+            'taskId': 'OP-parent', 'status': 'completed', 'runType': 'simulation',
+            'childTaskIds': [], 'createdAt': now(), 'runConfig': {'runType': 'simulation'}
+        })
+        self.manager.results.lifecycle._move_to_recycle_bin = lambda path: shutil.rmtree(path)
+        purged = self.manager.results.lifecycle._purge_artifacts(['OP-parent'])
+        self.assertIn('JOB-child', purged)
+        self.assertFalse((self.manager.root / 'JOB-child').exists())
+
+    def test_purge_trashed_scheme_removes_scheme_and_trashed_result_but_not_saved_result(self):
+        request = simulation(); request['inputs']['bundleVersionId'] = 'TEST'
+        scheme = self.manager.schemes.save({'name': '测试', 'definition': input_definition(request), 'calculationDraft': request})
+        self.result('JOB-temporary', runConfig={**request, 'scheme': {'id': scheme['id']}})
+        life = self.manager.results.lifecycle
+        preview = life.scheme_preview(scheme['id'])
+        life.scheme_change(scheme['id'], 'discard', {'previewSHA256': preview['previewSHA256'], 'temporaryIds': ['JOB-temporary']})
+        preview = life.scheme_preview(scheme['id'])
+        with patch.object(life, '_move_to_recycle_bin', side_effect=shutil.rmtree):
+            purged = life.purge_scheme(scheme['id'], {'previewSHA256': preview['previewSHA256']})
+        self.assertTrue(purged['schemeDeleted'])
+        self.assertFalse((self.manager.root / 'JOB-temporary').exists())
+        with self.assertRaises(KeyError): self.manager.schemes.get(scheme['id'])
 
     def test_old_records_are_not_prompted_and_old_favorites_are_saved(self):
         row=self.result(createdAt='2020-01-01T00:00:00Z')

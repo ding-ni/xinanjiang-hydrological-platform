@@ -186,6 +186,11 @@ class ResultRepository:
         retention = self.lifecycle.records()
         operations = [read_json(path) for path in (self.manager.runtime_root / 'operations').glob('*/status.json')]
         children = {identifier for row in operations for identifier in row.get('childTaskIds', [])}
+        # The parent operation may already be in the OS recycle bin while its
+        # child task status remains on disk. Preserve ownership from the child
+        # record too, so internal numerics never reappear as user results.
+        children.update(row['taskId'] for row in self.manager.list()
+                        if row.get('operationId') or row.get('internal'))
         tasks = [row for row in self.manager.list() if row['taskId'] not in children and not row.get('internal')
                  and (row.get('runConfig') or {}).get('runType') in {'calibration', 'simulation', 'stateInitialization', 'stateContinuation', 'forecast'}]
         rows = []

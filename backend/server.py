@@ -725,7 +725,7 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                         products.source(selected['stationSourceId'])
                 self.send_json(200, manager.schemes.defaults(body))
                 return
-            if path.startswith(f'{prefix}/model-schemes/') and path.rsplit('/', 1)[-1] in {'deletion-preview', 'discard', 'restore'}:
+            if path.startswith(f'{prefix}/model-schemes/') and path.rsplit('/', 1)[-1] in {'deletion-preview', 'discard', 'restore', 'purge'}:
                 pieces = path[len(f'{prefix}/model-schemes/'):].split('/')
                 if len(pieces) != 2:
                     raise KeyError('方案不存在')
@@ -733,6 +733,8 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                     payload = manager.results.lifecycle.scheme_preview(pieces[0])
                 elif self.command == 'POST' and pieces[1] in {'discard', 'restore'}:
                     payload = manager.results.lifecycle.scheme_change(pieces[0], pieces[1], self.read_body())
+                elif self.command == 'POST' and pieces[1] == 'purge':
+                    payload = manager.results.lifecycle.purge_scheme(pieces[0], self.read_body())
                 else:
                     raise KeyError('方案接口不存在')
                 self.send_json(200, payload)
@@ -832,7 +834,20 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 self.send_json(200, payload)
                 return
             if path == f"{prefix}/tasks":
-                self.send_json(200 if self.command == "GET" else 202, {"tasks": manager.list(include_replay=True)} if self.command == "GET" else manager.submit(self.read_body()))
+                include_replay = argument('includeReplayability', 'true').lower() == 'true'
+                self.send_json(200 if self.command == "GET" else 202,
+                               {"tasks": manager.list(include_replay=include_replay)} if self.command == "GET" else manager.submit(self.read_body()))
+                return
+            if path == f"{prefix}/spatial-tasks" and self.command == 'GET':
+                rows = [row for row in manager.list(include_replay=False)
+                        if row.get('runType') == 'spatialExport']
+                self.send_json(200, {'tasks': rows})
+                return
+            if path.startswith(f"{prefix}/spatial-tasks/") and self.command == 'POST':
+                pieces = path[len(f"{prefix}/spatial-tasks/"):].split('/')
+                if len(pieces) != 2 or pieces[1] != 'purge':
+                    raise KeyError('空间图件接口不存在')
+                self.send_json(200, manager.results.lifecycle.purge_spatial_task(pieces[0], self.read_body()))
                 return
             if self.command == "POST" and path in {f"{prefix}/calibration-tasks", f"{prefix}/simulation-tasks", f"{prefix}/forecast-tasks"}:
                 request = self.read_body()
@@ -932,7 +947,10 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 pieces = path[len(f'{prefix}/result-retention/'):].split('/')
                 if len(pieces) != 2:
                     raise KeyError('成果操作不存在')
-                self.send_json(200, manager.results.lifecycle.change(pieces[0], pieces[1], self.read_body()))
+                if pieces[1] == 'purge':
+                    self.send_json(200, manager.results.lifecycle.purge_result(pieces[0], self.read_body()))
+                else:
+                    self.send_json(200, manager.results.lifecycle.change(pieces[0], pieces[1], self.read_body()))
                 return
             if self.command == 'GET' and path.startswith(f'{prefix}/result-retention/'):
                 identifier = path[len(f'{prefix}/result-retention/'):]

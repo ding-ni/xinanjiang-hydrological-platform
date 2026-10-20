@@ -38,7 +38,7 @@
             <small v-for="gap in issue.petMissingIntervals || []" :key="'pet-' + gap.start">蒸散发缺测 {{ shortTime(gap.start) }} 至 {{ shortTime(gap.end) }}</small>
             <small v-for="gap in issue.flowMissingIntervals || []" :key="'flow-' + gap.start">流量缺测 {{ shortTime(gap.start) }} 至 {{ shortTime(gap.end) }}</small>
           </div>
-          <button v-if="cal.calibrationMode === 'event'" class="btn" :disabled="!editing" @click="excludeIssues">排除这些洪水</button>
+          <button v-if="cal.calibrationMode === 'event'" class="btn" :disabled="cal.running || legacyEventScheme || !preparationIssues.some(issue => issue.eventId)" @click="excludeIssues">排除这些洪水</button>
           <button v-if="cal.rainfallMethod === 'reuse'" class="btn" :disabled="cal.running || !editing" @click="prepareFromStations">采用当前站点资料重新准备</button>
         </div>
       </section>
@@ -478,7 +478,15 @@ function applyAutoSplit() {
   cal.setEventPurposes(autoSplitPreview.value.assignments)
   autoSplitPreview.value = null
 }
-function excludeIssues() { cal.setEventPurposes(preparationIssues.value.filter(row => row.eventId).map(row => ({ id: row.eventId, purpose: '未使用' }))); preparationIssues.value = []; calculationError.value = '' }
+function excludeIssues() {
+  if (cal.running || legacyEventScheme.value) return
+  const assignments = preparationIssues.value.filter(row => row.eventId).map(row => ({ id: row.eventId, purpose: '未使用' }))
+  if (!assignments.length) return
+  if (!editing.value) schemeBar.value?.beginEdit()
+  if (!editing.value) return
+  const changed = cal.setEventPurposes(assignments)
+  if (changed) { preparationIssues.value = []; calculationError.value = '' }
+}
 function registerWindow() {
   if (!windowDraft.id || !windowDraft.start || !windowDraft.end || windowDraft.start >= windowDraft.end) { ElMessage.warning('请填写洪水名称和起止时间'); return }
   const previous = cal.schemeWindows.find(event => event.name === windowDraft.id)

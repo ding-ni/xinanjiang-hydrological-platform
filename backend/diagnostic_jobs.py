@@ -479,5 +479,5 @@ def run_diagnostic(folder):
         result = run_point(folder, request) if request["runType"] == "pointQuery" else run_experiment(folder, request)
     result.update({"schemaVersion": "2.1", "taskId": folder.name, "context": request["context"],
                    "contextKey": request["context"]["contextKey"], "resultVersionId": f"RESULT-{folder.name}",
-                   "resultSource": "model-backend", "productionEligible": False, "lineage": request["lineage"]})
+                   "resultSource": "model-backend", "productionEligible": False, "lineage": request.get("lineage") or {}})
     write_json(folder / "result.json", result)

@@ -9,9 +9,10 @@
     </form>
     <p v-if="error" role="alert" class="scheme-error">{{ error }}</p>
     <nav><button class="btn" @click="trashView=false;refresh()">我的方案</button> <button class="btn" @click="trashView=true;refresh()">回收站</button></nav>
-    <div class="scheme-list-tools"><input v-model="query" type="search" class="input" placeholder="查找方案名称" aria-label="查找方案" /><select v-model="sort" class="input" aria-label="方案排序"><option value="recent">最近修改</option><option value="name">按名称</option></select><span>{{ filteredRows.length }} 个方案</span></div>
+    <div class="scheme-list-tools"><input v-model="query" type="search" class="input" placeholder="查找方案名称" aria-label="查找方案" /><select v-model="sort" class="input" aria-label="方案排序"><option value="recent">最近修改</option><option value="name">按名称</option></select><span>{{ filteredRows.length }} 个方案</span><template v-if="trashView"><label class="bulk-select"><input type="checkbox" :checked="allTrashSchemesSelected" :disabled="!filteredRows.length || busy" @change="toggleAllTrashSchemes" />全选回收站方案</label><button class="btn" :disabled="!selectedTrashSchemeIds.size || busy" @click="purgeSelectedSchemes">批量移除（{{ selectedTrashSchemeIds.size }}）</button></template></div>
     <div v-if="rows.length" class="scheme-cards">
       <div v-for="row in pagedRows" :key="row.id" class="scheme-choice" role="group" :data-scheme-id="row.id" :disabled="busy" @click="row.trashed?previewDelete(row):load(row.id)">
+        <label v-if="trashView" class="scheme-select" :aria-label="`选择 ${row.name}`"><input type="checkbox" :checked="selectedTrashSchemeIds.has(row.id)" :disabled="busy" @click.stop @change="toggleTrashScheme(row.id)" /></label>
         <div><b>{{ row.name }}</b><p><span class="scheme-origin">{{ row.origin || '自建方案' }}</span><template v-if="row.configurationPending"> · 待完善 · 已保留 {{ row.deliverySelectionCount }} 场选取</template><template v-else-if="row.summary?.mode !== 'continuous'"> · 已选 {{ row.summary?.selectedCount || 0 }} 场 · 率定 {{ row.summary?.calibration || 0 }} · 验证 {{ row.summary?.validation || 0 }}</template><template v-else> · 连续率定</template></p><p v-if="row.latestCalculation">最近计算：{{ operationStatuses[row.latestCalculation.status] || row.latestCalculation.status }} · {{ dateLabel(row.latestCalculation.completedAt || row.latestCalculation.createdAt) }}</p></div><span>{{ dateLabel(row.updated_at || row.updatedAt) }}</span><div class="scheme-row-actions"><button class="btn" @click.stop="load(row.id)" :disabled="row.trashed">打开</button><button class="btn" @click.stop="previewDelete(row)">{{ row.trashed?'恢复':'删除' }}</button></div>
       </div>
     </div>
@@ -32,7 +33,7 @@
     <span v-else-if="error" class="scheme-error" role="alert">{{ error }} <button class="text-button" @click="flush">重试</button></span>
   </header>
   <HydrologyDialog ref="historyDialog" class="scheme-history"><header><h2>设置历史</h2><button class="btn" @click="historyDialog.close()">关闭</button></header><p>这里记录方案设置的保存点。名称可以自定义；展开说明可查看具体改动。恢复历史会形成新的当前保存，已有计算成果不受影响。</p><div v-for="item in savedRow?.revisions || []" :key="item.revision" class="history-item"><div><b>{{ item.name || item.summary || '保存方案' }}</b><small>{{ dateLabel(item.created_at) }}</small><details><summary>查看改动说明</summary><p>{{ item.summary || '保存方案' }}<template v-if="item.note"> · {{ item.note }}</template></p></details></div><button class="btn" @click="annotateHistory(item)">命名</button><button class="btn" :disabled="busy" @click="viewHistory(item)">查看条件</button><button class="btn" :disabled="busy || item.revision === cal.modelSchemeLatestRevision" @click="restoreHistory(item)">恢复此保存</button></div></HydrologyDialog>
-  <HydrologyDialog ref="deleteDialog" width="min(720px,94vw)"><h2>{{ deletePreview?.trashed?'恢复方案':'删除方案' }} · {{ deletePreview?.name }}</h2><p>方案与选中的临时计算移入可恢复的回收站，数值文件与被引用资料保留。</p><p v-if="deletePreview?.running?.length" class="scheme-error">该方案仍有运行中的计算，请先完成或停止。</p><label v-for="row in deletePreview?.temporary || []" :key="row.id" class="delete-row"><input v-model="deleteIds" type="checkbox" :value="row.id" />同时丢弃 {{ row.name }}</label><p>独立保留的正式成果：{{ deletePreview?.protectedResults?.join('、') || '无' }}</p><p>独立保留的参数：{{ deletePreview?.protectedParameters?.join('、') || '无' }}</p><p v-if="error" class="scheme-error">{{ error }}</p><button class="btn" @click="deleteDialog.close()">取消</button> <button class="btn primary" :disabled="busy || deletePreview?.running?.length>0" @click="confirmDelete">{{ deletePreview?.trashed?'恢复方案':'确认移入回收站' }}</button></HydrologyDialog>
+  <HydrologyDialog ref="deleteDialog" width="min(720px,94vw)"><h2>{{ deletePreview?.trashed?'从回收站移除方案':'删除方案' }} · {{ deletePreview?.name }}</h2><p>{{ deletePreview?.trashed ? '移除会删除平台中的方案记录，并将回收站临时计算文件送入 Windows 回收站；正式成果、参数和输入资料不会被连带删除。' : '方案与选中的临时计算移入可恢复的回收站，数值文件与被引用资料保留。' }}</p><p v-if="deletePreview?.running?.length" class="scheme-error">该方案仍有运行中的计算，请先完成或停止。</p><label v-for="row in deletePreview?.temporary || []" :key="row.id" class="delete-row"><input v-model="deleteIds" type="checkbox" :value="row.id" />同时丢弃 {{ row.name }}</label><p>独立保留的正式成果：{{ deletePreview?.protectedResults?.join('、') || '无' }}</p><p v-if="deletePreview?.trashed">回收站临时结果：{{ deletePreview?.trashedTemporary?.length || 0 }} 条</p><p>独立保留的参数：{{ deletePreview?.protectedParameters?.join('、') || '无' }}</p><p v-if="error" class="scheme-error">{{ error }}</p><button class="btn" @click="deleteDialog.close()">取消</button> <button class="btn primary" :disabled="busy || deletePreview?.running?.length>0" @click="confirmDelete">{{ deletePreview?.trashed?'从平台回收站移除方案':'确认移入回收站' }}</button></HydrologyDialog>
 </template>
 
 <script setup>
@@ -58,9 +59,10 @@ const query = ref(''), sort = ref('recent'), page = ref(1), historyDialog = ref(
 const filteredRows = computed(() => rows.value.filter(row => row.name.toLowerCase().includes(query.value.trim().toLowerCase())).sort((a,b) => sort.value === 'name' ? a.name.localeCompare(b.name, 'zh-CN') : String(b.updated_at || '').localeCompare(String(a.updated_at || ''))))
 const pages = computed(() => Math.max(1, Math.ceil(filteredRows.value.length / 10)))
 const pagedRows = computed(() => filteredRows.value.slice((page.value - 1) * 10, page.value * 10))
+const allTrashSchemesSelected = computed(() => trashView.value && filteredRows.value.length > 0 && filteredRows.value.every(row => selectedTrashSchemeIds.value.has(row.id)))
 watch([query, sort], () => { page.value = 1 })
 watch(pages, value => { page.value = Math.min(page.value, value) })
-const trashView=ref(false),deletePreview=ref(null),deleteDialog=ref(null),deleteIds=ref([]),newMode=ref('event')
+const trashView=ref(false),deletePreview=ref(null),deleteDialog=ref(null),deleteIds=ref([]),newMode=ref('event'),selectedTrashSchemeIds=ref(new Set())
 const newName = ref(''), nameInput = ref(null), error = ref('')
 const emit = defineEmits(['loaded', 'opened', 'editing'])
 let timer, loading = false, pendingSave = Promise.resolve(), restoringUnnamed = false
@@ -270,10 +272,13 @@ async function saveAs() {
   } catch (failure) { if (failure instanceof Error) error.value = failure.message }
 }
 async function previewDelete(row){try{deletePreview.value=await modelApi('model-schemes/'+row.id+'/deletion-preview');deleteIds.value=deletePreview.value.temporary.map(item=>item.id);error.value='';deleteDialog.value.showModal()}catch(failure){error.value=failure.message}}
-async function confirmDelete(){busy.value=true;try{const p=deletePreview.value;await modelApi('model-schemes/'+p.id+'/'+(p.trashed?'restore':'discard'),{method:'POST',body:{previewSHA256:p.previewSHA256,temporaryIds:p.trashed?[]:deleteIds.value}});for(const id of deleteIds.value)forgetTemporary(id);deleteDialog.value.close();if(cal.modelSchemeId===p.id&&!p.trashed){opened.value=false;emit('opened',false);cal.modelSchemeId=null;cal.modelSchemeRevision=0;cal.trialRecords=[];cal.saveCurrentWorkspace()}retentionChanged.value++;await refresh()}catch(failure){error.value=failure.message}finally{busy.value=false}}
+function toggleTrashScheme(id){const next=new Set(selectedTrashSchemeIds.value);next.has(id)?next.delete(id):next.add(id);selectedTrashSchemeIds.value=next}
+function toggleAllTrashSchemes(){const next=new Set(selectedTrashSchemeIds.value);if(allTrashSchemesSelected.value)filteredRows.value.forEach(row=>next.delete(row.id));else filteredRows.value.forEach(row=>next.add(row.id));selectedTrashSchemeIds.value=next}
+async function purgeSelectedSchemes(){const ids=[...selectedTrashSchemeIds.value];if(!ids.length)return;try{await ElMessageBox.confirm(`从平台回收站移除选中的 ${ids.length} 个方案？关联临时计算文件会送入 Windows 回收站。`,'批量移除回收站方案',{confirmButtonText:'批量移除',cancelButtonText:'取消'});busy.value=true;const failures=[];for(const id of ids){try{const preview=await modelApi('model-schemes/'+id+'/deletion-preview');await modelApi('model-schemes/'+id+'/purge',{method:'POST',body:{previewSHA256:preview.previewSHA256}})}catch(failure){const row=rows.value.find(item=>item.id===id);failures.push(`${row?.name||id}：${failure.message}`)}}selectedTrashSchemeIds.value=new Set();await refresh();if(failures.length)error.value=`已移除 ${ids.length-failures.length} 个，${failures.length} 个未处理：${failures.join('；')}`;else error.value=''}catch(failure){if(failure instanceof Error)error.value=failure.message}finally{busy.value=false}}
+async function confirmDelete(){busy.value=true;try{const p=deletePreview.value;const action=p.trashed?'purge':'discard';const body=p.trashed?{previewSHA256:p.previewSHA256}:{previewSHA256:p.previewSHA256,temporaryIds:deleteIds.value};if(p.trashed&&!window.confirm('从平台回收站移除此方案？临时计算文件会送入 Windows 回收站；正式成果、参数和输入资料不会删除。')){busy.value=false;return}await modelApi('model-schemes/'+p.id+'/'+action,{method:'POST',body});for(const id of deleteIds.value)forgetTemporary(id);deleteDialog.value.close();if(cal.modelSchemeId===p.id&&!p.trashed){opened.value=false;emit('opened',false);cal.modelSchemeId=null;cal.modelSchemeRevision=0;cal.trialRecords=[];cal.saveCurrentWorkspace()}retentionChanged.value++;await refresh()}catch(failure){error.value=failure.message}finally{busy.value=false}}
 onBeforeRouteLeave(settleChanges)
 onBeforeUnmount(() => { window.removeEventListener('beforeunload',warnBeforeUnload); clearTimeout(timer) })
-defineExpose({ refresh, flush, load, ensureSaved, hasChanges, createEventScheme })
+defineExpose({ refresh, flush, load, ensureSaved, hasChanges, beginEdit, createEventScheme })
 </script>
 
 <style scoped>
@@ -291,6 +296,10 @@ defineExpose({ refresh, flush, load, ensureSaved, hasChanges, createEventScheme 
 .scheme-list-tools input { max-width:450px; flex:1 }
 .scheme-list-tools select { width:150px }
 .scheme-list-tools>span { margin-left:auto; color:#71887f }
+.bulk-select { display:inline-flex; align-items:center; gap:6px; color:#587266; font-size:13px }
+.scheme-select { position:absolute; top:16px; left:12px; z-index:1 }
+.scheme-choice { position:relative }
+.scheme-choice:has(.scheme-select) > div:first-of-type { padding-left:28px }
 .scheme-cards { display:grid; border-top:1px solid #dce6e2 }
 .scheme-choice { display:grid; grid-template-columns:minmax(0,1fr) 180px 70px; align-items:center; gap:20px; padding:20px 12px; background:#fff; border:0; border-bottom:1px solid #dce7e2; text-align:left; cursor:pointer; color:#31584c }
 .scheme-choice:hover { background:#eef6f2; border-color:#92b5a8 }

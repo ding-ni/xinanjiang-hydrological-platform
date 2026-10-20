@@ -31,3 +31,11 @@ it('calibration workbench keeps a full process chart and reduces to one column o
   assert.match(realtime, /<label for="monitor-station">测站过程<\/label>/)
   assert.match(realtime, /<select id="monitor-station"/)
 })
+
+it('issue exclusion enters edit mode instead of disabling the action on a saved scheme', () => {
+  const view = readFileSync(new URL('../src/views/CalibrationView.vue', import.meta.url), 'utf8')
+  assert.match(view, /:disabled="cal\.running \|\| legacyEventScheme \|\| !preparationIssues\.some\(issue => issue\.eventId\)" @click="excludeIssues"/)
+  assert.match(view, /if \(!editing\.value\) schemeBar\.value\?\.beginEdit\(\)[\s\S]*?cal\.setEventPurposes\(assignments\)/)
+  const schemeBar = readFileSync(new URL('../src/components/model/ModelSchemeBar.vue', import.meta.url), 'utf8')
+  assert.match(schemeBar, /defineExpose\(\{[^}]*beginEdit/s)
+})

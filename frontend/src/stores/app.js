@@ -480,7 +480,7 @@ export const useAppStore = defineStore('app', {
       const revision = ++this.backendRequestRevision
       this.backendLoading = true
       try {
-        const catalog = await modelApi('catalog')
+        const catalog = await modelApi('catalog', { timeoutMs: 60000 })
         if (this.contextKey !== requestedContextKey || revision !== this.backendRequestRevision) return null
         this.backendCatalog = catalog
         this.backendError = ''
@@ -492,7 +492,10 @@ export const useAppStore = defineStore('app', {
           if (this.selectedInputBundleVersionId) {
             await this.refreshSelectedInputCatalog()
           } else useCalibrationStore().configureBackend(backend)
-          const [{ states }, { versions }] = await Promise.all([modelApi('states'), modelApi('parameter-versions')])
+          const [{ states }, { versions }] = await Promise.all([
+            modelApi('states', { timeoutMs: 60000 }),
+            modelApi('parameter-versions', { timeoutMs: 60000 })
+          ])
           if (this.contextKey !== requestedContextKey || revision !== this.backendRequestRevision || requestedInputKey !== this.inputSelectionKey) return null
           useStateStore().hydrateBackendStates(states)
           this.projectData.backendParameterVersions = versions

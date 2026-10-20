@@ -16,7 +16,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import read_json, write_json
 from contracts import freeze_input_selection, freeze_routing_selection
-from diagnostic_jobs import diagnostic_pet_note, normalize_diagnostic, spatial_payload
+from diagnostic_jobs import diagnostic_pet_note, normalize_diagnostic, run_diagnostic, spatial_payload
 from input_products import InputProducts
 from routing_versions import RoutingVersions
 from server import TaskManager, ThreadingHTTPServer, handler, uses_frozen_model_worker
@@ -142,6 +142,19 @@ class DiagnosticContracts(unittest.TestCase):
         with patch('section_cache.query_implementation', return_value='current-program'):
             frozen = query_worker_implementation({'queryImplementationSHA256': 'submitted-program'})
         self.assertEqual(frozen, 'current-program')
+
+    def test_section_query_result_is_saved_when_request_has_no_lineage(self):
+        folder = self.root / 'JOB-point-query-no-lineage'
+        folder.mkdir()
+        write_json(folder / 'request.json', {
+            'runType': 'pointQuery',
+            'context': {'contextKey': 'test-context'},
+        })
+        with patch('diagnostic_jobs.run_point', return_value={'pointQuery': {'series': []}}):
+            run_diagnostic(folder)
+        result = read_json(folder / 'result.json')
+        self.assertEqual(result['lineage'], {})
+        self.assertEqual(result['pointQuery'], {'series': []})
 
     def test_section_queries_do_not_inherit_source_simulation_worker_snapshot(self):
         self.assertFalse(uses_frozen_model_worker({'runType':'pointQuery','lineage':{'modelImplementationSHA256':'old'}}))

@@ -87,9 +87,10 @@ export const useTasksStore = defineStore('tasks', {
       if (modelBackendEnabled() && typeof window !== 'undefined' && !refreshTimer) {
         const tick = async () => {
           await this.refresh()
-          refreshTimer = setTimeout(tick, 2000)
+          const hasActiveTasks = this.tasks.some((task) => ['queued', 'running', 'cancelling'].includes(task.status))
+          refreshTimer = setTimeout(tick, hasActiveTasks ? 2000 : 15000)
         }
-        refreshTimer = setTimeout(tick, 2000)
+        refreshTimer = setTimeout(tick, this.tasks.some((task) => ['queued', 'running', 'cancelling'].includes(task.status)) ? 2000 : 15000)
       }
       return tasks
     },

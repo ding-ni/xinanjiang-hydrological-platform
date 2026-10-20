@@ -155,7 +155,7 @@ export async function loadHistoricalDatabaseProcess(start = '', end = '', { sour
 
 export async function loadModelInputCatalog({ source = null, resolution = null } = {}) {
   const query = inputQuery(source, resolution)
-  const catalog = normalizeModelInputCatalog(await modelApi(`inputs/catalog?${query}`))
+  const catalog = normalizeModelInputCatalog(await modelApi(`inputs/catalog?${query}`, { timeoutMs: 60000 }))
   if (catalog.bundleVersionId !== query.get('bundleVersionId')) throw new Error('后端资料目录与选定输入版本不一致。')
   return catalog
 }

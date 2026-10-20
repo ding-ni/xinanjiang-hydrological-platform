@@ -120,9 +120,11 @@ trigger the new-workspace leave prompt.
 | GET | `/result-catalog?retention=saved\|temporary\|trashed\|all` | Omission excludes trash. Rows include `retention`, `retentionRevision`, `legacy`; `saved` no longer aliases `favorite`. |
 | GET | `/result-retention/{id}` | Retention and revision of one canonical result. |
 | POST | `/result-retention/{id}/save`, `/discard`, `/restore` | `{revision}` optimistic check; running/queued/cancelling records reject mutation. |
+| POST | `/result-retention/{id}/purge` | Permanently forgets a trashed result's metadata and moves its task artifact to the Windows Recycle Bin; saved results and referenced inputs are protected. |
 | GET | `/model-schemes?retention=trashed` | Default lists active schemes; this filter lists recoverable schemes. |
 | GET | `/model-schemes/{id}/deletion-preview` | Revision-bound preview of temporary records, protected results/parameters and active jobs, with `previewSHA256`. |
 | POST | `/model-schemes/{id}/discard`, `/restore` | `{previewSHA256, temporaryIds}`; selected temporary calculations and scheme retention change in one SQL transaction. |
+| POST | `/model-schemes/{id}/purge` | `{previewSHA256}`; removes a trashed scheme's platform records and sends its unreferenced temporary task artifacts to the Windows Recycle Bin. |
 | GET | `/results/{id}/state-ranges?processId=...` | Verified process history ranges, available variable names/units and capacities. |
 | POST | `/results/{id}/state-excel` | `{processId, gridId, variables}`; XLSX bytes with exact hourly values, restricted to the server-resolved process period. |
 
@@ -357,6 +359,7 @@ Metadata is stored in the additive `state_metadata` SQL table. Saving a name or 
 - 后端冻结输入清单及 DEM、控制断面、登记拓扑、网格、面积权重和算法来源摘要。工作进程复用原 D8 与控制断面切分流程，核对全部河段起终点、下游连接、河长、栅格数及单元面积；生成后复查来源摘要。
 - `GET /api/model/tasks/{id}/result` 的 `spatial` 含 summary、manifestSHA256、图件文件名及文件摘要清单。
 - `GET /api/model/tasks/{id}/spatial-preview?name=terrain-network.png` 或 `routing-units.png`：PNG；仅接受这两个固定名称。
+- `GET /api/model/spatial-tasks` 返回 GIS 图件任务；`POST /api/model/spatial-tasks/{id}/purge` 使用 `{requestDigest}` 乐观校验，仅将已完成的空间任务目录和任务索引送入 Windows 回收站，不删除输入资料版本。
 - `GET /api/model/tasks/{id}/spatial-package`：全部空间产品与 manifest.json 的 ZIP。仅成功/归档任务开放，下载前校验 SHA256、文件名及边界，未压缩内容上限64MB。
 - 工作区位置：`tasks/{id}/spatial/`。原始 DEM 逐字节保留；5套 ASC/PRJ 分别为高程、汇流分区、流向、汇水面积和河网标记。栅格 EPSG:32650、30m、北侧首行、NoData=-9999；汇流分区0表示有效但未归属河网的栅格，1–32与 units.csv对应。
 - 生成的河段/控制断面 GeoJSON 为 EPSG:4326。登记边界和网格保留原经纬度文件，不重投影；源文件没有 crs 时清单保留 null，不擅自补写来源坐标基准。面积权重表原样保留。PNG 是带图例的排版图，GIS 数值分析使用 ASC/PRJ。

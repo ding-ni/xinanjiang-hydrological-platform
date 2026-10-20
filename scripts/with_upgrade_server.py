@@ -33,17 +33,15 @@ def main():
     parser.add_argument('--port', type=int, default=18892)
     parser.add_argument('--windows-launcher', action='store_true',
                         help='Exercise the actual CMD launcher in Windows PowerShell with CP936')
-    parser.add_argument('--upgrade-launcher', action='store_true',
-                        help='Use the 20261012 CMD entry at its fixed workspace and port 18890')
     parser.add_argument('--exercise-browser-launch', action='store_true',
                         help='Keep the CMD launcher browser dispatch enabled for a configured test browser')
     parser.add_argument('--staff-existing', action='store_true',
                         help='Open saved staff acceptance work without importing additional observations')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    if args.exercise_browser_launch and not (args.windows_launcher or args.upgrade_launcher):
+    if args.exercise_browser_launch and not args.windows_launcher:
         parser.error('Browser dispatch verification requires an actual CMD launcher')
-    if args.staff_existing and (args.windows_launcher or args.upgrade_launcher):
+    if args.staff_existing and args.windows_launcher:
         parser.error('Saved staff acceptance uses its own isolated service')
     if listening(args.port):
         raise RuntimeError('Test port already in use; existing process is never replaced')
@@ -59,27 +57,21 @@ def main():
         server_command = [str(ROOT / 'backend/.venv/Scripts/python.exe'), '-B', '-u',
                           str(ROOT / 'scripts/staff_acceptance_server.py'),
                           '--workspace', environment['XAJ_RUNTIME_DIR'], '--port', str(args.port), '--existing']
-    if args.windows_launcher or args.upgrade_launcher:
+    if args.windows_launcher:
         if os.name != 'nt':
             raise ValueError('The CMD launcher verification requires Windows')
         quote = lambda value: "'" + str(value).replace("'", "''") + "'"
         browser_option = '' if args.exercise_browser_launch else ' -NoBrowser'
-        if args.upgrade_launcher:
-            if args.port != 18890 or Path(args.runtime).resolve() != ROOT / 'runtime-20261012':
-                raise ValueError('The upgrade launcher requires its actual workspace and port 18890')
-            invocation = '& ' + quote(ROOT / '启动20261012升级版.cmd') + ' -SkipBuild' + browser_option
-        else:
-            invocation = ('& ' + quote(ROOT / '启动统一平台.cmd') + ' -Workspace '
-                          + quote(Path(args.runtime).resolve()) + ' -Port ' + str(args.port) + ' -SkipBuild' + browser_option)
+        invocation = ('& ' + quote(ROOT / '启动统一平台.cmd') + ' -Workspace '
+                      + quote(Path(args.runtime).resolve()) + ' -Port ' + str(args.port) + ' -SkipBuild' + browser_option)
         source = "[Console]::OutputEncoding = [Text.Encoding]::GetEncoding(936)\n" + invocation + "\nexit $LASTEXITCODE"
         encoded = base64.b64encode(source.encode('utf-16-le')).decode('ascii')
         server_command = ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
                           '-EncodedCommand', encoded]
     flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
     receipt = {'port': args.port, 'workspace': environment['XAJ_RUNTIME_DIR'], 'command': server_command}
-    if args.windows_launcher or args.upgrade_launcher:
-        receipt.update(launcher='启动20261012升级版.cmd' if args.upgrade_launcher else '启动统一平台.cmd',
-                       nativeOutputCodePage=936)
+    if args.windows_launcher:
+        receipt.update(launcher='启动统一平台.cmd', nativeOutputCodePage=936)
     with (output / 'server-stdout.log').open('w', encoding='utf-8') as stdout, (output / 'server-stderr.log').open('w', encoding='utf-8') as stderr:
         process = subprocess.Popen(server_command, cwd=ROOT, env=environment, stdout=stdout, stderr=stderr, creationflags=flags)
         receipt['processId'] = process.pid

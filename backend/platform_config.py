@@ -14,8 +14,8 @@ def load_settings(root=None, environ=None):
     if not path.is_absolute():
         path = root / path
     defaults = dict(schemaVersion=1, workspace='runtime', model='backend/vendor/model',
-                    projects='frontend-demo/app/public/data/projects',
-                    frontend='frontend-demo/app/dist-unified', port=8878)
+                    projects='frontend/public/data/projects',
+                    frontend='frontend/dist-unified', port=8878)
     if path.exists():
         document = json.loads(path.read_text(encoding='utf-8-sig'))
         if not isinstance(document, dict) or set(document) - set(defaults):

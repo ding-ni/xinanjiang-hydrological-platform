@@ -8,6 +8,27 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+BACKEND_SUFFIXES = {'.py', '.sql', '.txt', '.vbs'}
+BACKEND_DOCUMENTS = {'API.md', 'INPUT_PRODUCTS_CONTRACT.md', 'SCIENCE_CONTEXT.md'}
+RELEASE_SCRIPTS = (
+    'start_unified.ps1', 'install_platform.ps1', 'workspace.ps1',
+    'configure_workspace.py', 'package_platform.py', 'import_mdb_bundle.py',
+    'promote_input_bundle.py',
+)
+RELEASE_ROOT_FILES = (
+    '启动统一平台.cmd', '安装平台.cmd', '部署与维护手册.md',
+    '方案与自动率定操作说明.md', 'docs/automatic-forecast.md',
+    'docs/workbench.md',
+    'docs/historical-database-schemes.md',
+)
+FORBIDDEN_RELEASE_PREFIXES = (
+    '开发产物/', '历史归档/', '交付包/', '参考项目/', '验收证据/',
+    'runtime-staff-acceptance-',
+)
+FORBIDDEN_RELEASE_FILES = {
+    'import_20261012_candidates.py',
+    '统一系统验收记录.md', '原后端功能融合清单.md',
+}
 sys.path.insert(0, str(ROOT / 'backend'))
 from platform_config import SETTINGS, APP_VERSION
 from common import now, write_json
@@ -33,6 +54,25 @@ def current_web_assets(frontend):
     return assets
 
 
+def support_sources(root=ROOT):
+    """Return the maintained runtime, operator docs, and supported tools."""
+    root = Path(root)
+    sources = []
+    for source in (root / 'backend').iterdir():
+        if source.is_file() and source.suffix in BACKEND_SUFFIXES | {'.md'}:
+            if source.suffix == '.md' and source.name not in BACKEND_DOCUMENTS:
+                continue
+            sources.append((source, Path('backend') / source.name))
+    for name in RELEASE_SCRIPTS:
+        sources.append((root / 'scripts' / name, Path('scripts') / name))
+    for name in RELEASE_ROOT_FILES:
+        sources.append((root / name, Path(name)))
+    missing = [str(source) for source, _ in sources if not source.is_file()]
+    if missing:
+        raise ValueError('发布所需源码或说明缺失：' + ', '.join(missing))
+    return sources
+
+
 def package(destination):
     destination = Path(destination).resolve()
     if destination.exists() or destination == ROOT or destination in ROOT.parents:
@@ -41,8 +81,8 @@ def package(destination):
         raise ValueError('请先构建统一网页')
     web_assets = current_web_assets(SETTINGS['frontend'])
     sources = []
-    for base, target in [(SETTINGS['frontend'], 'frontend-demo/app/dist-unified'),
-                         (SETTINGS['projects'], 'frontend-demo/app/public/data/projects'),
+    for base, target in [(SETTINGS['frontend'], 'frontend/dist-unified'),
+                         (SETTINGS['projects'], 'frontend/public/data/projects'),
                          (SETTINGS['model'], 'backend/vendor/model')]:
         if destination.is_relative_to(base): raise ValueError('发布目标不能位于资料目录中')
         for source in base.rglob('*'):
@@ -55,63 +95,7 @@ def package(destination):
                     if relative.parts[:1] == ('assets',) and relative.as_posix() not in web_assets:
                         continue
                 sources.append((source, Path(target) / source.relative_to(base)))
-    for source in (ROOT / 'backend').iterdir():
-        if source.is_file() and source.suffix in {'.py', '.sql', '.txt', '.md', '.vbs'}:
-            sources.append((source, Path('backend') / source.name))
-    for name in ('start_unified.ps1', 'install_platform.ps1', 'workspace.ps1', 'configure_workspace.py', 'package_platform.py',
-                 'import_mdb_bundle.py', 'import_20261012_candidates.py', 'promote_input_bundle.py'):
-        sources.append((ROOT / 'scripts' / name, Path('scripts') / name))
-    for name in ('启动统一平台.cmd', '启动20261012升级版.cmd', '安装平台.cmd', '统一系统说明.md', '统一系统验收记录.md',
-                 '部署与维护手册.md', '平台实操流程.md', '平台后续开发清单.md', '原后端功能融合清单.md',
-                 '20261012后端升级说明.md', '同事方案接入与平台操作说明.md'):
-        sources.append((ROOT / name, Path(name)))
-    sources.append((ROOT / 'config/scientific_validation_20261012.json', Path('config/scientific_validation_20261012.json')))
-    acceptance = ROOT / '开发产物/后端升级验收_20261012'
-    # A clean program release carries concise evidence; runtime data is backed up separately.
-    for name in ('后端升级实施与验收记录.md', 'backend-tests.json', 'frontend-acceptance.json', 'MDB候选重放.json', '原件与内核来源核验.json'):
-        if (acceptance / name).is_file():
-            sources.append((acceptance / name, Path('验收证据') / name))
-    for name in ('浏览器验收', '迁入候选浏览器复验'):
-        if (acceptance / name / 'acceptance.json').is_file():
-            sources.append((acceptance / name / 'acceptance.json', Path('验收证据') / name / 'acceptance.json'))
-    current_acceptance = ROOT / '开发产物/同事方案完整接入验收_20261012'
-    for name in ('backend-tests.json', 'frontend-acceptance.json', '验收汇总.json',
-                 '原件与内核来源核验.json', 'frontend-final-label-note.json'):
-        if (current_acceptance / name).is_file():
-            sources.append((current_acceptance / name, Path('验收证据/1.11.0') / name))
-    for section, filename in (('17场原方案重放', 'acceptance.json'), ('平台业务浏览器', '最终验收.json'),
-                              ('原方案页面闭环验收', 'acceptance.json')):
-        if (current_acceptance / section / filename).is_file():
-            sources.append((current_acceptance / section / filename, Path('验收证据/1.11.0') / section / 'acceptance.json'))
-    launcher_acceptance = ROOT / '开发产物/启动编码修复验收_20261013'
-    if (launcher_acceptance / '启动修复验收.json').is_file():
-        sources.append((launcher_acceptance / '启动修复验收.json', Path('验收证据/1.11.1/启动修复验收.json')))
-    for section, filename in (('升级入口实际启动服务', 'server-receipt.json'), ('升级入口网页验收', 'acceptance.json'),
-                              ('统一入口实际启动服务', 'server-receipt.json'), ('统一入口网页验收', 'acceptance.json')):
-        if (launcher_acceptance / section / filename).is_file():
-            sources.append((launcher_acceptance / section / filename, Path('验收证据/1.11.1') / section / filename))
-    startup_acceptance = ROOT / '开发产物/启动体验与文案验收_20261013'
-    if (startup_acceptance / '启动体验与文案验收.json').is_file():
-        sources.append((startup_acceptance / '启动体验与文案验收.json', Path('验收证据/1.11.2/启动体验与文案验收.json')))
-    for relative in ('升级入口实际启动复验/server-receipt.json', '升级入口网页复验/acceptance.json',
-                     '升级入口网页复验/browser-dispatch.json', '升级入口网页复验/main-pages/acceptance.json',
-                     '统一入口实际启动服务/server-receipt.json', '统一入口网页验收/acceptance.json',
-                     '统一入口网页验收/browser-dispatch.json', '统一入口网页验收/main-pages/acceptance.json'):
-        if (startup_acceptance / relative).is_file():
-            sources.append((startup_acceptance / relative, Path('验收证据/1.11.2') / relative))
-    rain_acceptance = ROOT / '开发产物/平滑降雨显示验收_20261013'
-    for relative in ('平滑降雨显示验收.json', '最终实际启动服务/server-receipt.json', '最终浏览器验收/acceptance.json'):
-        if (rain_acceptance / relative).is_file():
-            sources.append((rain_acceptance / relative, Path('验收证据/1.11.3') / relative))
-    data_acceptance = ROOT / '开发产物/雨水情与资料库清晰化验收_20261013'
-    for relative in ('清晰化验收.json', '初次实际启动服务/server-receipt.json', '初次浏览器验收/acceptance.json'):
-        if (data_acceptance / relative).is_file():
-            sources.append((data_acceptance / relative, Path('验收证据/1.11.4') / relative))
-    generic_acceptance = ROOT / '开发产物/资料库通用整理验收_20261013'
-    for relative in ('整理验收.json', '实际启动服务发布前复验/server-receipt.json', '浏览器发布前复验/acceptance.json',
-                     '雨水情衔接实际服务/server-receipt.json', '雨水情衔接验收/acceptance.json'):
-        if (generic_acceptance / relative).is_file():
-            sources.append((generic_acceptance / relative, Path('验收证据/1.11.5') / relative))
+    sources.extend(support_sources())
     records = []
     destination.mkdir(parents=True)
     for source, relative in sources:
@@ -122,7 +106,7 @@ def package(destination):
         records.append({'path': relative.as_posix(), 'sha256': digest(target), 'bytes': target.stat().st_size})
     config = destination / 'config/platform.json'
     write_json(config, {'schemaVersion': 1, 'workspace': 'workspace', 'model': 'backend/vendor/model',
-                        'projects': 'frontend-demo/app/public/data/projects', 'frontend': 'frontend-demo/app/dist-unified', 'port': 8878})
+                        'projects': 'frontend/public/data/projects', 'frontend': 'frontend/dist-unified', 'port': 8878})
     records.append({'path': 'config/platform.json', 'sha256': digest(config), 'bytes': config.stat().st_size})
     manifest = {'version': APP_VERSION, 'createdAt': now(), 'files': records,
                 'bytes': sum(row['bytes'] for row in records), 'python': '3.9', 'platform': 'Windows x64'}
@@ -144,6 +128,8 @@ def verify(destination):
         relative = Path(name)
         if relative.is_absolute() or '..' in relative.parts or name in seen or '\\' in name:
             raise ValueError(f'发布清单路径无效：{name}')
+        if name in FORBIDDEN_RELEASE_FILES or name.startswith(FORBIDDEN_RELEASE_PREFIXES):
+            raise ValueError(f'发布包不能包含历史验收或本机工作区内容：{name}')
         seen.add(name)
         source = destination / relative
         if source.is_symlink() or not source.is_file():
@@ -155,7 +141,7 @@ def verify(destination):
     if total != manifest['bytes']:
         raise ValueError('发布总字节数不符')
     expected = {'启动统一平台.cmd', '安装平台.cmd', 'config/platform.json',
-                'frontend-demo/app/dist-unified/index.html', 'backend/server.py'}
+                'frontend/dist-unified/index.html', 'backend/server.py'}
     if not expected.issubset(seen):
         raise ValueError('发布目录缺少必要入口')
     return {'path': str(destination), 'files': len(records), 'bytes': total, 'version': manifest['version'], 'verified': True}

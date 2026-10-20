@@ -29,7 +29,7 @@ from input_service import InputService
 
 def existing_2017_paths(workspace_root=None):
     root = Path(WORKSPACE if workspace_root is None else workspace_root)
-    project = root / "frontend-demo/app/public/data/projects/nananxi-xufan"
+    project = root / "frontend/public/data/projects/nananxi-xufan"
     return (project / "observations/rain/2017.json",
             project / "observations/catalog.json", project / "spatial/stations.json")
 

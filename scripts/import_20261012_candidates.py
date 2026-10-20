@@ -256,8 +256,8 @@ def import_candidates(source_root, runtime_root, expected_science=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, default=ROOT / "后端文件/南安溪产流汇流模型_20261012终结版/南安溪产流汇流模型_20261012终结版/空间可视化人工调参版/model")
-    parser.add_argument("--runtime", type=Path, default=ROOT / "开发产物/后端版本差异审查_20261012/candidate-import-workspace")
+    parser.add_argument("--source", type=Path, required=True, help="Verified historical source model directory")
+    parser.add_argument("--runtime", type=Path, required=True, help="Explicit destination workspace")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
     print(json.dumps(import_candidates(args.source, args.runtime), ensure_ascii=False, indent=2))

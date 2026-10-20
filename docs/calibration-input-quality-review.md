@@ -1,6 +1,6 @@
-# 最新16场率定结果复核
+# 率定结果与水文输入质量复核
 
-_南安溪—徐畈，2026年10月18日；基于冻结成果、只读资料查询及已有隔离实验。_
+_南安溪—徐畈；基于冻结成果、只读资料查询及隔离实验。_
 
 ---
 
@@ -22,7 +22,7 @@ _南安溪—徐畈，2026年10月18日；基于冻结成果、只读资料查�
 
 ## 📌 基准与抽查方式
 
-真实用户工作区 `runtime-20261012` 中最新成功自动率定为：
+运行工作区 `runtime` 中核查的成功自动率定为：
 
 | 项目 | 值 |
 | --- | --- |
@@ -175,12 +175,12 @@ KC=0.4、B=0.8、IM=0.08、地下水比例=0.02、Muskingum X=0.05等触及边�
 新增[只读诊断脚本](../scripts/review_latest_calibration.py) 使用SQLite只读模式和读事务，独立NumPy插值，读取冻结输入、状态及过程，检查状态文件登记摘要，并确认自动率定结果文件读取前后SHA-256一致。它不启动计算服务、不导入资料、不生成模型任务。
 
 ```powershell
-backend\.venv\Scripts\python.exe scripts/review_latest_calibration.py --runtime runtime-20261012 --operation-id OP-ba24bb27ac6d45d89248aea49f24d39a --output 开发产物/收尾复核20261018/latest-review.json
+backend\.venv\Scripts\python.exe scripts/review_latest_calibration.py --runtime runtime --operation-id OP-ba24bb27ac6d45d89248aea49f24d39a --output test-output/calibration-input-review/latest-review.json
 ```
 
 该脚本只支持有逐场状态历史的场次率定及本地历史资料库来源。它查询当前数据库一致性快照，并以冻结面雨量作数值核对；不把当前数据库自动当成不可变原始观测。完整年度零值筛查覆盖各洪水起止范围涉及的年份。省略 `--operation-id` 时自动选择最新成功自动率定。
 
-本地证据目录为 `开发产物/收尾复核20261018`，保留在本机、不作为原始数据推送。当前结果摘要：
+核查输出写入被忽略的本机 `test-output/calibration-input-review`，不作为源码或业务资料提交。当前结果摘要：
 
 ```text
 OP-ba24bb27ac6d45d89248aea49f24d39a/result.json

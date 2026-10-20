@@ -33,7 +33,7 @@ class WorkspaceTests(unittest.TestCase):
         settings = load_settings(root, {})
         self.assertEqual(settings['workspace'], self.root / '工作资料')
         self.assertEqual(load_settings(root, {'XAJ_RUNTIME_DIR': 'other'})['workspace'], root / 'other')
-        for value in ('', '.', 'backend/vendor/model/tasks', 'frontend-demo/app/public'):
+        for value in ('', '.', 'backend/vendor/model/tasks', 'frontend/public'):
             write_json(root / 'config/platform.json', {'workspace': value})
             with self.subTest(value=value), self.assertRaises(ValueError): load_settings(root, {})
 

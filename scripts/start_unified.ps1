@@ -3,7 +3,7 @@ param([int]$Port = 0, [string]$Workspace = '', [string]$Config = '', [switch]$Bu
 $ErrorActionPreference = 'Stop'
 $platformRoot = Split-Path -Parent $PSScriptRoot
 $pythonPath = Join-Path $platformRoot 'backend\.venv\Scripts\python.exe'
-$appPath = Join-Path $platformRoot 'frontend-demo\app'
+$appPath = Join-Path $platformRoot 'frontend'
 if (-not (Test-Path -LiteralPath $pythonPath)) {
     throw 'Run scripts/install_platform.ps1 first.'
 }

@@ -625,7 +625,7 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--runtime", type=Path, default=ROOT / "runtime-20261012", help="升级版运行工作区")
+    parser.add_argument("--runtime", type=Path, default=ROOT / "runtime", help="运行工作区")
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE, help="原交付包内层目录；只读")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="验收报告和逐小时、逐指标差异输出目录")
     parser.add_argument("--parameter", help="冻结率定候选 ID；省略时要求恰有一个匹配当前实现的候选")

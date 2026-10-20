@@ -22,7 +22,7 @@ def main():
         ('manual', ['scripts/verify_manual_trials_browser.py', '--url', args.url, '--output', str(output / 'manual')]),
         ('forecast', ['scripts/verify_forecast_browser.py', '--url', args.url, '--output', str(output / 'forecast')]),
         ('routing', ['scripts/verify_routing_calibration_browser.py', '--url', args.url, '--output', str(output / 'routing')]),
-        ('grid', ['frontend-demo/app/tests/grid_routing_ui_smoke.py']),
+        ('grid', ['frontend/tests/grid_routing_ui_smoke.py']),
         ('database', ['scripts/verify_database_browser.py', '--url', args.url, '--runtime', str(output / 'database')]),
         ('pages', ['scripts/verify_release_browser.py', '--url', args.url, '--output', str(output / 'pages')]),
     ]

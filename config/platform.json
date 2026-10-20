@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "workspace": "runtime",
   "model": "backend/vendor/model",
-  "projects": "frontend-demo/app/public/data/projects",
-  "frontend": "frontend-demo/app/dist-unified",
+  "projects": "frontend/public/data/projects",
+  "frontend": "frontend/dist-unified",
   "port": 8878
 }

@@ -89,7 +89,7 @@ def longest_true(values):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--runtime', type=Path, default=ROOT/'runtime-20261012')
+    parser.add_argument('--runtime', type=Path, default=ROOT/'runtime')
     parser.add_argument('--operation-id', help='Pin a completed calibration instead of choosing the latest')
     parser.add_argument('--output', type=Path, default=ROOT/'开发产物/收尾复核20261018/latest-review.json')
     args = parser.parse_args()

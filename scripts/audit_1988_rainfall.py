@@ -8,7 +8,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 from common import read_json,write_json,WORKSPACE
 from mdb_import import query_mdb_copy
 from input_products import file_sha256
-public=WORKSPACE/'frontend-demo/app/public/data/projects/nananxi-xufan'
+public=WORKSPACE/'frontend/public/data/projects/nananxi-xufan'
 catalog=read_json(public/'observations/catalog.json')
 year=read_json(public/'observations/rain/1988.json')
 first=datetime(1988,8,8,7);last=datetime(1988,8,9,20)

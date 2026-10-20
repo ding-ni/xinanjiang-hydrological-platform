@@ -15,7 +15,7 @@
 .env
 .env.*
 !.env.example
-!/frontend-demo/app/.env.unified
+!/frontend/.env.unified
 
 # Local development metadata and third-party reference checkouts.
 /.claude/
@@ -40,15 +40,17 @@
 /frontend-demo/归档/
 /frontend-demo/calibration-1600.png
 /frontend-demo/forecast-1600.png
+/frontend-demo/app/dist-unified/
+/frontend-demo/app/dist/
+/frontend-demo/app/test-output/
 /历史归档/
 /开发产物/
 /imagegen_outputs/
 *.zip
 # Unified platform runtime and isolated dependencies.
 /runtime/
-/runtime-20261012/
 /runtime-staff-acceptance-*/
 /backend/.venv/
-/frontend-demo/app/dist-unified/
+**/dist-unified/
 __pycache__/
 *.pyc

@@ -15,8 +15,8 @@ from mdb_import import import_mdb_bundle, TARGET_NC_CENTRE, TARGET_LEGACY_REPLAY
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mdb", required=True)
-    parser.add_argument("--runtime", default=str(Path(__file__).resolve().parents[1] / "runtime-20261012"),
-                        help="Independent 20261012 workspace by default; never silently import into the daily runtime")
+    parser.add_argument("--runtime", required=True,
+                        help="Explicit destination workspace; imports never choose a workspace implicitly")
     parser.add_argument("--model", default=str(MODEL))
     parser.add_argument("--name", default="MDB独立17场输入资料")
     parser.add_argument("--provenance-note", default="20261012终结版MDB资料接入，尚未生产验收")

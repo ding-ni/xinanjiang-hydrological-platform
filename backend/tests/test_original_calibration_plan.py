@@ -27,6 +27,14 @@ from routing_versions import RoutingVersions
 from input_products import InputProducts
 from science_context import digest_file
 
+DELIVERED_SOURCE_MODEL = Path(__file__).resolve().parents[2] / (
+    '后端文件/南安溪产流汇流模型_20261012终结版/'
+    '南安溪产流汇流模型_20261012终结版/空间可视化人工调参版/model'
+)
+DELIVERED_SOURCE_TASK = DELIVERED_SOURCE_MODEL / (
+    'validation/platform_calibration_tasks/CAL-20261011-104708-95c5368f'
+)
+
 
 class OriginalPlanTests(unittest.TestCase):
     def test_source_files_and_search_settings_are_frozen_and_tampering_fails(self):
@@ -82,10 +90,14 @@ class OriginalPlanTests(unittest.TestCase):
         self.assertGreater(best['runoff.SM'], 0)
         self.assertFalse(outcome['initial_candidates'][0]['accepted'])
 
+    @unittest.skipUnless(
+        (DELIVERED_SOURCE_MODEL / 'code/calibration_platform/algorithms.py').is_file()
+        and (DELIVERED_SOURCE_TASK / 'output/algorithm_history.csv').is_file(),
+        'optional historical delivery fixtures are not part of the Git checkout',
+    )
     def test_seeded_de_matches_delivered_algorithm_and_saved_first_eight_vectors(self):
-        source_model = Path(__file__).resolve().parents[2] / ('后端文件/南安溪产流汇流模型_20261012终结版/'
-            '南安溪产流汇流模型_20261012终结版/空间可视化人工调参版/model')
-        source_task = source_model / 'validation/platform_calibration_tasks/CAL-20261011-104708-95c5368f'
+        source_model = DELIVERED_SOURCE_MODEL
+        source_task = DELIVERED_SOURCE_TASK
         package_name = '_delivered_seed_comparison'
         package = types.ModuleType(package_name)
         package.__path__ = [str(source_model / 'code/calibration_platform')]

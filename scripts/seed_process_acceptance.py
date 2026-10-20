@@ -1,4 +1,4 @@
-"""Copy only the records needed for process-workbench acceptance; never alter source."""
+"""Copy required source records into an isolated workbench test workspace."""
 import argparse
 import json
 import shutil
@@ -7,7 +7,7 @@ from pathlib import Path
 
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--workspace',required=True)
-parser.add_argument('--source',default='runtime-20261012')
+parser.add_argument('--source',default='runtime')
 parser.add_argument('--scheme',default='SCHEME-8a5eea9752cf4cf79ffec638f98cf086')
 args=parser.parse_args()
 root=Path(__file__).resolve().parents[1]

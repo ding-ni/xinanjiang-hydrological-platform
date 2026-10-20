@@ -29,7 +29,7 @@ with WorkspaceLock(workspace):
     workspace_identity(workspace)
     database = HydroDatabase(workspace)
     if not args.existing:
-        archive = root / 'runtime-20261012/database/hydrology.sqlite3'
+        archive = root / 'runtime/database/hydrology.sqlite3'
         with sqlite3.connect(archive.as_uri() + '?mode=ro', uri=True) as source, database.connect() as target:
             for name in ('projects', 'stations', 'source_files', 'station_aliases', 'flood_events'):
                 rows = source.execute('SELECT * FROM ' + name).fetchall()

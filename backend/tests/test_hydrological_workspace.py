@@ -48,7 +48,9 @@ class HydrologicalWorkspaceTests(unittest.TestCase):
         self.manager.results.update('OP-business',{'name':'六月洪水成果','notes':'两场','collection':'','favorite':False,'revision':0})
         self.assertFalse(self.manager.results.catalog()['results'][0]['saved'])
         self.manager.results.update('OP-business',{'name':'六月洪水成果','notes':'两场','collection':'','favorite':True,'revision':1})
-        self.assertTrue(self.manager.results.catalog()['results'][0]['saved'])
+        favorite=self.manager.results.catalog()['results'][0]
+        self.assertFalse(favorite['saved'])
+        self.assertTrue(favorite['favorite'])
         self.assertEqual((folder/'result.json').read_bytes(),before)
         self.assertEqual(self.manager.results.process('OP-business','original-a')['purpose'],'验证')
         self.assertEqual(self.manager.results.process('OP-business','original-b')['sourceTaskId'],'JOB-two')

@@ -145,7 +145,7 @@ def run_job(runtime, request, identifier):
 
 def check_runtime(runtime):
     from common import RUNTIME
-    if runtime.resolve() != RUNTIME.resolve() or runtime.resolve() == (ROOT / 'runtime-20261012').resolve():
+    if runtime.resolve() != RUNTIME.resolve():
         raise ValueError('请把 XAJ_RUNTIME_DIR 设置为隔离 runtime 后再启动实验')
 
 
@@ -464,7 +464,7 @@ def report(runtime, output):
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('command',choices=['prepare','audit','warmup','benchmark','report'])
-    parser.add_argument('--source',type=Path,default=ROOT/'runtime-20261012')
+    parser.add_argument('--source',type=Path,default=ROOT/'runtime')
     parser.add_argument('--output',type=Path,default=ROOT/'开发产物/收尾复核20261018')
     args=parser.parse_args()
     args.output=args.output.resolve()

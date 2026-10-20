@@ -22,9 +22,9 @@ def running_server(port=0):
     import pandas
     import xarray
     import pyproj
-    frontend = Path(__file__).resolve().parents[2] / 'frontend-demo/app/dist-unified'
+    frontend = Path(__file__).resolve().parents[2] / 'frontend/dist-unified'
     if not (frontend / 'index.html').is_file():
-        raise RuntimeError('请先构建统一前端：npm run build:unified --prefix frontend-demo/app')
+        raise RuntimeError('请先构建统一前端：npm run build:unified --prefix frontend')
     with tempfile.TemporaryDirectory(prefix='xaj-grid-routing-') as root:
         manager = TaskManager(Path(root) / 'tasks')
         server = None

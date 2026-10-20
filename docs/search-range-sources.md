@@ -1,4 +1,4 @@
-# 率定搜索范围来源与适配（2026-10-15核对）
+# 率定搜索范围来源与适配
 
 模板只替换搜索上下限，保留初值与参与搜索的勾选项。项目原有9个产流搜索变量的建议范围作为默认值；物理允许范围独立校验。取消勾选时保留已编辑范围。初值超出范围时提示，不自动截断。始终保留WM > WUM + WLM、日—小时水源系数转换和汇流稳定性校验。
 
@@ -12,6 +12,6 @@
 - https://hess.copernicus.org/articles/21/393/2017/hess-21-393-2017.pdf
 - https://mdpi-res.com/d_attachment/water/water-16-01126/article_deploy/water-16-01126.pdf
 
-本地核对副本在`开发产物/hess-21-393-2017.pdf`和`开发产物/water-16-01126.pdf`。不纳入业务输入、科学配置或Git源码。
+论文全文仅用于核对文献中的搜索范围，不是业务输入或模型配置。
 
-Numba兼容性核对：官方0.60安装文档的依赖支持表列出Python 3.9–3.12、NumPy 2.0、llvmlite 0.43.x组合：https://numba.readthedocs.io/en/0.60.0/user/installing.html 。本项目实际环境为Python 3.9.17、NumPy 2.0.2，锁定Numba 0.60.0和llvmlite 0.43.0；离线wheel位于`开发产物/offline-wheels-py39`。
+运行环境依赖版本以 `backend/requirements-lock-py39.txt` 为准；环境兼容性不能替代科学参数范围的流域适用性验证。

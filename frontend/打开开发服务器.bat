@@ -1,10 +1,10 @@
 @echo off
 setlocal
-set "APPDIR=%~dp0app"
+set "APPDIR=%~dp0"
 set "URL=http://127.0.0.1:5173/"
 
 if not exist "%APPDIR%\package.json" (
-  echo [ERROR] app\package.json was not found.
+  echo [ERROR] package.json was not found.
   pause
   exit /b 1
 )

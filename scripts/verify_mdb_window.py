@@ -8,7 +8,7 @@ from common import read_json,write_json
 from scheme_inputs import query_mdb_window
 from mdb_import import query_mdb_copy
 
-products=InputProducts(runtime_root=Path('runtime-20261012').resolve())
+products=InputProducts(runtime_root=Path('runtime').resolve())
 source=products.source('SRC-MDB-dcc25a7aab37d70ee2cd4259a3fa3cc15edae30da1b7b9101b6fd03aa8543893')
 snapshot=products._path(read_json(source['path'])['databaseFile'])
 output=Path('开发产物/mdb-query-acceptance').resolve()

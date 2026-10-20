@@ -15,7 +15,7 @@
 - `GET /flood-catalog` 返回流域完整目录 `events/count`，独立于当前处理产品。
 - `POST /model-schemes {name,context,editor?}` 先建立命名方案；`POST /model-schemes/{id}/draft {editor}` 保存不完整编辑。完整计算定义仍由已有保存接口产生修订，旧修订不覆盖。
 - `GET/POST /parameter-schemes` 读取或命名保存参数；保存请求为 `{name,sourceTaskId}`，来源可以是成功数值任务或完整作业。`GET /parameter-schemes/{id}` 返回完整产汇流参数、科学条件和起算规则。未命名的率定候选仅保留于计算任务。
-- `POST /operations` 提交一次作业。`operation` 为 `calibration/manualTrial/eventSimulation/continuousSimulation/continuation/hindcast/rollingHindcast`。率定传完整 `request/rainfallMethod`；模拟传 `parameterSchemeId` 和 `events` 或 `period`；续算传 `sourceTaskId/period.endTime`；回算传 `parameterSchemeId/issueTime/endTime`，滚动传 `issueTime/lastIssueTime/leadHours`。
+- `POST /operations` 提交一次作业。`operation` 为 `calibration/manualTrial/eventSimulation/continuousSimulation/continuation/manualForecast/hindcast/rollingHindcast`。率定传完整 `request/rainfallMethod`；模拟传 `parameterSchemeId` 和 `events` 或 `period`；续算传 `sourceTaskId/period.endTime`；预报传 `parameterSchemeId/issueTime/leadHours/forecastRainVersionId`，可选 `observationStateVersionId`；回算传 `parameterSchemeId/issueTime/endTime`，滚动传 `issueTime/lastIssueTime/leadHours`。
 - `GET /operations`、`GET /operations/{id}`、`GET /operations/{id}/result`、`POST /operations/{id}/cancel {}` 读取列表、进度、成果或停止。资料检查问题集中返回 `issues`，搜索进度为 `searchProgress`。后台衔接资料准备、起算和数值任务，不依赖浏览器继续轮询。
 - 作业成果含 `primaryTaskId`、场次 `eventStates` 或回算 `issues`，沿用原状态回放与河道查询接口。滚动成果中 `issueStateVersionId` 与分支 `endStateVersionId` 分开，下一小时只承接实况推进状态。历史回算使用真实逐格降雨，不适用旧人工降雨产品72小时上限。
 - `preparation-defaults` 增加 `rainfallMethod/stationSourceId/sourceBundleVersionId`；日常采用工作区规则，旧方案保持冻结来源。模拟驱动检查与实测评价分开；新同源资料包续算时核验父状态完整实际驱动，不仅比较包编号。
@@ -35,16 +35,19 @@
 - 河道 `pointQuery` 可带 `riverOnly:true`；返回 `location.clicked/queried/distanceM/reachId`。控制断面直接读取来源流量，中间点执行拓扑切分；相同冻结来源和点位查询在服务端复用。
 - 备份包含SQL方案修订及任务关联；旧方案记录与接口保留兼容。`GET /database/window` 和 `/export` 可指定 `sourceId`，未指定且存在同小时来源冲突时拒绝混用。
 
-## 人工降雨情景预报（1.8.0）
+## 手动与自动预报
 
-- `GET /forecast-rain` 返回 `products`。`POST /forecast-rain` 精确接收 `name/contextKey/issueTime/hourlyRainfallMm`；南安溪1km、本地整点、1–72项、0–1000mm。保存后返回不可变 `QPF-*`、`manifestSHA256`、逐时序列和累计量；相同内容重复登记返回同一版本。
-- `POST /forecast-tasks` 使用schema2.0，`runType:"forecast"`。`issue` 包含 `mode:"manual"`、`sectionId:"70115800"`、`issueTime`、整数 `leadHours` 和 `forecastEndTime`。
+- `GET /forecast-rain` 返回不可变 `products`。`POST /forecast-rain` 兼容人工情景的 `name/contextKey/issueTime/hourlyRainfallMm`，也接受正式产品字段 `name/contextKey/sourceId/sourceLabel/issueTime/unit/timeConvention` 加 `hourlyRainfallMm`，或 `gridIds/hourlyGridRainfallMm`。均限南安溪1 km、北京时间整点、1–72小时、0–1000 mm，单位必须为mm、时标必须为`hour-ending`。返回 `QPF-*`、`manifestSHA256` 和逐时序列；相同内容返回同一版本。
+- 兼容接口 `POST /forecast-tasks` 使用schema2.0，`runType:"forecast"`。当前手动预报统一使用 `POST /operations`，`operation:"manualForecast"`；调度任务使用下列 `automatic-forecasts` 接口。
 - `period.startTime` 为起报下一小时，`endTime` 为起报+预见期，`initialStateVersionId` 是起报整点的成功实测状态；`warmupDays:1` 为契约兼容字段，预报不再预热。
 - `inputs` 包含已登记实测 `bundleVersionId`、`forecastPrecipitation:{versionId,manifestSHA256}`、`evaporation:{mode:"monthly-climatology-assumption"}`。参数省略或空对象时沿用状态参数；显式参数须完整一致。汇流版本也须与状态一致。
 - 状态没有独立参数版本时，服务冻结 `STATE-PARAMETERS-{stateVersionId}`；再次提交该编号仍可复算。请求编号按既有任务队列幂等处理。
 - 降雨采用时段末标记，全域均匀分配；不读取起报之后的实测降雨或流量作为预报输入/评价。返回6至72小时UI所选过程（API允许1至72小时）、真实格点过程、洪峰和 `volume=sum(Q)*3600`；未来观测为 `obs:[]`。
 - `forecast-rain.json`、`forecast-end-state.json` 留在任务内，后者不注册到实测状态库。报告ZIP包含这两份文件；完整工作区备份包含 `forecast-rain/` 目录。
-- `mode:"automatic"` 仍需后端已审核生产参数；本版本不提供生产发布、定时调度或历史预报补发。
+- `GET /automatic-forecasts` 返回调度列表和后台 `currentTime`。`POST /automatic-forecasts` 创建自动预报，接受 `parameterSchemeId/sourceId/firstIssueTime`，可选 `issueIntervalHours`（默认1）、`leadHours`（默认24）、`context` 和 `requestId`；预报参数必须来自已保存参数方案。
+- `GET /automatic-forecasts/{id}` 读取设置与状态；`GET /automatic-forecasts/{id}/issues` 读取起报记录。`POST /automatic-forecasts/{id}/start`、`/stop`、`/catch-up` 的请求体均为 `{}`。补做要求先停止序列，并在服务端冻结本批次上界。
+- 调度由本地后台持久执行。缺少完整预见期降雨产品或必要实测资料时进入等待并保留原因；服务重启后重试中断计算，不将其记为成功。补做和自动序列均使用实际预报产品，不以未来实测降雨代替。
+- 手动预报、自动预报和历史回算分别记录。历史回算使用实际逐格历史降雨，不作为当时的预报产品；预报分支末状态不写回实测状态。产品字段和有效时刻规则见 `docs/automatic-forecast.md`。
 
 ## Continuous calibration (platform 1.2)
 

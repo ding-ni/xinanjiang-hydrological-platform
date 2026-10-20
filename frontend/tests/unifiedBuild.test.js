@@ -8,7 +8,7 @@ it('unified build explicitly enables the same-origin model backend', () => {
   assert.match(env, /^VITE_MODEL_API_BASE=\/api\/model$/m)
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   assert.equal(pkg.scripts['build:unified'], 'vite build --mode unified --outDir dist-unified')
-  const startup = readFileSync(new URL('../../../scripts/start_unified.ps1', import.meta.url), 'utf8')
+  const startup = readFileSync(new URL('../../scripts/start_unified.ps1', import.meta.url), 'utf8')
   assert.match(startup, /npm\.cmd run build:unified/)
   assert.match(startup, /settings\.frontend/)
 })

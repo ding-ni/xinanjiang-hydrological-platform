@@ -76,6 +76,15 @@ class MissingResult(FileNotFoundError):
         super().__init__('该计算记录已移除或文件缺失，请刷新计算列表')
 
 
+def worker_error_message(lines, exit_code):
+    """Prefer the Python exception over PyInstaller's generic final banner."""
+    meaningful = [line.strip() for line in lines if line.strip() and not line.lstrip().startswith('[PYI-')]
+    for line in reversed(meaningful):
+        if re.match(r'^[\w.]+(?:Error|Exception):', line):
+            return line[:2000]
+    return meaningful[-1][:2000] if meaningful else f'模型进程退出：{exit_code}'
+
+
 def read_task_status(root, identifier):
     path = safe_task(root, identifier) / 'status.json'
     try:

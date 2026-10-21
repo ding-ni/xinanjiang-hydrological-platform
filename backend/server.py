@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from common import ROOT, WORKSPACE, RUNTIME, read_json, write_json, clean, now, safe_task, read_task_status, MissingResult
+from common import ROOT, WORKSPACE, RUNTIME, read_json, write_json, clean, now, safe_task, read_task_status, MissingResult, worker_error_message
 from catalog import case_catalog
 from contracts import freeze_input_selection, freeze_routing_selection, normalize_request
 from input_products import InputProducts
@@ -368,7 +368,7 @@ class TaskManager:
                         write_json(folder / 'result.json', result)
             else:
                 lines = (folder / "task.log").read_text(encoding="utf-8", errors="replace").splitlines()
-                message = lines[-1] if lines else f"模型进程退出：{code}"
+                message = worker_error_message(lines, code)
                 self.update(task_id, status="failed", stageLabel="计算失败，请核查输入", completedAt=now(), errorMessage=message)
 
     def cancel(self, task_id):

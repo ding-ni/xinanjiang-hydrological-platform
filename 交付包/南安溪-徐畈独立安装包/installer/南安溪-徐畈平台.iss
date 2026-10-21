@@ -1,5 +1,5 @@
 ﻿#define AppName "南安溪-徐畈水文平台"
-#define AppVersion "1.2.4"
+#define AppVersion "1.2.5"
 #define AppExe "南安溪徐畈平台.exe"
 [Setup]
 AppId={{C3B19B34-1229-4C69-981F-0EB1785D91C3}
@@ -9,7 +9,7 @@ DefaultDirName={localappdata}\Programs\Nananxi-Xufan-Platform
 DefaultGroupName={#AppName}
 PrivilegesRequired=lowest
 OutputDir={#GetEnv('XUFAN_OUTPUT_DIR')}
-OutputBaseFilename=南安溪-徐畈独立安装包-删除记录修复版-v1.2.4-Setup
+OutputBaseFilename=南安溪-徐畈独立安装包-断面查询修复版-v1.2.5-Setup
 ArchitecturesInstallIn64BitMode=x64
 Compression=lzma/fast
 SolidCompression=yes

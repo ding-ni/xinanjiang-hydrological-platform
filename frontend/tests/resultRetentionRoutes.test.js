@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { sameResultWorkspace } from '../src/services/resultRetentionService.js'
+import { sameResultWorkspace, trackTemporary, resultsPurged, hasPendingResults, retentionChanged } from '../src/services/resultRetentionService.js'
 
 test('forecast state and section viewing stay inside the current result workspace',()=>{
   globalThis.localStorage={getItem:()=> 'test-workspace'}
@@ -16,4 +16,19 @@ test('forecast state and section viewing stay inside the current result workspac
   assert.equal(sameResultWorkspace({path:'/archive',query:{}},forecast),false)
   delete globalThis.localStorage
   delete globalThis.sessionStorage
+})
+
+test('purge notification forgets only removed pending results and refreshes all mounted result views',()=>{
+  const storage=new Map()
+  globalThis.localStorage={getItem:()=> 'test-workspace'}
+  globalThis.sessionStorage={getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)}
+  try{
+    trackTemporary({id:'OP-removed',retention:'temporary'})
+    trackTemporary({id:'OP-keep',retention:'temporary'})
+    const revision=retentionChanged.value
+    resultsPurged({purgedIds:['OP-removed']})
+    assert.equal(retentionChanged.value,revision+1)
+    assert.deepEqual(JSON.parse([...storage.values()][0]).map(row=>row.id),['OP-keep'])
+    assert.equal(hasPendingResults(),true)
+  }finally{delete globalThis.localStorage;delete globalThis.sessionStorage}
 })

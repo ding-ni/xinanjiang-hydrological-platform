@@ -1,7 +1,7 @@
 """User annotations are separate from immutable model calculations."""
 import copy
 from datetime import datetime
-from common import now, read_json, safe_task
+from common import now, read_json, safe_task, read_task_status
 
 
 class ResultRepository:
@@ -82,7 +82,7 @@ class ResultRepository:
 
     def status(self, identifier):
         if str(identifier).startswith('OP-'):
-            return read_json(safe_task(self.manager.runtime_root / 'operations', identifier) / 'status.json')
+            return read_task_status(self.manager.runtime_root / 'operations', identifier)
         return self.manager.get(identifier)
 
     def annotation(self, identifier):

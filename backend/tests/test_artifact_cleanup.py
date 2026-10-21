@@ -4,6 +4,7 @@ import sys
 import unittest
 import threading
 import urllib.request
+import urllib.error
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -208,6 +209,30 @@ class CleanupTests(unittest.TestCase):
         with patch.object(life, '_move_to_recycle_bin', side_effect=self.recycle):
             with urllib.request.urlopen(request) as response:
                 self.assertIn('JOB-standalone', json.load(response)['purgedIds'])
+
+    def test_missing_operation_returns_typed_404_without_recreating_deleted_record(self):
+        from server import PlatformHTTPServer, handler
+        self.group(orphan=True)
+        server = PlatformHTTPServer(('127.0.0.1', 0), handler(self.manager, Path(self.temp.name)))
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = 'http://127.0.0.1:' + str(server.server_port) + '/api/model/'
+        for route in ('operations/OP-parent', 'operations/OP-parent/result',
+                      'result-retention/OP-parent', 'result-metadata/OP-parent',
+                      'results/OP-parent', 'tasks/JOB-missing'):
+            with self.subTest(route=route):
+                with self.assertRaises(urllib.error.HTTPError) as failure:
+                    urllib.request.urlopen(base + route)
+                self.assertEqual(failure.exception.code, 404)
+                payload = json.load(failure.exception)
+                self.assertEqual(payload['code'], 'RESULT_NOT_FOUND')
+                self.assertNotIn('status.json', payload['error'])
+                self.assertIn('已移除或文件缺失', payload['error'])
+        self.assertFalse((self.manager.runtime_root / 'operations/OP-parent').exists())
+        self.assertTrue((self.manager.root / 'JOB-child/status.json').is_file())
+        with self.manager.database.connect() as db:
+            self.assertIsNone(db.execute('SELECT * FROM result_retention WHERE id=?', ('OP-parent',)).fetchone())
 
 
 if __name__ == '__main__':

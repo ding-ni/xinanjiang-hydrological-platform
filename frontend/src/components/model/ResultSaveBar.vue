@@ -1,5 +1,5 @@
 <template>
-  <div v-if="resultId" class="result-save-bar" aria-label="成果整理">
+  <div v-if="resultId && !unavailable" class="result-save-bar" aria-label="成果整理">
     <div><span>{{ retention?.retention==='saved'?'成果已保存':retention?.retention==='trashed'?'已移入回收站':'临时计算结果' }}</span><b>{{ saved.name || suggestion }}</b></div>
     <button v-if="retention?.retention!=='saved' && retention?.retention!=='trashed'" class="btn primary" :disabled="loading" @click="retain('save')">保存成果</button>
     <button v-if="retention?.retention==='trashed'" class="btn" :disabled="loading" @click="retain('restore')">恢复计算</button><button v-if="retention?.retention==='trashed'" class="btn" :disabled="loading" @click="purge">从平台回收站移除</button>
@@ -7,20 +7,36 @@
     <RouterLink v-if="!hideRecordLink" class="btn" :to="{path:'/archive',query:{result:resultId}}">查看计算记录</RouterLink><span v-if="error" class="error" role="alert">{{ error }}</span>
     <HydrologyDialog ref="dialog" width="min(540px,94vw)"><form class="save-result-form" @submit.prevent="save"><header><h3>整理计算记录</h3><button type="button" class="btn" @click="dialog.close()">取消</button></header><p>名称与备注不改变计算数值；保存参数、保存成果和收藏分别管理。</p><label>计算记录名称<input v-model.trim="name" class="input" maxlength="80" required /></label><label>备注<textarea v-model="notes" class="input" maxlength="2000" rows="3" /></label><button class="btn primary" :disabled="loading || !name">保存名称与备注</button></form></HydrologyDialog>
   </div>
+  <p v-else-if="resultId && unavailable" role="status">该计算记录已移除或文件缺失，请返回计算列表。</p>
 </template>
 <script setup>
 import { ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import { modelApi } from '@/services/modelBackendService'
-import { changeRetention, trackTemporary, retentionChanged } from '@/services/resultRetentionService'
+import { modelApi, isMissingResult } from '@/services/modelBackendService'
+import { changeRetention, trackTemporary, forgetTemporary, retentionChanged } from '@/services/resultRetentionService'
 import HydrologyDialog from './HydrologyDialog.vue'
 import { cleanupConfirmation, previewResultCleanup, executeResultCleanup } from '@/services/artifactCleanupService'
 const props=defineProps({resultId:String,hideRecordLink:Boolean,suggestion:{type:String,default:'水文计算成果'}})
-const emit=defineEmits(['saved','discarded'])
+const emit=defineEmits(['saved','discarded','unavailable'])
 const saved=ref({}),retention=ref(null),name=ref(''),notes=ref(''),loading=ref(false),error=ref(''),dialog=ref(null)
+const unavailable=ref(false)
 let sequence=0
-async function refresh(){const id=props.resultId,token=++sequence;if(!id)return;loading.value=true;error.value='';try{const [meta,state]=await Promise.all([modelApi('result-metadata/'+encodeURIComponent(id)),modelApi('result-retention/'+encodeURIComponent(id))]);if(token!==sequence)return;saved.value=meta;retention.value=state;if(state.retention==='temporary'&&!state.legacy){const payload=await modelApi('result-catalog');const row=payload.results.find(row=>row.id===id);if(row)trackTemporary(row)}}catch(failure){if(token===sequence)error.value=failure.message}finally{if(token===sequence)loading.value=false}}
-watch(()=>props.resultId,()=>{saved.value={};retention.value=null;refresh()},{immediate:true})
+async function refresh(){
+  const id=props.resultId,token=++sequence
+  if(!id||unavailable.value)return
+  loading.value=true;error.value=''
+  try{
+    const [meta,state]=await Promise.all([modelApi('result-metadata/'+encodeURIComponent(id)),modelApi('result-retention/'+encodeURIComponent(id))])
+    if(token!==sequence)return
+    saved.value=meta;retention.value=state
+    if(state.retention==='temporary'&&!state.legacy){const payload=await modelApi('result-catalog');const row=payload.results.find(row=>row.id===id);if(row)trackTemporary(row)}
+  }catch(failure){
+    if(token!==sequence)return
+    if(isMissingResult(failure)){unavailable.value=true;saved.value={};retention.value=null;forgetTemporary(id);dialog.value?.close();emit('unavailable',id)}
+    else error.value=failure.message
+  }finally{if(token===sequence)loading.value=false}
+}
+watch(()=>props.resultId,()=>{saved.value={};retention.value=null;unavailable.value=false;refresh()},{immediate:true})
 watch(retentionChanged,refresh)
 function open(){name.value=saved.value.name||props.suggestion;notes.value=saved.value.notes||'';dialog.value.showModal()}
 async function retain(action){const id=props.resultId;loading.value=true;error.value='';try{const row=await changeRetention(id,action,retention.value?.revision||0);if(id!==props.resultId)return;retention.value=row;emit('saved',{...saved.value,retention:row.retention});if(action==='discard')emit('discarded',id)}catch(failure){error.value=failure.message}finally{loading.value=false}}

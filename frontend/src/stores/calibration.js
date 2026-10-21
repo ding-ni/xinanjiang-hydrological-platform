@@ -818,6 +818,7 @@ export const useCalibrationStore = defineStore('calibration', {
           return { ok: true, result, task }
         } catch (error) {
           const current = workspace()
+          if (error.status === 404 && error.code === 'RESULT_NOT_FOUND') terminal = true
           if (current) { current.running = false; current.runStatus = error.message === '计算已停止' ? 'cancelled' : 'failed'; current.runMessage = error.message;
             current.operationProgress = { ...current.operationProgress, status: current.runStatus, issues: error.issues || [] };
             if (terminal) { current.activeOperationId = null; current.activeOperationRequest = null }

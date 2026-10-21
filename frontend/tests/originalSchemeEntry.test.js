@@ -186,6 +186,30 @@ test('only a genuinely active operation reopens the workbench after refresh', as
   }
 })
 
+test('missing active operation releases the stale selection and keeps editable hydrological settings', async () => {
+  let saves=0
+  const cal={activeOperationId:'OP-deleted',activeOperationRequest:{old:true},running:true,
+    runResult:{operationId:'OP-deleted'},params:{SM:25},events:structuredClone(events),
+    saveCurrentWorkspace(){saves++}}
+  const before=structuredClone({params:cal.params,events:cal.events})
+  const missing=Object.assign(new Error('已移除'),{status:404,code:'RESULT_NOT_FOUND',identifier:'OP-deleted'})
+  assert.equal(await recoverActiveCalibrationOperation(cal,async()=>{throw missing}),false)
+  assert.equal(cal.activeOperationId,null)
+  assert.equal(cal.activeOperationRequest,null)
+  assert.equal(cal.runResult,null)
+  assert.equal(cal.running,false)
+  assert.equal(saves,1)
+  assert.deepEqual({params:cal.params,events:cal.events},before)
+})
+
+test('temporary connection failures keep the active operation available for reconnection', async () => {
+  const cal={activeOperationId:'OP-current',running:true,saveCurrentWorkspace(){throw new Error('must not save')}}
+  const offline=new Error('无法连接模型服务')
+  await assert.rejects(recoverActiveCalibrationOperation(cal,async()=>{throw offline}),offline)
+  assert.equal(cal.activeOperationId,'OP-current')
+  assert.equal(cal.running,true)
+})
+
 test('restoring old unknown flood windows keeps the base catalogue separate and retains saved names across another restore', () => {
   const original = { events: [{ id: 'A', name: '原目录洪水', purpose: '未使用' }], schemeWindows: [], schemeSourceBundleVersionId: 'INPUT-original' }
   const editor = { events: [{ id: 'A', purpose: '率定', start: '2024-06-01T00:00', end: '2024-06-02T00:00' },

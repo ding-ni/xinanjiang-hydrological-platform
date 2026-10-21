@@ -9,7 +9,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from common import DEFAULT_INPUT_BUNDLE, now, read_json, write_json, safe_task
+from common import DEFAULT_INPUT_BUNDLE, now, read_json, write_json, safe_task, read_task_status
 from input_products import manifest_digest, hourly_time
 
 
@@ -63,7 +63,7 @@ class HydrologicalOperations:
                                   'errorMessage': '服务关闭时本次计算尚未完成', 'completedAt': now()})
 
     def get(self, identifier, include_replay=False):
-        row=read_json(safe_task(self.root, identifier) / 'status.json')
+        row=read_task_status(self.root, identifier)
         if include_replay: row['replayability']=self.replayability(identifier)
         return row
 

@@ -68,3 +68,17 @@ def safe_task(root, task_id):
     if not TASK_ID.fullmatch(str(task_id)):
         raise ValueError("无效任务编号")
     return Path(root) / task_id
+
+
+class MissingResult(FileNotFoundError):
+    def __init__(self, identifier):
+        self.identifier = identifier
+        super().__init__('该计算记录已移除或文件缺失，请刷新计算列表')
+
+
+def read_task_status(root, identifier):
+    path = safe_task(root, identifier) / 'status.json'
+    try:
+        return read_json(path)
+    except FileNotFoundError as error:
+        raise MissingResult(identifier) from error

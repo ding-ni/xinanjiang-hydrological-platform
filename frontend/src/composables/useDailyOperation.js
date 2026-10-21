@@ -1,6 +1,6 @@
 import { onBeforeUnmount, ref } from 'vue'
 import { activeOperation, belongsToOperationContext, completedOperation, dailyClient, operationId } from '@/services/dailyOperationService'
-import { modelApi } from '@/services/modelBackendService'
+import { modelApi, isMissingResult } from '@/services/modelBackendService'
 import { trackTemporary } from '@/services/resultRetentionService'
 
 export function useDailyOperation({ client = dailyClient, onChange = () => {}, contextKey = () => null } = {}) {
@@ -25,7 +25,10 @@ export function useDailyOperation({ client = dailyClient, onChange = () => {}, c
         } else if (activeOperation(row)) timer = setTimeout(refresh, 1500)
         else if (row.status === 'failed') error.value = row.errorMessage || row.error || '计算未完成'
       } catch (failure) {
-        if (!disposed && revision === generation) error.value = failure.message
+        if (!disposed && revision === generation) {
+          if (isMissingResult(failure)) { operation.value=null; result.value=null; onChange(null) }
+          error.value = failure.message
+        }
       }
     }
     await refresh()

@@ -1,7 +1,7 @@
 <template>
-  <section class="panel panel-pad daily-result" aria-label="计算成果">
+  <section v-if="!unavailable" class="panel panel-pad daily-result" aria-label="计算成果">
     <div class="result-toolbar"><h3>{{ title }}</h3><select v-if="entries.length > 1" v-model="entryId" class="input" aria-label="查看过程"><option v-for="row in entries" :key="row.id" :value="row.id">{{ row.label }}</option></select><div class="result-actions"><button v-if="sourceId" class="btn" type="button" @click="open('state')">状态分布</button><button v-if="sourceId" class="btn" type="button" @click="open('diagnostics')">河道流量</button><button v-if="sourceId && entry?.endStateVersionId" class="btn" type="button" @click="open('simulation', true)">继续模拟</button><button v-if="operationId(operation) && !hideRecordLink" class="btn" type="button" @click="router.push({path:'/archive',query:{operation:operationId(operation)}})">计算记录</button><button v-if="hydrograph" class="btn" type="button" @click="exportProcess">导出过程</button></div></div>
-    <template v-if="!hideSaveBar && canonicalResultId && result"><details v-if="compact" class="result-details"><summary>成果整理</summary><ResultSaveBar :result-id="canonicalResultId" :suggestion="resultSuggestion" :hide-record-link="true" /></details><ResultSaveBar v-else :result-id="canonicalResultId" :suggestion="resultSuggestion" :hide-record-link="true" /></template>
+    <template v-if="!hideSaveBar && canonicalResultId && result"><details v-if="compact" class="result-details"><summary>成果整理</summary><ResultSaveBar :result-id="canonicalResultId" :suggestion="resultSuggestion" :hide-record-link="true" @unavailable="unavailable=true" /></details><ResultSaveBar v-else :result-id="canonicalResultId" :suggestion="resultSuggestion" :hide-record-link="true" @unavailable="unavailable=true" /></template>
     <template v-if="hydrograph?.forecast?.length">
       <div class="hydro-metrics"><div v-if="chartMode!=='forecast'"><span>NSE</span><b>{{ number(normalizedMetrics.nse, 3) }}</b></div><div><span>{{ chartMode==='hindcast'?'回算':chartMode==='forecast'?'预报':'模拟' }}洪峰 · m³/s</span><b>{{ number(hydrograph.peak ?? peak) }}</b></div><template v-if="chartMode==='forecast'"><div><span>起报时刻</span><b class="issue-time">{{ (result?.issue?.issueTime || '').replace('T',' ').slice(0,16) }}</b></div><div><span>预见期 · h</span><b>{{ result?.issue?.leadHours }}</b></div></template><template v-else><div><span>洪峰误差 · %</span><b>{{ signedNumber(normalizedMetrics.peak) }}</b></div><div><span>峰现时间误差 · h</span><b>{{ number(normalizedMetrics.time) }}</b></div><div><span>水量误差 · %</span><b>{{ signedNumber(normalizedMetrics.volume) }}</b></div></template></div>
       <div v-if="availableComparisons.length" class="comparison"><label>对比计算<select v-model="compareId" class="input" aria-label="对比计算"><option value="">不叠加</option><option v-for="row in availableComparisons" :key="row.id" :value="row.id">{{ row.name }}</option></select></label><span v-if="comparisonLoading">读取过程…</span><span v-else-if="comparisonError">{{ comparisonError }}</span><span v-else-if="compareId && !overlay">所选记录没有同一洪水边界的过程，未叠加</span></div>
@@ -9,6 +9,7 @@
     </template>
     <p v-else class="empty">{{ result ? '计算成果已保存' : '完成计算后查看流量过程' }}</p>
   </section>
+  <p v-else class="panel panel-pad" role="status">该计算记录已移除或文件缺失，请返回计算列表。</p>
 </template>
 <script setup>
 import { computed, ref, watch } from 'vue'
@@ -33,6 +34,8 @@ const metrics = computed(() => hydrograph.value?.metrics || entry.value?.metrics
 const normalizedMetrics=computed(()=>normalizeMetrics(metrics.value)),peaks=computed(()=>peakDetails(hydrograph.value||{}))
 watch(entryId,id=>emit('process-change',id))
 const canonicalResultId = computed(() => props.operation?.canonicalResultId || props.result?.operationId || operationId(props.operation) || props.result?.taskId || props.taskId)
+const unavailable=ref(false)
+watch(canonicalResultId,()=>{unavailable.value=false})
 const resultSuggestion = computed(() => props.operation?.name || props.result?.name || props.title)
 const chartMode = computed(()=>['hindcast','rollingHindcast'].includes(props.operation?.operation||props.operation?.runType)?'hindcast':['forecast','automaticForecast','manualForecast'].includes(props.operation?.operation||props.operation?.runType)||props.result?.runType==='forecast'?'forecast':'simulation')
 const compareId=ref(''),compareResult=ref(null),comparisonLoading=ref(false),comparisonError=ref('')

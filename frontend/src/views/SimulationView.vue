@@ -37,7 +37,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
-import { modelApi } from '@/services/modelBackendService'
+import { modelApi, isMissingResult } from '@/services/modelBackendService'
 import { retentionChanged } from '@/services/resultRetentionService'
 import { activeOperation, belongsToOperationContext, dailyClient, dailyOperationSelection, historicalParameterId, hourInput, hourText, operationContext, operationId, preparationIssueText, readDailySelection, rememberedParameter, saveDailySelection } from '@/services/dailyOperationService'
 import { useDailyOperation } from '@/composables/useDailyOperation'
@@ -54,7 +54,12 @@ const sourceParameters=ref(null)
 const continuing = computed(() => route.query.continue === '1' && Boolean(route.query.source))
 const { operation, result, error, submitting, inspect, submit, cancel, clear } = useDailyOperation({contextKey:()=>app.contextKey,onChange:row=>saveDailySelection(app.contextKey,'simulation',{...readDailySelection(app.contextKey,'simulation'),operationId:operationId(row)})})
 const running = computed(() => submitting.value || activeOperation(operation.value))
-watch(retentionChanged,async()=>{const id=operationId(operation.value);if(!id)return;const record=await modelApi('result-retention/'+encodeURIComponent(id));if(record.retention==='trashed'){clear();saveDailySelection(app.contextKey,'simulation',{...readDailySelection(app.contextKey,'simulation'),operationId:null})}})
+watch(retentionChanged,async()=>{
+  const id=operationId(operation.value);if(!id)return
+  const clearDeleted=()=>{if(operationId(operation.value)===id){clear();saveDailySelection(app.contextKey,'simulation',{...readDailySelection(app.contextKey,'simulation'),operationId:null})}}
+  try{const record=await modelApi('result-retention/'+encodeURIComponent(id));if(record.retention==='trashed')clearDeleted()}
+  catch(failure){if(isMissingResult(failure))clearDeleted();else pageError.value=failure.message}
+})
 const selectedEvents = computed(() => floods.value.filter(row=>selectedIds.value.includes(row.id)))
 const years = computed(() => [...new Set(floods.value.map(row=>String(row.start).slice(0,4)))].sort((a,b)=>b.localeCompare(a)))
 const sortKey=ref(''),sortDirection=ref(''),peakMinimum=ref(''),peakMaximum=ref(''),floodPage=ref(1)

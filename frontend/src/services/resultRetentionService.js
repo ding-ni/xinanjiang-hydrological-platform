@@ -14,6 +14,10 @@ export function trackTemporary(row) {
 export function forgetTemporary(id) {
   sessionStorage.setItem(storageKey(), JSON.stringify(readPending().filter(row => row.id !== id)))
 }
+export function resultsPurged(outcome) {
+  for (const id of outcome.purgedIds || []) forgetTemporary(id)
+  retentionChanged.value++
+}
 export async function changeRetention(id, action, revision) {
   const result = await modelApi(`result-retention/${encodeURIComponent(id)}/${action}`, {method:'POST', body:{revision}})
   if (result.retention !== 'temporary') forgetTemporary(id)

@@ -14,7 +14,11 @@ export async function modelApi(path, { method = 'GET', body, timeoutMs = 15000 }
       ...(body === undefined ? {} : { body: JSON.stringify(body) })
     })
     const payload = await response.json()
-    if (!response.ok) throw new Error(payload.error || `模型接口失败（HTTP ${response.status}）`)
+    if (!response.ok) {
+      const error = new Error(payload.error || `模型接口失败（HTTP ${response.status}）`)
+      Object.assign(error, { status: response.status, code: payload.code, identifier: payload.identifier })
+      throw error
+    }
     return payload
   } catch (error) {
     if (error.name === 'AbortError') throw new Error('模型服务响应超时；任务可能仍在执行，请在任务中心刷新。')
@@ -24,6 +28,8 @@ export async function modelApi(path, { method = 'GET', body, timeoutMs = 15000 }
     clearTimeout(timer)
   }
 }
+
+export const isMissingResult = error => error?.status === 404 && error?.code === 'RESULT_NOT_FOUND'
 
 export function uniqueRequestId(prefix = 'REQ') {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`

@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from common import ROOT, WORKSPACE, RUNTIME, read_json, write_json, clean, now, safe_task
+from common import ROOT, WORKSPACE, RUNTIME, read_json, write_json, clean, now, safe_task, read_task_status, MissingResult
 from catalog import case_catalog
 from contracts import freeze_input_selection, freeze_routing_selection, normalize_request
 from input_products import InputProducts
@@ -106,9 +106,7 @@ class TaskManager:
     def get(self, task_id):
         with self.lock:
             folder = safe_task(self.root, task_id)
-            if not (folder / "status.json").is_file():
-                raise KeyError("找不到任务")
-            status = read_json(folder / "status.json")
+            status = read_task_status(self.root, task_id)
             if status["status"] == "running" and (folder / "progress.json").exists():
                 status.update(read_json(folder / "progress.json"))
             return status
@@ -1138,6 +1136,8 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 return
             except (ValueError, TypeError) as error:
                 self.send_json(400, {"error": str(error)})
+            except MissingResult as error:
+                self.send_json(404, {"error": str(error), "code": "RESULT_NOT_FOUND", "identifier": error.identifier})
             except (KeyError, FileNotFoundError) as error:
                 self.send_json(404, {"error": str(error)})
             except RuntimeError as error:

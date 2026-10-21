@@ -1,4 +1,4 @@
-import { modelApi, normalizeBackendTask } from './modelBackendService.js'
+import { modelApi, normalizeBackendTask, isMissingResult } from './modelBackendService.js'
 
 export function schemeDefinition(request, rainfallMethod = 'reuse') {
   const period = request.period.mode === 'event' ? { mode: 'event', warmupDays: request.period.warmupDays,
@@ -185,7 +185,20 @@ export async function saveCalibrationEditor(cal, api = modelApi) {
 
 export async function recoverActiveCalibrationOperation(cal, api = modelApi) {
   if (!cal.activeOperationId) return false
-  const operation = await api(`operations/${cal.activeOperationId}`)
+  const id = cal.activeOperationId
+  let operation
+  try { operation = await api(`operations/${id}`) }
+  catch (error) {
+    if (!isMissingResult(error)) throw error
+    if (cal.activeOperationId !== id) return false
+    cal.activeOperationId = null; cal.activeOperationRequest = null; cal.running = false
+    cal.operationProgress = null
+    if (cal.runResult?.operationId === id) cal.runResult = null
+    cal.runStatus = 'needs-run'; cal.runMessage = '原计算记录已移除，可以重新计算'
+    cal.saveCurrentWorkspace()
+    return false
+  }
+  if (cal.activeOperationId !== id) return false
   if (['queued', 'preparing', 'running', 'cancelling'].includes(operation.status)) return true
   cal.activeOperationId = null; cal.activeOperationRequest = null; cal.running = false
   cal.operationProgress = operation

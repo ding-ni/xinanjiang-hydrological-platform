@@ -12,6 +12,7 @@ from pathlib import Path
 OWNED = 'JOB-cleanup-smoke-owned'
 MAP = 'JOB-cleanup-smoke-map'
 ACTIVE = 'JOB-cleanup-smoke-active'
+STALE = 'OP-cleanup-smoke-stale'
 
 
 def write_document(path, value):
@@ -33,6 +34,11 @@ def prepare(workspace, seed):
         write_document(workspace / 'tasks' / identifier / 'result.json', {'taskId': identifier})
     write_document(workspace / 'states' / ('STATE-' + OWNED + '.json'),
                    {'stateVersionId': 'STATE-' + OWNED, 'sourceTaskId': OWNED})
+    write_document(workspace / 'operations' / STALE / 'status.json',
+                   {'taskId': STALE, 'operation': 'calibration', 'status': 'completed',
+                    'createdAt': '2026-10-21T00:00:00Z', 'runConfig': {},
+                    'name': '旧页面删除记录验收'})
+    write_document(workspace / 'operations' / STALE / 'result.json', {'taskId': STALE})
     marker = workspace / 'inputs' / 'cleanup-smoke-protected.txt'
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text('registered input files must remain untouched', encoding='utf-8')
@@ -89,6 +95,40 @@ def verify(args):
             page.wait_for_load_state('networkidle', timeout=60000)
             report.update(cleanup=True, ownedStateRemoved=True, gisPreserved=True, inputsPreserved=True,
                           movedPaths=[row['relativePath'] for row in result['movedArtifacts']], pageErrors=errors)
+            # Simulate a different tab deleting the calculation while this detail remains open.
+            page.goto(args.url.rstrip('/') + '/#/archive?result=' + STALE)
+            page.wait_for_load_state('networkidle', timeout=60000)
+            expect(page.locator('.result-detail')).to_be_visible(timeout=60000)
+            endpoint = args.url.rstrip('/') + '/api/model/result-retention/' + STALE
+            retained = page.request.get(endpoint)
+            assert retained.ok, retained.text()
+            discarded = page.request.post(endpoint + '/discard', data={'revision': retained.json()['revision']})
+            assert discarded.ok, discarded.text()
+            preview = page.request.get(endpoint + '/deletion-preview')
+            assert preview.ok, preview.text()
+            plan = preview.json()
+            assert not plan['protected'], plan
+            purged = page.request.post(endpoint + '/purge', data={
+                'revision': plan['revision'], 'previewSHA256': plan['previewSHA256']})
+            assert purged.ok, purged.text()
+            assert not (workspace / 'operations' / STALE).exists()
+            page.get_by_role('button', name='刷新', exact=True).click()
+            expect(page.locator('.result-detail')).to_have_count(0, timeout=60000)
+            for suffix in ('operations/' + STALE, 'result-retention/' + STALE):
+                missing = page.request.get(args.url.rstrip('/') + '/api/model/' + suffix)
+                assert missing.status == 404, missing.text()
+                assert missing.json()['code'] == 'RESULT_NOT_FOUND', missing.text()
+                assert 'status.json' not in missing.text() and 'Errno' not in missing.text()
+            page.goto(args.url.rstrip('/') + '/#/simulation?operation=' + STALE)
+            page.wait_for_load_state('networkidle', timeout=60000)
+            expect(page.get_by_role('alert')).to_contain_text('该计算记录已移除或文件缺失', timeout=60000)
+            expect(page.locator('body')).not_to_contain_text('Errno 2')
+            expect(page.locator('body')).not_to_contain_text('status.json')
+            selections = page.evaluate("""() => Object.keys(localStorage)
+                .filter(key => key.startsWith('hydrology.daily.') && key.endsWith('.simulation'))
+                .map(key => JSON.parse(localStorage.getItem(key)))""")
+            assert selections and all(row.get('operationId') != STALE for row in selections), selections
+            report.update(staleDetailCleared=True, typedMissingResult=True, staleSimulationOpened=True)
             assert not errors, errors
             if args.standalone:
                 active_file = workspace / 'tasks' / ACTIVE / 'status.json'

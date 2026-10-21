@@ -1,4 +1,5 @@
 import { modelApi } from './modelBackendService'
+import { resultsPurged } from './resultRetentionService.js'
 
 export function cleanupSummary(plan) {
   return `${plan.taskCount || 0} 个任务目录、${plan.stateCount || 0} 个状态文件、${plan.operationCount || 0} 个操作目录，共 ${(Number(plan.bytes || 0) / 1048576).toFixed(2)} MiB`
@@ -13,8 +14,10 @@ export function cleanupConfirmation(plan) {
 export function previewResultCleanup(id) {
   return modelApi(`result-retention/${encodeURIComponent(id)}/deletion-preview`, { timeoutMs: 60000 })
 }
-export function executeResultCleanup(id, plan) {
-  return modelApi(`result-retention/${encodeURIComponent(id)}/purge`, {
+export async function executeResultCleanup(id, plan) {
+  const result = await modelApi(`result-retention/${encodeURIComponent(id)}/purge`, {
     method: 'POST', body: { revision: plan.revision, previewSHA256: plan.previewSHA256 }, timeoutMs: 60000,
   })
+  resultsPurged(result)
+  return result
 }

@@ -20,6 +20,7 @@
 import { ref } from 'vue'
 import { modelApi } from '@/services/modelBackendService'
 import { cleanupSummary } from '@/services/artifactCleanupService'
+import { resultsPurged } from '@/services/resultRetentionService'
 import HydrologyDialog from './HydrologyDialog.vue'
 const emit = defineEmits(['cleaned'])
 const dialog=ref(null),plan=ref(null),busy=ref(false),error=ref(''),message=ref('')
@@ -34,6 +35,7 @@ async function confirm() {
   busy.value=true;error.value=''
   try {
     const result=await modelApi('workspace/artifact-cleanup',{method:'POST',body:{previewSHA256:plan.value.previewSHA256},timeoutMs:60000})
+    resultsPurged(result)
     message.value=`已将 ${result.movedArtifacts.length} 项送入 Windows 回收站。`;plan.value=null;emit('cleaned',result)
   } catch(failure) { error.value=failure.message;plan.value=null }
   finally { busy.value=false }

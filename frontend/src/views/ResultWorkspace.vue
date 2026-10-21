@@ -24,7 +24,7 @@
         <DailyResultPanel v-if="result" :operation="displayStatus" :result="result" :task-id="result.primaryTaskId || result.taskId || selectedId" :comparison-options="comparisons" title="雨量—流量过程" hide-save-bar hide-record-link @process-change="activeProcess=$event" />
         <section v-if="result" class="panel record-details">
           <div class="record-toolbar"><button class="btn" @click="saveParameter">保存参数</button><button class="btn" @click="simulateParameters">用这组参数模拟其他洪水</button><details><summary>更多操作</summary><button class="btn" :disabled="runningAction" @click="rerun">{{ repeatLabel }}</button><button class="btn" @click="saveAsScheme">另存为方案</button></details></div>
-          <ResultSaveBar :result-id="selectedId" :suggestion="selected.name" hide-record-link @saved="refresh" @discarded="result=null;selected=null;selectedId='';refresh()" />
+          <ResultSaveBar :result-id="selectedId" :suggestion="selected.name" hide-record-link @saved="refresh" @unavailable="clearSelected" @discarded="result=null;selected=null;selectedId='';refresh()" />
           <nav class="detail-tabs"><button v-for="row in detailTabs" :key="row.id" :class="{active:detailTab===row.id}" @click="detailTab=row.id">{{ row.name }}</button></nav>
           <CalculationEvaluation v-if="detailTab==='evaluation'" :result="result" />
           <CalculationParameters v-if="detailTab==='parameters'" :result="result" />
@@ -41,7 +41,8 @@ import {computed,onBeforeUnmount,ref,watch} from 'vue'
 import {useRoute,useRouter} from 'vue-router'
 import {ElMessageBox} from 'element-plus'
 import {useAppStore} from '@/stores/app'
-import {modelApi} from '@/services/modelBackendService'
+import {modelApi, isMissingResult} from '@/services/modelBackendService'
+import { resultsPurged } from '@/services/resultRetentionService'
 import {schemeDefinition} from '@/services/modelSchemeService'
 import DailyResultPanel from '@/components/model/DailyResultPanel.vue'
 import ArtifactCleanup from '@/components/model/ArtifactCleanup.vue'
@@ -75,8 +76,9 @@ const repeatLabel=computed(()=>calculationRequest.value.runType==='calibration'&
 const timingRows=computed(()=>Object.fromEntries(Object.entries(result.value?.timings||{}).filter(([key,value])=>timingLabels[key]&&typeof value==='number')))
 const dateLabel=value=>value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'日期未登记'
 let sequence=0,poll,disposed=false
-async function refresh(){loading.value=true;error.value='';try{const [payload,discarded]=await Promise.all([modelApi('result-catalog?retention=all',{timeoutMs:60000}),modelApi('model-schemes?retention=trashed')]);if(disposed)return;rows.value=(payload.results||[]).filter(row=>!row.contextKey||row.contextKey===app.contextKey);trashedSchemeIds.value=new Set((discarded.schemes||[]).map(row=>row.id));const requested=route.query.result||route.query.operation||route.query.task;const wanted=requested&&rows.value.find(row=>row.id===requested||row.sourceTaskIds?.includes(requested));if(wanted&&selectedId.value!==wanted.id){tab.value=wanted.retention||'recent';await inspect(wanted)}else if(selected.value)selected.value=rows.value.find(row=>row.id===selectedId.value)||selected.value}catch(failure){error.value=failure.message}finally{loading.value=false}}
-async function inspect(row){const token=++sequence;clearTimeout(poll);selected.value=row;selectedId.value=row.id;result.value=null;status.value=null;loadingResult.value=true;error.value='';actionMessage.value='';try{if(['completed','archived'].includes(row.status)){const payload=await modelApi('results/'+row.id,{timeoutMs:60000});if(token!==sequence||disposed)return;result.value=payload.result;status.value=payload.status}else{const current=await modelApi((row.id.startsWith('OP-')?'operations/':'tasks/')+row.id);if(token!==sequence||disposed)return;status.value=current;if(['queued','running','cancelling'].includes(current.status))poll=setTimeout(async()=>{await refresh();if(disposed||token!==sequence)return;const latest=rows.value.find(item=>item.id===row.id);if(latest)inspect(latest)},1500)}}catch(failure){if(token===sequence)error.value=failure.message}finally{if(token===sequence)loadingResult.value=false}}
+async function refresh(){loading.value=true;error.value='';try{const [payload,discarded]=await Promise.all([modelApi('result-catalog?retention=all',{timeoutMs:60000}),modelApi('model-schemes?retention=trashed')]);if(disposed)return;rows.value=(payload.results||[]).filter(row=>!row.contextKey||row.contextKey===app.contextKey);trashedSchemeIds.value=new Set((discarded.schemes||[]).map(row=>row.id));const requested=route.query.result||route.query.operation||route.query.task;const wanted=requested&&rows.value.find(row=>row.id===requested||row.sourceTaskIds?.includes(requested));if(wanted&&selectedId.value!==wanted.id){tab.value=wanted.retention||'recent';await inspect(wanted)}else if(selected.value){const found=rows.value.find(row=>row.id===selectedId.value);if(found)selected.value=found;else clearSelected()}}catch(failure){error.value=failure.message}finally{loading.value=false}}
+async function inspect(row){const token=++sequence;clearTimeout(poll);selected.value=row;selectedId.value=row.id;result.value=null;status.value=null;loadingResult.value=true;error.value='';actionMessage.value='';try{if(['completed','archived'].includes(row.status)){const payload=await modelApi('results/'+row.id,{timeoutMs:60000});if(token!==sequence||disposed)return;result.value=payload.result;status.value=payload.status}else{const current=await modelApi((row.id.startsWith('OP-')?'operations/':'tasks/')+row.id);if(token!==sequence||disposed)return;status.value=current;if(['queued','running','cancelling'].includes(current.status))poll=setTimeout(async()=>{await refresh();if(disposed||token!==sequence)return;const latest=rows.value.find(item=>item.id===row.id);if(latest)inspect(latest)},1500)}}catch(failure){if(token===sequence){if(isMissingResult(failure)){clearSelected();actionMessage.value='该计算记录已移除或文件缺失，请刷新计算列表'}else error.value=failure.message}}finally{if(token===sequence)loadingResult.value=false}}
+function clearSelected(){sequence++;clearTimeout(poll);selected.value=null;selectedId.value='';result.value=null;status.value=null;loadingResult.value=false}
 function renamed(metadata){selected.value={...selected.value,name:metadata.name,favorite:metadata.favorite,saved:metadata.retention==='saved',retention:metadata.retention||selected.value.retention,metadata};rows.value=rows.value.map(row=>row.id===selectedId.value?selected.value:row)}
 async function cancel(){try{await modelApi((selectedId.value.startsWith('OP-')?'operations/':'tasks/')+selectedId.value+'/cancel',{method:'POST',body:{}});await refresh()}catch(failure){error.value=failure.message}}
 async function rerun(){runningAction.value=true;error.value='';try{const task=await modelApi('operations',{method:'POST',body:{operation:'rerun',sourceTaskId:selectedId.value}});tab.value='recent';await refresh();const row=rows.value.find(item=>item.id===task.taskId);if(row)await inspect(row)}catch(failure){error.value=failure.message}finally{runningAction.value=false}}
@@ -94,7 +96,8 @@ async function purgeSelected(){
     const plan=await modelApi('result-cleanup?ids='+encodeURIComponent(ids.join(',')),{timeoutMs:60000})
     await ElMessageBox.confirm(cleanupConfirmation(plan),'预览回收站清理',{confirmButtonText:'确认移入 Windows 回收站',cancelButtonText:'取消',customClass:'artifact-cleanup-confirm'})
     const outcome=await modelApi('result-cleanup',{method:'POST',body:{ids,previewSHA256:plan.previewSHA256},timeoutMs:60000})
-    selectedTrashIds.value=new Set();selected.value=null;selectedId.value='';result.value=null
+    resultsPurged(outcome)
+    selectedTrashIds.value=new Set();clearSelected()
     await refresh();actionMessage.value=`已移除 ${ids.length} 条回收站记录，实际移走 ${outcome.movedArtifacts.length} 项文件/目录。`
   }catch(failure){if(failure instanceof Error)error.value=failure.message}finally{runningAction.value=false}
 }

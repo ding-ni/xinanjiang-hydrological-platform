@@ -27,7 +27,23 @@
 # Raw/model input packages are kept separate from browser static assets.
 /实际案例/
 /后端文件/
-/交付包/
+/交付包/*
+!/交付包/南安溪-徐畈独立安装包/
+/交付包/南安溪-徐畈独立安装包/**
+!/交付包/南安溪-徐畈独立安装包/app_entry.py
+!/交付包/南安溪-徐畈独立安装包/使用说明.md
+!/交付包/南安溪-徐畈独立安装包/config/
+!/交付包/南安溪-徐畈独立安装包/config/platform.json
+!/交付包/南安溪-徐畈独立安装包/installer/
+!/交付包/南安溪-徐畈独立安装包/installer/start_platform.ps1
+!/交付包/南安溪-徐畈独立安装包/installer/standalone.spec
+!/交付包/南安溪-徐畈独立安装包/installer/南安溪-徐畈平台.iss
+!/交付包/南安溪-徐畈独立安装包/scripts/
+!/交付包/南安溪-徐畈独立安装包/scripts/build_seed.py
+!/交付包/南安溪-徐畈独立安装包/scripts/package_release.ps1
+!/交付包/南安溪-徐畈独立安装包/scripts/stage_app.py
+!/交付包/南安溪-徐畈独立安装包/scripts/write_manifest.py
+!/交付包/南安溪-徐畈独立安装包/scripts/verify_release.py
 /selinco_data_package_20260721/
 /selinco_stream_networks_20260721/
 

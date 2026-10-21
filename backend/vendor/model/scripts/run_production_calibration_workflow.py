@@ -247,10 +247,9 @@ def run(request: dict[str, Any], output: Path) -> dict[str, Any]:
 
     # [CAL-CONTINUOUS-BALANCE-09B] Frozen representative parameters, uninterrupted years.
     continuous_dir = output / "continuous_water_balance"
-    continuous_command = [
-        sys.executable,
-        "-u",
-        str(ROOT / "scripts" / "run_continuous_water_balance.py"),
+    nested_script = ROOT / "scripts" / "run_continuous_water_balance.py"
+    continuous_command = ([sys.executable, "--xaj-script", str(nested_script)] if getattr(sys, "frozen", False)
+                          else [sys.executable, "-u", str(nested_script)]) + [
         "--config",
         request["continuous_balance_config"],
         "--data-root",

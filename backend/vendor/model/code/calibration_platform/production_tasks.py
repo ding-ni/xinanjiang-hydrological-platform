@@ -300,10 +300,9 @@ class ProductionCalibrationTaskManager:
         script = self.project_root / "scripts" / "run_production_calibration_workflow.py"
         if not script.is_file():
             raise FormalCalibrationTaskError(f"production workflow script not found: {script}")
-        return [
-            sys.executable,
-            "-u",
-            str(script),
+        command = ([sys.executable, "--xaj-script", str(script)] if getattr(sys, "frozen", False)
+                   else [sys.executable, "-u", str(script)])
+        return command + [
             "--request",
             str(request_path),
             "--output-dir",

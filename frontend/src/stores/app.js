@@ -51,6 +51,9 @@ function readContextSelections() {
 }
 
 function initialContext() {
+  if (import.meta.env.VITE_XUFAN_STANDALONE === 'true') {
+    return resolveDomainContext('nananxi-xufan', { modelScale: '1km' })
+  }
   const basinId = normalizeBasinId(readStorage(LS_BASIN) || (modelBackendEnabled() ? 'nananxi-xufan' : DEFAULT_BASIN_ID))
   const selection = readContextSelections()[basinId] || {}
   return resolveDomainContext(basinId, {
@@ -318,11 +321,13 @@ export const useAppStore = defineStore('app', {
       return context
     },
     setBasin(id) {
+      if (import.meta.env.VITE_XUFAN_STANDALONE === 'true' && id !== 'nananxi-xufan') return
       const basinId = normalizeBasinId(id)
       const saved = readContextSelections()[basinId] || {}
       return this.applyDomainContext(resolveDomainContext(basinId, saved))
     },
     setModelConfig(configId, projectId = this.projectId) {
+      if (import.meta.env.VITE_XUFAN_STANDALONE === 'true' && (this.basinId !== 'nananxi-xufan' || configId !== 'nananxi-xufan-1km')) return
       const context = resolveDomainContext(this.basinId, {
         projectId,
         configId

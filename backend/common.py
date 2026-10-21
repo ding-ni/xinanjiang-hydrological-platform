@@ -11,7 +11,7 @@ from platform_config import SETTINGS
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = SETTINGS['appRoot'] / "backend"
 WORKSPACE = ROOT.parent
 MODEL = SETTINGS['model']
 RUNTIME = SETTINGS['workspace']

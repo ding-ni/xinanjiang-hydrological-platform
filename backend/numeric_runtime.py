@@ -18,7 +18,8 @@ def start(runtime=RUNTIME):
     write_json(path,{'status':'preparing','label':'正在准备数值编译缓存','startedAt':now()})
     log=(runtime/'numeric-warmup.log').open('w',encoding='utf-8')
     try:
-        process=subprocess.Popen([sys.executable,'-B',str(ROOT/'numeric_runtime.py'),'--warm'],
+        command = [sys.executable, '--warm'] if os.environ.get('XAJ_BUNDLED') == '1' else [sys.executable, '-B', str(ROOT/'numeric_runtime.py'), '--warm']
+        process=subprocess.Popen(command,
             env={**os.environ,'XAJ_RUNTIME_DIR':str(runtime),'PYTHONUTF8':'1'},stdout=log,stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         import threading

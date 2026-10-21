@@ -2,9 +2,28 @@
 import json
 import ctypes
 import os
+from contextlib import ExitStack
+from functools import wraps
 from pathlib import Path
 from common import now, read_json
 from input_products import manifest_digest
+
+
+def cleanup_locked(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        # Same lock order as workspace backup; do not race task submissions,
+        # named parameter saves or automatic forecasts while moving files.
+        with ExitStack() as stack:
+            for owner in (getattr(self.manager, 'automatic_forecasts', None),
+                          getattr(self.manager, 'operations', None),
+                          getattr(self.manager, 'parameter_schemes', None), self.manager,
+                          getattr(self.manager, 'input_tasks', None)):
+                lock = getattr(owner, 'lock', None)
+                if lock is not None:
+                    stack.enter_context(lock)
+            return method(self, *args, **kwargs)
+    return locked
 
 
 class ResultLifecycle:
@@ -51,6 +70,7 @@ class ResultLifecycle:
         return {'id': status['taskId'], 'retention': state, 'revision': 0,
                 'previous': state, 'legacy': False}
 
+    @cleanup_locked
     def change(self, identifier, action, body):
         if action not in {'save', 'discard', 'restore'} or not isinstance(body, dict) or set(body) != {'revision'} or type(body['revision']) is not int:
             raise ValueError('请提供保留状态修订号')
@@ -97,6 +117,10 @@ class ResultLifecycle:
                    'running': [row['id'] for row in rows if row['status'] in {'queued', 'running', 'cancelling'}],
                    'protectedResults': [row['name'] for row in rows if row['retention'] == 'saved'],
                    'protectedParameters': [row['name'] for row in parameters]}
+        if payload['trashed']:
+            from artifact_cleanup import ArtifactCleanup
+            payload['cleanup'] = ArtifactCleanup(self.manager).plan(
+                [row['id'] for row in payload['trashedTemporary']], excluded_scheme=identifier)
         payload['previewSHA256'] = manifest_digest(payload)
         return payload
 
@@ -138,70 +162,68 @@ class ResultLifecycle:
         result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(operation))
         if result != 0 or operation.fAnyOperationsAborted:
             raise OSError(result or '回收站操作被取消', path)
+        if os.path.exists(path):
+            raise OSError('回收站操作返回后文件仍在原路径，未删除平台记录', path)
 
-    def _purge_artifacts(self, identifiers):
-        identifiers = set(identifiers)
-        folders = {}
-        for identifier in identifiers:
-            prefix = 'OP-' if str(identifier).startswith('OP-') else 'JOB-'
-            if not str(identifier).startswith(prefix) or Path(str(identifier)).name != str(identifier):
-                raise ValueError('无效的计算记录编号')
-            root = self.manager.runtime_root / ('operations' if str(identifier).startswith('OP-') else 'tasks')
-            folder = root / str(identifier)
-            if folder.is_dir():
-                folders[identifier] = folder
-        children = set()
-        for folder in folders.values():
-            path = folder / 'status.json'
-            if path.is_file():
-                try:
-                    children.update(item for item in read_json(path).get('childTaskIds', [])
-                                    if isinstance(item, str) and item.startswith('JOB-')
-                                    and Path(item).name == item)
-                except (OSError, ValueError, json.JSONDecodeError):
-                    pass
-        # A parent operation may be moved to the OS recycle bin before its
-        # children are purged. Recover ownership from each child status too.
-        for task_path in (self.manager.runtime_root / 'tasks').glob('*/status.json'):
-            try:
-                task_status = read_json(task_path)
-            except (OSError, ValueError, json.JSONDecodeError):
-                continue
-            if task_status.get('operationId') in identifiers:
-                children.add(task_status.get('taskId') or task_path.parent.name)
-        references = set()
-        candidate_folders = [self.manager.runtime_root / 'tasks' / item for item in children]
-        for root_name in ('operations', 'tasks', 'states', 'parameters'):
-            root = self.manager.runtime_root / root_name
-            if not root.is_dir():
-                continue
-            for path in root.glob('**/*.json'):
-                if any(path.is_relative_to(folder) for folder in [*folders.values(), *candidate_folders]):
-                    continue
-                try:
-                    references.update(self._strings(read_json(path)))
-                except (OSError, ValueError, json.JSONDecodeError):
-                    pass
-        deletable_children = {item for item in children if item not in references}
-        purged_children = set()
-        for identifier in deletable_children:
-            folder = self.manager.runtime_root / 'tasks' / identifier
-            if folder.is_dir():
-                self._move_to_recycle_bin(folder)
-                purged_children.add(identifier)
-        for folder in folders.values():
-            if folder.is_dir():
-                self._move_to_recycle_bin(folder)
-        purged_ids = identifiers | purged_children
-        with self.manager.database.connect() as db:
-            for identifier in purged_ids:
-                db.execute('DELETE FROM task_index WHERE id=?', (identifier,))
-                db.execute('DELETE FROM result_metadata WHERE task_id=?', (identifier,))
-                db.execute('DELETE FROM result_retention WHERE id=?', (identifier,))
-        return sorted(purged_ids)
+    @cleanup_locked
+    def _purge_artifacts(self, identifiers, *, excluded_scheme=None):
+        from artifact_cleanup import ArtifactCleanup
+        cleaner = ArtifactCleanup(self.manager)
+        plan = cleaner.plan(identifiers, excluded_scheme=excluded_scheme)
+        if plan['protected']:
+            kept = plan['protected'][0]
+            raise RuntimeError('文件仍被使用，未清理任何内容：' + kept['relativePath'] + '；引用：' + kept['reason'])
+        return cleaner.execute(plan, self._move_to_recycle_bin)
 
+    @cleanup_locked
+    def orphan_cleanup(self, body=None):
+        from artifact_cleanup import ArtifactCleanup
+        cleaner = ArtifactCleanup(self.manager)
+        plan = cleaner.plan(orphaned=True)
+        if body is None:
+            return plan
+        if not isinstance(body, dict) or set(body) != {'previewSHA256'}:
+            raise ValueError('请先检查旧版残留并确认文件清单')
+        if body['previewSHA256'] != plan['previewSHA256']:
+            raise RuntimeError('文件或引用在预览后已变化，请重新检查旧版残留')
+        return {'purgedIds': cleaner.execute(plan, self._move_to_recycle_bin),
+                'movedArtifacts': plan['artifacts'], 'protected': plan['protected'], 'bytes': plan['bytes']}
+
+    @cleanup_locked
+    def result_cleanup_preview(self, identifier):
+        from artifact_cleanup import ArtifactCleanup
+        record = self.value(self.repository.status(identifier), self.repository.annotation(identifier))
+        return {**ArtifactCleanup(self.manager).plan([identifier]), 'revision': record['revision'],
+                'retention': record['retention']}
+
+    @cleanup_locked
+    def batch_cleanup(self, identifiers, body=None):
+        from artifact_cleanup import ArtifactCleanup
+        if not isinstance(identifiers, list) or not identifiers or len(identifiers) > 200 or not all(isinstance(key, str) for key in identifiers):
+            raise ValueError('请选择 1 至 200 条回收站记录')
+        records = []
+        for key in sorted(set(identifiers)):
+            status = self.repository.status(key)
+            record = self.value(status, self.repository.annotation(key))
+            if record['retention'] != 'trashed' or status.get('status') in {'queued', 'running', 'cancelling'}:
+                raise RuntimeError('所选计算不在回收站或仍在运行，请刷新')
+            records.append({'id': key, 'revision': record['revision']})
+        cleaner = ArtifactCleanup(self.manager)
+        plan = cleaner.plan([row['id'] for row in records])
+        plan.pop('previewSHA256')
+        plan['results'] = records
+        plan['previewSHA256'] = manifest_digest(plan)
+        if body is None:
+            return plan
+        if not isinstance(body, dict) or set(body) != {'ids', 'previewSHA256'} or body['previewSHA256'] != plan['previewSHA256']:
+            raise RuntimeError('文件或引用在预览后已变化，请重新预览')
+        if plan['protected']:
+            raise RuntimeError('所选计算仍被引用，未清理；请查看预览中的保留原因')
+        return {'purgedIds': cleaner.execute(plan, self._move_to_recycle_bin), 'movedArtifacts': plan['artifacts']}
+
+    @cleanup_locked
     def purge_result(self, identifier, body):
-        if not isinstance(body, dict) or set(body) != {'revision'} or type(body['revision']) is not int:
+        if not isinstance(body, dict) or set(body) - {'revision', 'previewSHA256'} or type(body.get('revision')) is not int:
             raise ValueError('请提供回收站结果修订号')
         status = self.repository.status(identifier)
         record = self.value(status, self.repository.annotation(identifier))
@@ -211,8 +233,11 @@ class ResultLifecycle:
             raise RuntimeError('回收站结果已更新，请刷新后重试')
         if status.get('status') in {'queued', 'running', 'cancelling'}:
             raise RuntimeError('计算仍在运行，不能永久删除')
+        if 'previewSHA256' in body and body['previewSHA256'] != self.result_cleanup_preview(identifier)['previewSHA256']:
+            raise RuntimeError('文件或引用在预览后已变化，请重新预览')
         return {'id': identifier, 'purgedIds': self._purge_artifacts([identifier])}
 
+    @cleanup_locked
     def purge_spatial_task(self, identifier, body):
         """Remove one obsolete GIS task while retaining its input version."""
         if not isinstance(body, dict) or set(body) != {'requestDigest'} or not isinstance(body['requestDigest'], str):
@@ -226,6 +251,7 @@ class ResultLifecycle:
             raise RuntimeError('图件任务已更新，请刷新后重试')
         return {'id': identifier, 'purgedIds': self._purge_artifacts([identifier])}
 
+    @cleanup_locked
     def purge_scheme(self, identifier, body):
         if not isinstance(body, dict) or set(body) != {'previewSHA256'}:
             raise ValueError('请先预览方案永久删除范围')
@@ -238,8 +264,10 @@ class ResultLifecycle:
             raise RuntimeError('方案仍有运行中的计算，请先完成或停止')
         if preview['protectedResults']:
             raise RuntimeError('方案仍有正式成果，请先处理正式成果后再删除方案')
+        if preview['temporary']:
+            raise RuntimeError('方案仍有未丢弃的临时计算，请先移入回收站后再删除方案')
         ids = [row['id'] for row in preview['trashedTemporary']]
-        purged = self._purge_artifacts(ids) if ids else []
+        purged = self._purge_artifacts(ids, excluded_scheme=identifier) if ids else []
         with self.manager.database.connect() as db:
             for table in ('model_scheme_revisions', 'model_scheme_editors', 'model_scheme_snapshots',
                           'model_scheme_draft_versions', 'model_scheme_prepared_inputs', 'scheme_input_assets',

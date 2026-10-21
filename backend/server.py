@@ -60,6 +60,11 @@ def uses_frozen_model_worker(request):
 class PlatformHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = os.name != "nt"
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.shutdown_requested = False
+        self.shutdown_lock = threading.Lock()
+
     def server_bind(self):
         if os.name == "nt":
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
@@ -310,7 +315,10 @@ class TaskManager:
                     if expected and expected!=model_implementation_identity()['modelImplementationSHA256']:
                         worker_script=frozen_worker(expected,self.runtime_root)
                         environment.update(execution_environment(worker_script,self.runtime_root))
-                process = subprocess.Popen([sys.executable, "-B", "-u", str(worker_script), "--task", str(folder)],
+                command = ([sys.executable, "--xaj-script", str(worker_script), "--task", str(folder)]
+                           if getattr(sys, 'frozen', False) else
+                           [sys.executable, "-B", "-u", str(worker_script), "--task", str(folder)])
+                process = subprocess.Popen(command,
                                            cwd=ROOT, env=environment, stdout=log, stderr=subprocess.STDOUT,
                                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             except Exception as error:
@@ -495,6 +503,22 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                 raise ValueError("查询字段不能重复")
             argument = lambda key, default=None: query.get(key, [default])[0]
             prefix = "/api/model"
+            if path == f'{prefix}/exit' and self.command == 'POST':
+                active = []
+                active.extend(row for row in manager.list() if row.get('status') in ACTIVE)
+                active.extend(row for row in input_manager.list() if row.get('status') in ACTIVE)
+                if manager.operations is not None:
+                    active.extend(row for row in manager.operations.list().get('operations', []) if row.get('status') in ACTIVE)
+                schedules = manager.automatic_forecasts.list().get('schedules', []) if manager.automatic_forecasts is not None else []
+                active.extend(row for row in schedules if row.get('enabled') or row.get('activeOperationId'))
+                if active:
+                    raise RuntimeError('当前仍有计算、资料加工或自动预报运行，完成或停止后才能退出平台')
+                with self.server.shutdown_lock:
+                    if not self.server.shutdown_requested:
+                        self.server.shutdown_requested = True
+                        threading.Thread(target=self.server.shutdown, name='platform-shutdown', daemon=True).start()
+                self.send_json(200, {'status': 'stopping', 'message': '平台服务正在关闭'})
+                return
             if path == f'{prefix}/automatic-forecasts' and self.command in {'GET', 'POST'}:
                 self.send_json(200 if self.command == 'GET' else 202,
                     {**manager.automatic_forecasts.list(), 'currentTime': manager.automatic_forecasts.clock().isoformat()}
@@ -533,6 +557,19 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                     self.send_json(200, drafts.save(self.read_body()))
                 else:
                     raise KeyError('接口不存在')
+                return
+            if path == f'{prefix}/result-cleanup' and self.command in {'GET', 'POST'}:
+                body = self.read_body() if self.command == 'POST' else None
+                if self.command == 'POST' and not isinstance(body, dict):
+                    raise ValueError('请先预览清理范围')
+                ids = body.get('ids') if body is not None else argument('ids', '').split(',')
+                self.send_json(200, manager.results.lifecycle.batch_cleanup(ids, body))
+                return
+            if path == f'{prefix}/workspace/artifact-cleanup' and self.command in {'GET', 'POST'}:
+                body = self.read_body() if self.command == 'POST' else None
+                if self.command == 'POST' and not isinstance(body, dict):
+                    raise ValueError('请先预览并确认清理范围')
+                self.send_json(200, manager.results.lifecycle.orphan_cleanup(body))
                 return
             if path == f"{prefix}/workspace/backups":
                 if self.command == 'GET':
@@ -943,6 +980,12 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
                     payload['results'] = [row for row in payload['results'] if row['retention'] == argument('retention')]
                 self.send_json(200, payload)
                 return
+            if self.command == 'GET' and path.startswith(f'{prefix}/result-retention/') and path.endswith('/deletion-preview'):
+                pieces = path[len(f'{prefix}/result-retention/'):].split('/')
+                if len(pieces) != 2:
+                    raise KeyError('成果操作不存在')
+                self.send_json(200, manager.results.lifecycle.result_cleanup_preview(pieces[0]))
+                return
             if self.command == 'POST' and path.startswith(f'{prefix}/result-retention/'):
                 pieces = path[len(f'{prefix}/result-retention/'):].split('/')
                 if len(pieces) != 2:
@@ -1078,7 +1121,17 @@ def handler(manager, frontend, input_manager=None, products=None, *, verbose_req
 
         def dispatch(self):
             try:
-                self.route()
+                path = unquote(urlsplit(self.path).path)
+                reference_write = self.command == 'POST' and (
+                    path in {'/api/model/workspace/drafts', '/api/model/database/schemes', '/api/model/model-schemes'}
+                    or (path.startswith('/api/model/model-schemes/') and path.rsplit('/', 1)[-1] in {'draft', 'discard-draft'})
+                    or (path.startswith('/api/model/states/') and path.endswith('/metadata'))
+                    or path.startswith('/api/model/result-metadata/'))
+                if reference_write:
+                    with manager.automatic_forecasts.lock, manager.operations.lock, manager.parameter_schemes.lock, manager.lock:
+                        self.route()
+                else:
+                    self.route()
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 # The browser may leave after a successful commit; do not send a
                 # second HTTP response or turn a disconnected client into a 500.

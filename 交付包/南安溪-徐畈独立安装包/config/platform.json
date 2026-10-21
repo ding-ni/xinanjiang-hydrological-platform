@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "workspace": "runtime",
+  "model": "backend/vendor/model",
+  "projects": "frontend/public/data/projects",
+  "frontend": "frontend/dist-unified",
+  "port": 8878
+}

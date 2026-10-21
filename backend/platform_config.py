@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 
-APP_ROOT = Path(__file__).resolve().parent.parent
+APP_ROOT = Path(os.environ.get('XAJ_APP_ROOT', Path(__file__).resolve().parent.parent)).resolve()
 APP_VERSION = '1.12.0'
 
 

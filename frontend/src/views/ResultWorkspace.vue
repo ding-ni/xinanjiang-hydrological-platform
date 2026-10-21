@@ -8,10 +8,12 @@
       <select v-model="type" class="input" aria-label="成果计算类型"><option value="">全部类型</option><option v-for="(label,key) in operationLabels" :key="key" :value="key">{{ label }}</option></select>
       <template v-if="tab==='temporary' || tab==='recent'"><label class="bulk-select"><input type="checkbox" :checked="allDiscardSelected" :disabled="!discardableRows.length || runningAction" @change="toggleAllDiscard" />全选可丢弃结果</label><button class="btn" :disabled="!selectedTrashIds.size || runningAction" @click="discardSelected">移入回收站（{{ selectedTrashIds.size }}）</button></template><template v-else-if="tab==='trashed'"><label class="bulk-select"><input type="checkbox" :checked="allTrashSelected" :disabled="!filtered.length || runningAction" @change="toggleAllTrash" />全选回收站结果</label><button class="btn" :disabled="!selectedTrashIds.size || runningAction" @click="purgeSelected">批量移除（{{ selectedTrashIds.size }}）</button></template>
     </div>
+    <section v-if="tab==='trashed'" class="panel"><p>移入平台回收站时文件保留；从回收站移除后，未被引用的任务及自产状态会送入 Windows 回收站。</p><ArtifactCleanup @cleaned="refresh" /></section>
+    <p v-if="actionMessage" role="status">{{ actionMessage }}</p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <div class="results-layout">
       <section class="panel results-list"><div class="list-count">{{ filtered.length }} 次计算</div>
-        <div v-for="row in paged" :key="row.id" class="result-row-wrap"><label v-if="tab==='trashed' || tab==='temporary' || tab==='recent'" class="result-select" :aria-label="`选择 ${row.name}`"><input type="checkbox" :checked="selectedTrashIds.has(row.id)" :disabled="runningAction || !discardable(row)" @click.stop @change="toggleTrash(row.id)" /></label><button class="result-row" :class="{selected:selectedId===row.id}" @click="inspect(row)">
+        <div v-for="row in paged" :key="row.id" class="result-row-wrap"><label v-if="tab==='trashed' || tab==='temporary' || tab==='recent'" class="result-select" :aria-label="`选择 ${row.name}`"><input type="checkbox" :checked="selectedTrashIds.has(row.id)" :disabled="runningAction || (tab!=='trashed' && !discardable(row))" @click.stop @change="toggleTrash(row.id)" /></label><button class="result-row" :class="{selected:selectedId===row.id}" @click="inspect(row)">
           <b>{{ row.favorite?'★ ':'' }}{{ row.name }}</b><span>{{ operationLabels[row.type] || '水文计算' }} · {{ statusLabels[row.status] || row.status }} · {{ row.processCount }} 个过程</span><small>{{ dateLabel(row.createdAt) }}</small>
         </button></div>
         <p v-if="!paged.length" class="empty">{{ loading?'正在读取…':tab==='saved'?'暂无正式成果，可在计算完成后点击保存成果。':'暂无计算记录' }}</p>
@@ -42,6 +44,8 @@ import {useAppStore} from '@/stores/app'
 import {modelApi} from '@/services/modelBackendService'
 import {schemeDefinition} from '@/services/modelSchemeService'
 import DailyResultPanel from '@/components/model/DailyResultPanel.vue'
+import ArtifactCleanup from '@/components/model/ArtifactCleanup.vue'
+import { cleanupConfirmation } from '@/services/artifactCleanupService'
 import DailyOperationProgress from '@/components/model/DailyOperationProgress.vue'
 import ResultSaveBar from '@/components/model/ResultSaveBar.vue'
 import CalculationEvaluation from '@/components/model/CalculationEvaluation.vue'
@@ -83,7 +87,17 @@ function toggleTrash(id){const next=new Set(selectedTrashIds.value);next.has(id)
 function toggleAllDiscard(){const next=new Set(selectedTrashIds.value);if(allDiscardSelected.value)discardableRows.value.forEach(row=>next.delete(row.id));else discardableRows.value.forEach(row=>next.add(row.id));selectedTrashIds.value=next}
 function toggleAllTrash(){const next=new Set(selectedTrashIds.value);if(allTrashSelected.value)filtered.value.forEach(row=>next.delete(row.id));else filtered.value.forEach(row=>next.add(row.id));selectedTrashIds.value=next}
 async function discardSelected(){const ids=[...selectedTrashIds.value].filter(id=>discardable(rows.value.find(row=>row.id===id)));if(!ids.length)return;try{await ElMessageBox.confirm(`将选中的 ${ids.length} 条临时计算移入回收站？正式成果、参数和输入资料不会删除。`,'批量移入回收站',{confirmButtonText:'移入回收站',cancelButtonText:'取消'});runningAction.value=true;const failures=[];for(const id of ids){const row=rows.value.find(item=>item.id===id);try{await modelApi('result-retention/'+encodeURIComponent(id)+'/discard',{method:'POST',body:{revision:row.retentionRevision}})}catch(failure){failures.push(`${row.name}：${failure.message}`)}}selectedTrashIds.value=new Set();await refresh();if(failures.length)actionMessage.value=`已移入 ${ids.length-failures.length} 条，${failures.length} 条未处理：${failures.join('；')}`;else actionMessage.value=`已将 ${ids.length} 条临时计算移入回收站。`}catch(failure){if(failure instanceof Error)error.value=failure.message}finally{runningAction.value=false}}
-async function purgeSelected(){const ids=[...selectedTrashIds.value];if(!ids.length)return;try{await ElMessageBox.confirm(`从平台回收站移除选中的 ${ids.length} 条计算？任务文件会送入 Windows 回收站。`,'批量移除回收站结果',{confirmButtonText:'批量移除',cancelButtonText:'取消'});runningAction.value=true;const failures=[];for(const id of ids){const row=rows.value.find(item=>item.id===id);if(!row)continue;try{await modelApi('result-retention/'+encodeURIComponent(id)+'/purge',{method:'POST',body:{revision:row.retentionRevision}})}catch(failure){failures.push(`${row.name}：${failure.message}`)}}selectedTrashIds.value=new Set();await refresh();if(failures.length)actionMessage.value=`已移除 ${ids.length-failures.length} 条，${failures.length} 条未处理：${failures.join('；')}`;else actionMessage.value=`已移除 ${ids.length} 条回收站结果。`}catch(failure){if(failure instanceof Error)error.value=failure.message}finally{runningAction.value=false}}
+async function purgeSelected(){
+  const ids=[...selectedTrashIds.value];if(!ids.length||runningAction.value)return
+  runningAction.value=true;error.value=''
+  try{
+    const plan=await modelApi('result-cleanup?ids='+encodeURIComponent(ids.join(',')),{timeoutMs:60000})
+    await ElMessageBox.confirm(cleanupConfirmation(plan),'预览回收站清理',{confirmButtonText:'确认移入 Windows 回收站',cancelButtonText:'取消',customClass:'artifact-cleanup-confirm'})
+    const outcome=await modelApi('result-cleanup',{method:'POST',body:{ids,previewSHA256:plan.previewSHA256},timeoutMs:60000})
+    selectedTrashIds.value=new Set();selected.value=null;selectedId.value='';result.value=null
+    await refresh();actionMessage.value=`已移除 ${ids.length} 条回收站记录，实际移走 ${outcome.movedArtifacts.length} 项文件/目录。`
+  }catch(failure){if(failure instanceof Error)error.value=failure.message}finally{runningAction.value=false}
+}
 watch(()=>[app.contextKey,route.query.result,route.query.operation,route.query.task],refresh,{immediate:true})
 onBeforeUnmount(()=>{disposed=true;sequence++;clearTimeout(poll)})
 </script>
@@ -91,3 +105,4 @@ onBeforeUnmount(()=>{disposed=true;sequence++;clearTimeout(poll)})
 .result-row-wrap{display:flex;align-items:stretch;border-bottom:1px solid #e3ebe6}.result-select{display:flex;align-items:flex-start;padding:18px 0 0 12px}.bulk-select{display:inline-flex;gap:6px;align-items:center;color:#587266;font-size:13px}
 .results-workspace{display:grid;gap:16px;min-width:0;color:#31574a}.results-workspace>header{display:flex;align-items:center;justify-content:space-between}h1{font-size:25px;margin:0}.results-tools,.results-tools nav{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.results-tools>input{flex:1;min-width:150px}.results-tools>select{max-width:180px}.results-layout{display:grid;grid-template-columns:280px minmax(0,1fr);gap:16px;align-items:start}.results-list{overflow:hidden}.list-count{padding:14px;color:#778a7d;border-bottom:1px solid #e3ebe6}.result-row{display:grid;gap:8px;padding:16px;width:100%;border:0;border-bottom:1px solid #e3ebe6;background:white;cursor:pointer;text-align:left;color:#315a46}.result-row.selected{background:#ecf5ee;box-shadow:inset 3px 0 #408365}.result-row b{font-size:15px;overflow-wrap:anywhere}.result-row span,.result-row small{color:#788a7e;font-size:13px}.results-list footer{display:flex;align-items:center;gap:6px;padding:12px}.results-list footer>span{margin-right:auto}.result-detail{display:grid;gap:14px;min-width:0}.record-heading{padding:16px}.record-heading h2{font-size:18px;margin:0 0 8px}.record-heading>span{font-size:13px;color:#788b7f}.record-details{padding:16px;min-width:0}.record-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.record-toolbar details summary{cursor:pointer;color:#6e8476;padding:10px}.record-toolbar details[open]{display:flex;gap:8px}.detail-tabs{display:flex;gap:6px;border-bottom:1px solid #dfe9e2;flex-wrap:wrap}.detail-tabs button{padding:12px;border:0;background:none;cursor:pointer;color:#708578}.detail-tabs button.active{color:#286b4c;border-bottom:2px solid #39805e}.timings{padding:16px;color:#6b8073}.error{color:#a64835}.empty,.result-placeholder{padding:32px;color:#7b8e80;line-height:1.8}.results-workspace :deep(.btn),.input{min-height:36px;font-size:14px}@media(max-width:1100px){.results-layout{grid-template-columns:1fr}.results-list{max-height:260px;overflow:auto}}
 </style>
+<style>.artifact-cleanup-confirm .el-message-box__message{white-space:pre-line;max-height:55vh;overflow:auto;overflow-wrap:anywhere}</style>

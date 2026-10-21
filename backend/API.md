@@ -110,8 +110,8 @@ Base `/api/model`, same origin as Vue. Loopback Host only. JSON bodies and mutat
 Retention is independent of job execution status and favorites. New successful
 computations start as `temporary`; explicit saving makes them `saved`;
 discarding makes them `trashed`. Numerical files and referenced inputs,
-parameters and states are retained for recovery and provenance. No physical
-delete endpoint is provided. Existing favorites appear as saved results;
+parameters and states are retained for recovery and provenance. Explicit purge
+recycles unreferenced files only after a deletion preview. Existing favorites appear as saved results;
 other pre-upgrade records remain accessible as legacy history and do not
 trigger the new-workspace leave prompt.
 
@@ -119,6 +119,9 @@ trigger the new-workspace leave prompt.
 | --- | --- | --- |
 | GET | `/result-catalog?retention=saved\|temporary\|trashed\|all` | Omission excludes trash. Rows include `retention`, `retentionRevision`, `legacy`; `saved` no longer aliases `favorite`. |
 | GET | `/result-retention/{id}` | Retention and revision of one canonical result. |
+| GET | `/result-retention/{id}/deletion-preview` | Exact task/state paths, bytes, external reference reasons and content-bound `previewSHA256`. |
+| GET/POST | `/result-cleanup` | GET `?ids=OP-…,OP-…` previews the whole set; POST `{ids,previewSHA256}` rechecks and recycles it, protecting external consumers. |
+| GET/POST | `/workspace/artifact-cleanup` | GET previews orphaned internal tasks whose parent operation is absent; POST `{previewSHA256}` recycles only the approved unreferenced files. No automatic migration cleanup. |
 | POST | `/result-retention/{id}/save`, `/discard`, `/restore` | `{revision}` optimistic check; running/queued/cancelling records reject mutation. |
 | POST | `/result-retention/{id}/purge` | Permanently forgets a trashed result's metadata and moves its task artifact to the Windows Recycle Bin; saved results and referenced inputs are protected. |
 | GET | `/model-schemes?retention=trashed` | Default lists active schemes; this filter lists recoverable schemes. |
@@ -127,6 +130,14 @@ trigger the new-workspace leave prompt.
 | POST | `/model-schemes/{id}/purge` | `{previewSHA256}`; removes a trashed scheme's platform records and sends its unreferenced temporary task artifacts to the Windows Recycle Bin. |
 | GET | `/results/{id}/state-ranges?processId=...` | Verified process history ranges, available variable names/units and capacities. |
 | POST | `/results/{id}/state-excel` | `{processId, gridId, variables}`; XLSX bytes with exact hourly values, restricted to the server-resolved process period. |
+
+Purge treats each generated checkpoint and its producer as one output group;
+the checkpoint's own `sourceTaskId` does not make it an external consumer.
+Named states, saved parameter sets, SQL scheme/editor references and downstream
+tasks are protected transitively. Task files move before their operation envelope;
+metadata is removed only after verifying the original path is absent. A partial
+failure is reported and journaled in `workspace/cleanup-journal`. Input products,
+observations, MDB, model/GIS, backups and the system Recycle Bin are never emptied.
 
 State export supports WU/WL/WD/S/FR/RS/RI/RG, precipitation, PET, actual ET,
 water-balance error when saved, and derived `W_WM=(WU+WL+WD)/WM`. Missing

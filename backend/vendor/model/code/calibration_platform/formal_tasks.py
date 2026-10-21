@@ -71,10 +71,9 @@ def build_formal_calibration_command(
     script = root / "scripts" / "run_formal_multievent_calibration.py"
     if not script.is_file():
         raise FormalCalibrationTaskError(f"formal calibration script not found: {script}")
-    return [
-        sys.executable,
-        "-u",
-        str(script),
+    command = ([sys.executable, "--xaj-script", str(script)] if getattr(sys, "frozen", False)
+               else [sys.executable, "-u", str(script)])
+    return command + [
         "--data-root",
         request["data_root"],
         "--event-catalog",

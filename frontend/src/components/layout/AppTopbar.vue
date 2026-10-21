@@ -5,21 +5,23 @@
         <Pouring />
       </div>
       <div class="titles">
-        <div class="sys">流域水文预报工作台</div>
-        <div class="sub">分布式水文预报平台</div>
+        <div class="sys">{{ standalone ? '南安溪-徐畈水文平台' : '流域水文预报工作台' }}</div>
+        <div class="sub">{{ standalone ? '1 km 分布式新安江模型' : '分布式水文预报平台' }}</div>
       </div>
     </div>
 
     <div class="view-title">{{ title }}</div>
 
     <div class="meta">
-      <div class="chip basin-chip">
+      <div v-if="standalone" class="chip fixed-context"><span>流域</span><b>南安溪-徐畈</b></div>
+      <div v-if="standalone" class="chip fixed-context"><span>空间分辨率</span><b>1 km</b></div>
+      <div v-if="!standalone" class="chip basin-chip">
         <span>流域</span>
         <select class="meta-select" :value="app.basinId" @change="app.setBasin($event.target.value)">
           <option v-for="basin in basins" :key="basin.id" :value="basin.id">{{ basin.name }}</option>
         </select>
       </div>
-      <div class="chip scale-chip">
+      <div v-if="!standalone" class="chip scale-chip">
         <span>空间分辨率</span>
         <select class="meta-select" :value="app.modelConfigId" @change="app.setModelConfig($event.target.value)">
           <option v-for="config in modelConfigs" :key="config.id" :value="config.id">{{ config.label }}</option>
@@ -32,18 +34,31 @@
         <b>{{ inputStatus.label }}</b>
         <i class="dot" />
       </div>
+      <button v-if="standalone" class="exit-button" type="button" :disabled="exiting" @click="exitPlatform">
+        <Close class="exit-icon" aria-hidden="true" />{{ exiting ? '正在退出…' : '退出平台' }}
+      </button>
+    </div>
+    <div v-if="platformExited" class="exit-mask" role="status" aria-live="polite">
+      <div class="exit-panel">
+        <div class="exit-mark"><CircleCheck /></div>
+        <h2>平台已退出</h2>
+        <p>本地服务已关闭，端口已释放。可以关闭此浏览器标签页。</p>
+        <button class="exit-done" type="button" @click="platformExited = false">知道了</button>
+      </div>
     </div>
   </header>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { Pouring } from '@element-plus/icons-vue'
+import { computed, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { CircleCheck, Close, Pouring } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useMonitorStore } from '@/stores/monitor'
 import { useForecastStore } from '@/stores/forecast'
 import { listBasinConfigs } from '@/data/domainContext'
+import { modelApi } from '@/services/modelBackendService'
 import { usesModelInputService } from '@/services/modelInputService'
 import { modelInputDisplayStatus } from '@/services/modelInputPresentation'
 
@@ -51,6 +66,9 @@ const route = useRoute()
 const app = useAppStore()
 const monitor = useMonitorStore()
 const forecast = useForecastStore()
+const standalone = import.meta.env.VITE_XUFAN_STANDALONE === 'true'
+const exiting = ref(false)
+const platformExited = ref(false)
 const clockValue = computed(() => route.name === 'realtime'
   ? usesModelInputService(app.activeContext) && !monitor.hasHistoricalObservations ? '—' : monitor.currentTimeLabel || '—'
   : route.name === 'forecast' ? forecast.startTime || '—' : app.dataTime || '—')
@@ -78,6 +96,21 @@ const titleMap = {
 }
 
 const title = computed(() => titleMap[route.name] || '业务平台')
+
+async function exitPlatform() {
+  try {
+    await ElMessageBox.confirm('退出将关闭本机平台服务并释放服务端口。若有计算或自动预报运行，平台会阻止退出。', '退出平台', {
+      confirmButtonText: '退出平台', cancelButtonText: '取消', type: 'warning'
+    })
+    exiting.value = true
+    await modelApi('exit', { method: 'POST', body: {} })
+    platformExited.value = true
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error?.message || '退出请求失败')
+  } finally {
+    exiting.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -205,6 +238,16 @@ const title = computed(() => titleMap[route.name] || '业务平台')
   outline: none;
   cursor: pointer;
 }
+.fixed-context{min-height:32px;padding:0 10px}.fixed-context b{color:#244d3b}
+.exit-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:0 0 auto;min-height:32px;padding:0 10px;border:1px solid #e6c9c3;border-radius:4px;background:#fff;color:#9b4539;font-size:12px;font-weight:700;cursor:pointer}
+.exit-button:hover:not(:disabled){background:#fff5f2;border-color:#cf8d82}
+.exit-button:disabled{opacity:.65;cursor:wait}
+.exit-icon{width:14px;height:14px}
+.exit-mask{position:fixed;inset:0;z-index:5000;display:grid;place-items:center;padding:20px;background:rgba(17,35,31,.62)}
+.exit-panel{width:min(420px,100%);padding:28px;background:#fff;border:1px solid #dce6df;border-radius:6px;text-align:center;box-shadow:0 16px 52px rgba(9,30,21,.24)}
+.exit-mark{display:grid;place-items:center;width:42px;height:42px;margin:0 auto 12px;border-radius:50%;background:#e8f3ec;color:#2f7657}.exit-mark svg{width:24px;height:24px}
+.exit-panel h2{margin:0;color:#234536;font-size:20px}.exit-panel p{margin:10px 0 22px;color:#65796d;font-size:14px;line-height:1.7}
+.exit-done{min-height:36px;padding:0 16px;border:0;border-radius:4px;background:#2d7152;color:#fff;font-weight:700;cursor:pointer}
 .basin-chip .meta-select { width: 116px; }
 .scale-chip .meta-select { width: 72px; }
 .project-chip { min-width: 0; max-width: 210px; flex: 1 1 160px; }
